@@ -1,6 +1,6 @@
 """Backfill default roles and permissions.
 
-Idempotent: safe to re-run. Run with `PYTHONPATH=src python -m scripts.seed_rbac`.
+Idempotent: safe to re-run. Run with `PYTHONPATH=app python -m scripts.seed_rbac`.
 """
 
 import asyncio
