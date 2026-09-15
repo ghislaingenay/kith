@@ -31,10 +31,11 @@ class TenantsService:
         # to enforce.
         await self.repository.acquire_user_tenant_lock(user_id)
 
-        existing_membership = await self.repository.list_active_membership_details(
-            user_id
+        rows = await self.repository.list_active_membership_details(user_id)
+        already_owns_tenant = any(
+            role_name == "owner" for _, _tenant_name, role_name in rows
         )
-        if existing_membership:
+        if already_owns_tenant:
             raise TenantAlreadyExistsError(name)
 
         membership, tenant_name, role_name = await self.repository.create_tenant(
