@@ -2,7 +2,7 @@
 
 ## Project
 
-Python 3.11+ backend using FastAPI, Pydantic v2, SQLAlchemy 2.0, and `dependency-injector`.
+Python 3.12+ backend using FastAPI, Pydantic v2, SQLAlchemy 2.0, and `dependency-injector`.
 
 The project follows a strict domain/module-oriented architecture.
 

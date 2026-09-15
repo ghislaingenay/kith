@@ -7,7 +7,7 @@ class CacheProvider(ABC):
     """Common key-value cache operations every backend (Redis, Memcached) must support.
 
     Implementations must raise only `CacheUnavailableError` (from
-    `src/core/cache/exceptions.py`) on connectivity failures — never leak
+    `core/cache/exceptions.py`) on connectivity failures — never leak
     provider-specific client exceptions across this boundary, so callers can
     catch one exception type to trigger graceful degradation.
     """

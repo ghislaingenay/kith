@@ -33,7 +33,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 def set_api_version(version: str = "v1") -> str:
     return f"/api/{version}"
 
-app = FastAPI(title="Business OS", lifespan=lifespan)
+app = FastAPI(title="Kith", lifespan=lifespan)
 register_exception_handlers(app)
 
 
