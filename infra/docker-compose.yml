@@ -1,0 +1,112 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fast_os}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fast_os}
+      POSTGRES_DB: ${POSTGRES_DB:-fast_os}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fast_os}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web console
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONPATH: /app/app
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fast_os}:${POSTGRES_PASSWORD:-fast_os}@postgres:5432/${POSTGRES_DB:-fast_os}
+      STORAGE_PROVIDER: minio
+      S3_REGION: us-east-1
+      S3_ENDPOINT: http://minio:9000
+      REDIS_URL: redis://redis:6379/0
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      # Clerk credentials — set these in a root .env (docker compose loads
+      # it automatically); never hardcode real secrets here.
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-clerk}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY}
+      AUTH_JWT_KEY: ${AUTH_JWT_KEY:-}
+      AUTH_AUTHORIZED_PARTIES: ${AUTH_AUTHORIZED_PARTIES:-http://localhost:3000}
+      AUTH_WEBHOOK_SIGNING_SECRET: ${AUTH_WEBHOOK_SIGNING_SECRET}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    image: node:18
+    working_dir: /app
+    command: sh -lc "corepack enable && corepack prepare pnpm@8.6.12 --activate && pnpm install --frozen-lockfile && pnpm run dev -- --host 0.0.0.0 --port 3000"
+    ports:
+      - "3000:3000"
+    environment:
+      # Provided by the user via a root .env — never hardcoded here.
+      VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+      # Host-reachable on purpose — this runs in the browser, not inside
+      # the compose network, so it can't resolve "app" as a hostname.
+      VITE_API_BASE_URL: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  minio-data:
+  postgres-data:
+  redis-data:

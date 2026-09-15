@@ -1,0 +1,73 @@
+[project]
+name = "kith"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.19.1",
+    "asyncpg>=0.31.0",
+    "boto3>=1.43.72",
+    "dependency-injector>=4.49.1",
+    "fastapi[standard]>=0.141.1",
+    "gunicorn>=26.1.0",
+    "pytest>=9.1.1",
+    "redis>=8.1.0",
+    "structlog>=26.1.0",
+    "uvicorn-worker>=0.4.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["app"]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--cov=app",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--cov-fail-under=80",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/alembic/*",
+    "*/scripts/*"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
+[dependency-groups]
+dev = [
+    "moto>=5.2.2",
+    "pre-commit>=4.6.2",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "testcontainers[postgres]>=4.15.0",
+]
