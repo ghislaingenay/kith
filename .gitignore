@@ -1,0 +1,8 @@
+backend/**/__pycache__/
+backend/*.pyc
+backend/.env
+backend/.venv/
+backend/fast_os.egg-info/
+backend/kith.egg-info/
+
+.vscode/*
