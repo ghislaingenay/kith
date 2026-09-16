@@ -18,7 +18,7 @@ _Avoid_: Person, people, account
 The display information attached to a User (name, avatar). One per User.
 
 **Tenant Membership**:
-The link between a User and a Tenant, carrying that User's Role in the Tenant. A User may hold memberships in several Tenants.
+The link between a User and a Tenant, carrying that User's Role in the Tenant. It always links an existing User; before that User exists there is only a Pending Membership. A User may hold memberships in several Tenants.
 _Avoid_: Member (as a noun on its own), seat
 
 **Role**:
