@@ -5,7 +5,6 @@ import uuid
 
 from tenants.exceptions import TenantAlreadyExistsError
 from tenants.models import TenantMembership
-from tenants.permissions import Role
 from tenants.repository import TenantsRepository
 from tenants.schemas import TenantMembershipSummary
 
@@ -33,8 +32,7 @@ class TenantsService:
         await self.repository.acquire_user_tenant_lock(user_id)
 
         rows = await self.repository.list_active_membership_details(user_id)
-        already_owns_tenant = any(role == Role.OWNER for _, _tenant_name, role in rows)
-        if already_owns_tenant:
+        if rows:
             raise TenantAlreadyExistsError(name)
 
         membership, tenant_name, role = await self.repository.create_tenant(

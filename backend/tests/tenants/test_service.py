@@ -92,6 +92,20 @@ class TestCreateTenant:
 
         assert repo.created == []
 
+    async def test_raises_when_user_has_a_non_owner_active_membership(self) -> None:
+        repo = FakeTenantsRepository()
+        user_id = uuid.uuid4()
+        existing_membership = TenantMembership(
+            tenant_id=uuid.uuid4(), user_id=user_id, role=Role.MEMBER
+        )
+        repo.membership_details.append((existing_membership, "Acme Inc", Role.MEMBER))
+        service = TenantsService(repo)
+
+        with pytest.raises(TenantAlreadyExistsError):
+            await service.create_tenant(user_id=user_id, name="Another Co")
+
+        assert repo.created == []
+
 
 class TestProvisionDefaultMembership:
     async def test_delegates_to_repository(self) -> None:
