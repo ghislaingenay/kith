@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 
 from tenants.exceptions import (
     InvalidLogoUploadError,
+    PermissionDenied,
     TenantAlreadyExistsError,
     TenantNotFound,
     UnknownRoleOrActionError,
@@ -22,6 +23,9 @@ def register_tenant_exception_handlers(app: FastAPI):
     )
     app.add_exception_handler(
         UnknownRoleOrActionError, _handle_unknown_role_or_action_exception_handler
+    )
+    app.add_exception_handler(
+        PermissionDenied, _handle_permission_denied_exception_handler
     )
 
 
@@ -56,6 +60,16 @@ async def _handle_invalid_logo_upload_exception_handler(
             "error": "Invalid logo upload",
             "message": str(exc),
             "detail": str(exc),
+        },
+    )
+
+
+async def _handle_permission_denied_exception_handler(_: Request, exc: PermissionDenied):
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={
+            "error": "Permission denied",
+            "message": str(exc),
         },
     )
 

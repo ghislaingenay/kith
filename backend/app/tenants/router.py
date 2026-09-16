@@ -17,12 +17,13 @@ from tenants.config import (
     READ_RATE_LIMIT_PER_HOUR,
     READ_RATE_LIMIT_PER_MINUTE,
 )
-from tenants.dependencies import get_tenants_service
+from tenants.dependencies import get_tenants_service, require_permission
 from tenants.logo import (
     LOGO_KEY_EXTENSIONS,
     logo_key,
     validate_logo_upload,
 )
+from tenants.permissions import Action
 from tenants.schemas import (
     CreateTenantRequest,
     TenantLogoResponse,
@@ -45,6 +46,7 @@ tenants_logo_upload_rate_limit = RateLimitDependency(
     per_minute=LOGO_UPLOAD_RATE_LIMIT_PER_MINUTE,
     per_hour=LOGO_UPLOAD_RATE_LIMIT_PER_HOUR,
 )
+tenants_logo_upload_permission = require_permission(Action.SETTINGS)
 
 
 @router.get("", response_model=list[TenantMembershipSummary])
@@ -83,6 +85,7 @@ async def upload_tenant_logo(
     file: UploadFile,
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    _permission: Annotated[None, Depends(tenants_logo_upload_permission)],
     _rate_limit: Annotated[None, Depends(tenants_logo_upload_rate_limit)],
     storage: Annotated[StorageProvider, Depends(get_storage_provider)],
 ) -> TenantLogoResponse:

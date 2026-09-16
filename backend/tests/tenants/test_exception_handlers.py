@@ -3,6 +3,7 @@ from httpx import ASGITransport, AsyncClient
 
 from tenants.exception_handlers import register_tenant_exception_handlers
 from tenants.exceptions import (
+    PermissionDenied,
     TenantAlreadyExistsError,
     TenantNotFound,
     UnknownRoleOrActionError,
@@ -73,3 +74,26 @@ async def test_unknown_role_or_action_maps_to_500_json() -> None:
     body = response.json()
     assert body["error"] == "Unknown role or action"
     assert "superuser" not in body["message"]
+
+
+def _make_app_permission_denied() -> FastAPI:
+    app = FastAPI()
+    register_tenant_exception_handlers(app)
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise PermissionDenied("settings")
+
+    return app
+
+
+async def test_permission_denied_maps_to_403_json_distinct_from_401() -> None:
+    transport = ASGITransport(app=_make_app_permission_denied())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/boom")
+
+    assert response.status_code == 403
+    assert response.status_code != 401
+    body = response.json()
+    assert body["error"] == "Permission denied"
+    assert "settings" in body["message"]

@@ -7,7 +7,7 @@ docs/design/mvp-design.md so the code cannot drift from it silently.
 import pytest
 
 from tenants.exceptions import UnknownRoleOrActionError
-from tenants.permissions import Action, Role, can
+from tenants.permissions import Action, Role, has_permission
 
 # (owner, admin, member, viewer) per row of the product table.
 _PRODUCT_TABLE: dict[Action, tuple[bool, bool, bool, bool]] = {
@@ -36,21 +36,21 @@ def test_enumerations_match_the_product_table_exactly() -> None:
 
 
 @pytest.mark.parametrize(("role", "action", "expected"), _ALL_PAIRS)
-def test_can_matches_the_product_table(
+def test_has_permission_matches_the_product_table(
     role: Role, action: Action, expected: bool
 ) -> None:
-    assert can(role, action) is expected
+    assert has_permission(role, action) is expected
 
 
 def test_unknown_role_raises_rather_than_denying() -> None:
     with pytest.raises(UnknownRoleOrActionError) as exc_info:
-        can("superuser", Action.SEARCH)  # type: ignore[arg-type]
+        has_permission("superuser", Action.SEARCH)  # type: ignore[arg-type]
 
     assert "superuser" in str(exc_info.value)
 
 
 def test_unknown_action_raises_rather_than_denying() -> None:
     with pytest.raises(UnknownRoleOrActionError) as exc_info:
-        can(Role.OWNER, "format_disk")  # type: ignore[arg-type]
+        has_permission(Role.OWNER, "format_disk")  # type: ignore[arg-type]
 
     assert "format_disk" in str(exc_info.value)

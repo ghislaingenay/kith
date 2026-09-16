@@ -98,7 +98,7 @@ _PERMISSIONS: dict[Action, dict[Role, bool]] = {
 }
 
 
-def can(role: Role, action: Action) -> bool:
+def has_permission(role: Role, action: Action) -> bool:
     """Return whether `role` may perform `action`.
 
     Inputs are converted to their enums first, so an unknown Role or Action

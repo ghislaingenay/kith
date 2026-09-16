@@ -15,6 +15,16 @@ class InvalidLogoUploadError(Exception):
     large. Mapped to HTTP 422 at the API boundary."""
 
 
+class PermissionDenied(Exception):
+    """Raised by `require_permission` when the current tenant context's Role
+    is not allowed to perform an action. Mapped to HTTP 403 at the API
+    boundary, distinct from the 401 raised for authentication errors."""
+
+    def __init__(self, action: object):
+        self.action = action
+        super().__init__(f"Not permitted to perform '{action}'.")
+
+
 class UnknownRoleOrActionError(Exception):
     """Raised when the permission table is asked about a Role or an action it
     does not know. This is a programming error or bad data, never a client
