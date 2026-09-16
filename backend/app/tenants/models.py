@@ -8,7 +8,6 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
-    Index,
     Integer,
     String,
     func,
@@ -18,6 +17,9 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.database import Base
+from tenants.permissions import Role
+
+_ROLE_VALUES = ", ".join(f"'{role.value}'" for role in Role)
 
 
 class Tenant(Base):
@@ -69,7 +71,12 @@ class TenantMembership(Base):
     soft-deleted) without losing the tenant/role history."""
 
     __tablename__ = "tenant_memberships"
-    __table_args__ = (Index("idx_tenant_memberships_role_id", "role_id"),)
+    __table_args__ = (
+        CheckConstraint(
+            f"role IN ({_ROLE_VALUES})",
+            name="ck_tenant_memberships_role",
+        ),
+    )
 
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -81,9 +88,7 @@ class TenantMembership(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    role_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("roles.id"), nullable=False
-    )
+    role: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

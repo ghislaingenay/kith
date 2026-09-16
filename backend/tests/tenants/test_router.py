@@ -14,6 +14,7 @@ from core.storage.exceptions import StorageObjectNotFoundError
 from core.storage.provider import StorageObjectMetadata
 from main import app
 from tenants.dependencies import get_tenants_service
+from tenants.permissions import Role
 from tenants.router import (
     tenants_logo_upload_rate_limit,
     tenants_read_rate_limit,
@@ -26,7 +27,7 @@ _USER = AuthenticatedUser(
     email_verified=True,
     is_active=True,
 )
-_TENANT = TenantContext(tenant_id=uuid.uuid4(), role_id=uuid.uuid4())
+_TENANT = TenantContext(tenant_id=uuid.uuid4(), role=Role.OWNER)
 
 
 class FakeTenantsService:
@@ -43,8 +44,7 @@ class FakeTenantsService:
         return self.next_created or TenantMembershipSummary(
             tenant_id=uuid.uuid4(),
             tenant_name=name,
-            role_id=uuid.uuid4(),
-            role_name="owner",
+            role=Role.OWNER,
         )
 
 
@@ -68,8 +68,7 @@ class TestListMyTenants:
             TenantMembershipSummary(
                 tenant_id=uuid.uuid4(),
                 tenant_name="Acme",
-                role_id=uuid.uuid4(),
-                role_name="owner",
+                role=Role.OWNER,
             )
         ]
         _override(service)
@@ -117,8 +116,7 @@ class TestCreateTenant:
         service.next_created = TenantMembershipSummary(
             tenant_id=uuid.uuid4(),
             tenant_name="Acme",
-            role_id=uuid.uuid4(),
-            role_name="owner",
+            role=Role.OWNER,
         )
         _override(service)
 
@@ -130,7 +128,7 @@ class TestCreateTenant:
         assert response.status_code == 201
         body = response.json()
         assert body["tenant_name"] == "Acme"
-        assert body["role_name"] == "owner"
+        assert body["role"] == "owner"
         assert service.create_calls == [{"user_id": _USER.id, "name": "Acme"}]
 
     async def test_returns_422_when_name_missing(self) -> None:

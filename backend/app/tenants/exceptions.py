@@ -27,11 +27,6 @@ class UnknownRoleOrActionError(Exception):
         super().__init__(f"Unknown role or action: role={role!r}, action={action!r}.")
 
 
-class OwnerRoleNotConfiguredError(Exception):
-    """The 'owner' role is missing — run `scripts.seed_rbac` before any
-    tenant can be provisioned or created."""
-
-
 # This app consider only one tenant = one user
 class TenantAlreadyExistsError(Exception):
     """Raised when the user already has an active tenant membership — this

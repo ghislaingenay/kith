@@ -6,6 +6,7 @@ import pytest
 
 from tenants.exceptions import TenantAlreadyExistsError
 from tenants.models import TenantMembership
+from tenants.permissions import Role
 from tenants.service import TenantsService
 
 
@@ -13,7 +14,7 @@ class FakeTenantsRepository:
     """In-memory stand-in for TenantsRepository, matching its async interface."""
 
     def __init__(self) -> None:
-        self.membership_details: list[tuple[TenantMembership, str, str]] = []
+        self.membership_details: list[tuple[TenantMembership, str, Role]] = []
         self.provisioned: list[dict] = []
         self.created: list[dict] = []
         self.locks_acquired: list[uuid.UUID] = []
@@ -26,15 +27,15 @@ class FakeTenantsRepository:
             {"user_id": user_id, "email": email, "first_name": first_name}
         )
         return TenantMembership(
-            tenant_id=uuid.uuid4(), user_id=user_id, role_id=uuid.uuid4()
+            tenant_id=uuid.uuid4(), user_id=user_id, role=Role.OWNER
         )
 
     async def create_tenant(self, *, user_id, name):
         self.created.append({"user_id": user_id, "name": name})
         membership = TenantMembership(
-            tenant_id=uuid.uuid4(), user_id=user_id, role_id=uuid.uuid4()
+            tenant_id=uuid.uuid4(), user_id=user_id, role=Role.OWNER
         )
-        return membership, name, "owner"
+        return membership, name, Role.OWNER
 
     async def list_active_membership_details(self, user_id):
         return [row for row in self.membership_details if row[0].user_id == user_id]
@@ -45,16 +46,16 @@ class TestListMyMemberships:
         repo = FakeTenantsRepository()
         user_id = uuid.uuid4()
         membership = TenantMembership(
-            tenant_id=uuid.uuid4(), user_id=user_id, role_id=uuid.uuid4()
+            tenant_id=uuid.uuid4(), user_id=user_id, role=Role.OWNER
         )
-        repo.membership_details.append((membership, "Acme Inc", "owner"))
+        repo.membership_details.append((membership, "Acme Inc", Role.OWNER))
         service = TenantsService(repo)
 
         summaries = await service.list_my_memberships(user_id)
 
         assert len(summaries) == 1
         assert summaries[0].tenant_name == "Acme Inc"
-        assert summaries[0].role_name == "owner"
+        assert summaries[0].role == Role.OWNER
 
     async def test_returns_empty_list_for_no_memberships(self) -> None:
         service = TenantsService(FakeTenantsRepository())
@@ -74,16 +75,16 @@ class TestCreateTenant:
 
         assert repo.created == [{"user_id": user_id, "name": "Acme"}]
         assert summary.tenant_name == "Acme"
-        assert summary.role_name == "owner"
+        assert summary.role == Role.OWNER
         assert repo.locks_acquired == [user_id]
 
     async def test_raises_when_user_already_has_an_active_membership(self) -> None:
         repo = FakeTenantsRepository()
         user_id = uuid.uuid4()
         existing_membership = TenantMembership(
-            tenant_id=uuid.uuid4(), user_id=user_id, role_id=uuid.uuid4()
+            tenant_id=uuid.uuid4(), user_id=user_id, role=Role.OWNER
         )
-        repo.membership_details.append((existing_membership, "Acme Inc", "owner"))
+        repo.membership_details.append((existing_membership, "Acme Inc", Role.OWNER))
         service = TenantsService(repo)
 
         with pytest.raises(TenantAlreadyExistsError):

@@ -4,6 +4,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from tenants.permissions import Role
+
 
 class TenantMembershipSummary(BaseModel):
     """One row of an identity's tenant memberships — used by GET /tenants
@@ -11,8 +13,7 @@ class TenantMembershipSummary(BaseModel):
 
     tenant_id: uuid.UUID
     tenant_name: str
-    role_id: uuid.UUID
-    role_name: str
+    role: Role
 
 
 class CreateTenantRequest(BaseModel):

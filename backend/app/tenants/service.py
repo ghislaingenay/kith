@@ -5,6 +5,7 @@ import uuid
 
 from tenants.exceptions import TenantAlreadyExistsError
 from tenants.models import TenantMembership
+from tenants.permissions import Role
 from tenants.repository import TenantsRepository
 from tenants.schemas import TenantMembershipSummary
 
@@ -32,20 +33,17 @@ class TenantsService:
         await self.repository.acquire_user_tenant_lock(user_id)
 
         rows = await self.repository.list_active_membership_details(user_id)
-        already_owns_tenant = any(
-            role_name == "owner" for _, _tenant_name, role_name in rows
-        )
+        already_owns_tenant = any(role == Role.OWNER for _, _tenant_name, role in rows)
         if already_owns_tenant:
             raise TenantAlreadyExistsError(name)
 
-        membership, tenant_name, role_name = await self.repository.create_tenant(
+        membership, tenant_name, role = await self.repository.create_tenant(
             user_id=user_id, name=name
         )
         return TenantMembershipSummary(
             tenant_id=membership.tenant_id,
             tenant_name=tenant_name,
-            role_id=membership.role_id,
-            role_name=role_name,
+            role=role,
         )
 
     async def list_my_memberships(
@@ -56,8 +54,7 @@ class TenantsService:
             TenantMembershipSummary(
                 tenant_id=membership.tenant_id,
                 tenant_name=tenant_name,
-                role_id=membership.role_id,
-                role_name=role_name,
+                role=role,
             )
-            for membership, tenant_name, role_name in rows
+            for membership, tenant_name, role in rows
         ]

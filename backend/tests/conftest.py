@@ -10,7 +10,6 @@ Domain-specific `repository` fixtures (AuthRepository, TenantsRepository,
 ...) stay in each domain's own tests/<domain>/conftest.py — only the
 container/session plumbing that's identical across domains lives here."""
 
-import uuid
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
@@ -18,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from testcontainers.community.postgres import PostgresContainer
 
 from core.database import Base, DatabaseSettings, create_engine, create_session_factory
-from rbac.models import Role
 
 
 @pytest.fixture(scope="session")
@@ -53,17 +51,3 @@ async def db_session(_database_url: str) -> AsyncIterator[AsyncSession]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
-
-
-@pytest.fixture
-async def owner_role(db_session: AsyncSession) -> Role:
-    role = Role(
-        id=uuid.uuid4(),
-        name="owner",
-        display_name="Owner",
-        description="Full access within their own tenant.",
-        is_system_role=True,
-    )
-    db_session.add(role)
-    await db_session.commit()
-    return role

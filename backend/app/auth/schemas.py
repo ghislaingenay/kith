@@ -4,6 +4,8 @@ import uuid
 
 from pydantic import BaseModel, EmailStr
 
+from tenants.permissions import Role
+
 
 class AuthenticatedUser(BaseModel):
     id: uuid.UUID
@@ -14,4 +16,4 @@ class AuthenticatedUser(BaseModel):
 
 class TenantContext(BaseModel):
     tenant_id: uuid.UUID
-    role_id: uuid.UUID
+    role: Role

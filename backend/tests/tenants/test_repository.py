@@ -4,10 +4,10 @@ DATABASE_URL — skipped automatically otherwise (see conftest.py)."""
 import uuid
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from rbac.models import Role
-from tenants.exceptions import OwnerRoleNotConfiguredError
+from tenants.permissions import Role
 from tenants.repository import TenantsRepository
 from users.models import User
 
@@ -26,7 +26,7 @@ async def _make_user(db_session: AsyncSession, email: str) -> User:
 
 class TestProvisionDefaultMembership:
     async def test_creates_tenant_and_owner_membership(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "dana@example.com")
 
@@ -35,10 +35,10 @@ class TestProvisionDefaultMembership:
         )
 
         assert membership.user_id == user.id
-        assert membership.role_id == owner_role.id
+        assert membership.role == Role.OWNER
 
     async def test_is_idempotent_for_a_retried_call(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "eve@example.com")
 
@@ -53,8 +53,8 @@ class TestProvisionDefaultMembership:
 
 
 class TestListActiveMembershipDetails:
-    async def test_joins_tenant_and_role_names(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+    async def test_joins_tenant_name_and_reads_role_from_the_row(
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "hank@example.com")
         await repository.provision_default_membership(
@@ -64,28 +64,28 @@ class TestListActiveMembershipDetails:
         rows = await repository.list_active_membership_details(user.id)
 
         assert len(rows) == 1
-        _, tenant_name, role_name = rows[0]
+        _, tenant_name, role = rows[0]
         assert tenant_name == "Hank's organization"
-        assert role_name == "owner"
+        assert role == Role.OWNER
 
 
 class TestCreateTenant:
     async def test_creates_tenant_and_owner_membership_with_supplied_name(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "ivan@example.com")
 
-        membership, tenant_name, role_name = await repository.create_tenant(
+        membership, tenant_name, role = await repository.create_tenant(
             user_id=user.id, name="Ivan's Second Company"
         )
 
         assert membership.user_id == user.id
-        assert membership.role_id == owner_role.id
+        assert membership.role == Role.OWNER
         assert tenant_name == "Ivan's Second Company"
-        assert role_name == "owner"
+        assert role == Role.OWNER
 
     async def test_two_calls_with_same_name_create_distinct_tenants(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "jill@example.com")
 
@@ -94,18 +94,10 @@ class TestCreateTenant:
 
         assert first.tenant_id != second.tenant_id
 
-    async def test_raises_owner_role_not_configured_when_role_missing(
-        self, repository: TenantsRepository, db_session: AsyncSession
-    ) -> None:
-        user = await _make_user(db_session, "kim@example.com")
-
-        with pytest.raises(OwnerRoleNotConfiguredError):
-            await repository.create_tenant(user_id=user.id, name="No Role Co")
-
 
 class TestGetActiveMembership:
     async def test_returns_membership_when_exists(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "leo@example.com")
         created_membership = await repository.provision_default_membership(
@@ -121,7 +113,7 @@ class TestGetActiveMembership:
         assert found.tenant_id == created_membership.tenant_id
 
     async def test_returns_none_when_membership_does_not_exist(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "maria@example.com")
 
@@ -132,7 +124,7 @@ class TestGetActiveMembership:
         assert found is None
 
     async def test_returns_none_when_membership_is_deactivated(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         from datetime import UTC, datetime
         from tenants.models import TenantMembership
@@ -164,7 +156,7 @@ class TestGetActiveMembership:
 
 class TestProvisionDefaultMembershipEdgeCases:
     async def test_tenant_name_uses_first_name_when_available(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "oliver@example.com")
 
@@ -177,7 +169,7 @@ class TestProvisionDefaultMembershipEdgeCases:
         assert tenant_name == "Oliver's organization"
 
     async def test_tenant_name_uses_email_prefix_when_no_first_name(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "paula@example.com")
 
@@ -189,20 +181,10 @@ class TestProvisionDefaultMembershipEdgeCases:
         _, tenant_name, _ = rows[0]
         assert tenant_name == "paula's organization"
 
-    async def test_raises_when_owner_role_not_configured(
-        self, repository: TenantsRepository, db_session: AsyncSession
-    ) -> None:
-        user = await _make_user(db_session, "quinn@example.com")
-
-        with pytest.raises(OwnerRoleNotConfiguredError):
-            await repository.provision_default_membership(
-                user_id=user.id, email=user.email, first_name="Quinn"
-            )
-
 
 class TestListActiveMembershipDetailsMultipleTenants:
     async def test_returns_all_memberships_for_user_in_multiple_tenants(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "rachel@example.com")
         await repository.provision_default_membership(
@@ -218,7 +200,7 @@ class TestListActiveMembershipDetailsMultipleTenants:
         assert "Rachel's Side Project" in tenant_names
 
     async def test_excludes_deactivated_memberships_from_details(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         from datetime import UTC, datetime
         from tenants.models import TenantMembership
@@ -249,7 +231,7 @@ class TestListActiveMembershipDetailsMultipleTenants:
         assert tenant_name == "Sam's Active Company"
 
     async def test_returns_empty_list_when_no_memberships(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "tina@example.com")
 
@@ -258,9 +240,31 @@ class TestListActiveMembershipDetailsMultipleTenants:
         assert rows == []
 
 
+class TestRoleColumnConstraint:
+    async def test_rejects_a_role_outside_the_four_values(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        from tenants.models import TenantMembership
+
+        user = await _make_user(db_session, "uma@example.com")
+        tenant_membership, _, _ = await repository.create_tenant(
+            user_id=user.id, name="Uma's Company"
+        )
+
+        db_session.add(
+            TenantMembership(
+                tenant_id=tenant_membership.tenant_id,
+                user_id=uuid.uuid4(),
+                role="superuser",
+            )
+        )
+        with pytest.raises(DBAPIError):
+            await db_session.commit()
+
+
 class TestSlugGeneration:
     async def test_slug_handles_special_characters(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "user@example.com")
 
@@ -281,7 +285,7 @@ class TestSlugGeneration:
         assert "test-company-123" in tenant.slug
 
     async def test_slug_handles_unicode_characters(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "user@example.com")
 
@@ -303,7 +307,7 @@ class TestSlugGeneration:
         assert len(tenant.slug) > 0
 
     async def test_slug_handles_very_long_names(
-        self, repository: TenantsRepository, db_session: AsyncSession, owner_role: Role
+        self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         user = await _make_user(db_session, "user@example.com")
         long_name = "A" * 200  # Very long tenant name

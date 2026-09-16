@@ -1,6 +1,6 @@
 """Domain-specific fixtures for tenants repository tests. The Postgres
-container/session fixtures (`db_session`, `owner_role`) are shared across
-domains — see tests/conftest.py."""
+container/session fixture (`db_session`) is shared across domains — see
+tests/conftest.py."""
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
