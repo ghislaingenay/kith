@@ -19,7 +19,6 @@ async def test_lifespan_initializes_infra_on_startup_and_releases_it_on_shutdown
     None
 ):
     mock_container = MagicMock()
-    mock_container.role_permission_cache_service.return_value.refresh = AsyncMock()
     mock_db_engine = mock_container.db_engine.return_value
     mock_db_engine.dispose = AsyncMock()
     mock_cache_provider = mock_container.cache_provider.return_value
@@ -35,7 +34,7 @@ async def test_lifespan_initializes_infra_on_startup_and_releases_it_on_shutdown
             mock_container.db_engine.assert_called()
             mock_container.cache_provider.assert_called()
             mock_container.rate_limiter.assert_called()
-            mock_container.role_permission_cache_service.return_value.refresh.assert_awaited_once()
+            mock_container.role_permission_cache_service.assert_not_called()
             mock_db_engine.dispose.assert_not_awaited()
             mock_cache_provider.close.assert_not_awaited()
             mock_rate_limiter.close.assert_not_awaited()

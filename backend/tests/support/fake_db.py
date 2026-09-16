@@ -6,8 +6,7 @@ This is deliberately a *stub*, not a SQL engine: each test scripts the
 repository's return value and on what the fake session recorded (statements
 executed, objects added, whether commit/refresh happened). It supports
 `async with session_factory() as session:` the same way
-`async_sessionmaker` does, so it also works as the `session_factory` handed
-to `RolePermissionCacheService`.
+`async_sessionmaker` does, so it also works as a scripted `session_factory`.
 """
 
 from __future__ import annotations
