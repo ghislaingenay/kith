@@ -7,15 +7,13 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from rbac.models import Role
-from tenants.exceptions import OwnerRoleNotConfiguredError
 from tenants.models import Tenant, TenantMembership
+from tenants.permissions import Role
 
 _DEFAULT_TENANT_TIER = "free"
 _DEFAULT_TENANT_MAX_USERS = (
     5  # MVP default seat count; revisit if there's a billing-driven policy
 )
-_DEFAULT_TENANT_ROLE_NAME = "owner"
 # Arbitrary namespace for pg_advisory_xact_lock's two-int32 key, so this
 # lock class can't collide with an unrelated advisory lock taken elsewhere
 # in the app on the same connection.
@@ -77,27 +75,19 @@ class TenantsRepository:
 
     async def list_active_membership_details(
         self, user_id: uuid.UUID
-    ) -> list[tuple[TenantMembership, str, str]]:
-        """(membership, tenant_name, role_name) tuples — the display shape
-        for /tenants and /me's memberships list."""
+    ) -> list[tuple[TenantMembership, str, Role]]:
+        """(membership, tenant_name, role) tuples — the display shape
+        for /tenants and /me's memberships list. The Role comes straight off
+        the membership row, no Roles table to join."""
         result = await self.session.execute(
-            select(TenantMembership, Tenant.name, Role.name)
+            select(TenantMembership, Tenant.name)
             .join(Tenant, Tenant.id == TenantMembership.tenant_id)
-            .join(Role, Role.id == TenantMembership.role_id)
             .where(
                 TenantMembership.user_id == user_id,
                 TenantMembership.deactivated_at.is_(None),
             )
         )
-        return [(row[0], row[1], row[2]) for row in result.all()]
-
-    async def _get_owner_role_id(self) -> uuid.UUID:
-        role_id = await self.session.scalar(
-            select(Role.id).where(Role.name == _DEFAULT_TENANT_ROLE_NAME)
-        )
-        if role_id is None:
-            raise OwnerRoleNotConfiguredError()
-        return role_id
+        return [(row[0], row[1], Role(row[0].role)) for row in result.all()]
 
     async def provision_default_membership(
         self, *, user_id: uuid.UUID, email: str, first_name: str | None = None
@@ -131,11 +121,9 @@ class TenantsRepository:
                 select(Tenant.id).where(Tenant.slug == slug)
             )
 
-        role_id = await self._get_owner_role_id()
-
         membership_insert = (
             insert(TenantMembership)
-            .values(tenant_id=tenant_id, user_id=user_id, role_id=role_id)
+            .values(tenant_id=tenant_id, user_id=user_id, role=Role.OWNER)
             .on_conflict_do_nothing(
                 index_elements=[TenantMembership.tenant_id, TenantMembership.user_id]
             )
@@ -152,7 +140,7 @@ class TenantsRepository:
 
     async def create_tenant(
         self, *, user_id: uuid.UUID, name: str
-    ) -> tuple[TenantMembership, str, str]:
+    ) -> tuple[TenantMembership, str, Role]:
         """Explicit, user-initiated action: an already-authenticated
         identity creates a new tenant and becomes its owner. Not idempotent
         like provision_default_membership — each call makes a brand-new
@@ -166,7 +154,6 @@ class TenantsRepository:
         must check eligibility themselves, e.g. via
         acquire_user_tenant_lock() + list_active_membership_details()."""
         slug = f"{_slugify(name)[:80]}-{uuid.uuid4().hex[:8]}"
-        role_id = await self._get_owner_role_id()
 
         tenant = Tenant(
             name=name,
@@ -178,8 +165,8 @@ class TenantsRepository:
         await self.session.flush()
 
         membership = TenantMembership(
-            tenant_id=tenant.id, user_id=user_id, role_id=role_id
+            tenant_id=tenant.id, user_id=user_id, role=Role.OWNER
         )
         self.session.add(membership)
         await self.session.commit()
-        return membership, tenant.name, _DEFAULT_TENANT_ROLE_NAME
+        return membership, tenant.name, Role.OWNER

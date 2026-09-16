@@ -12,7 +12,6 @@ from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
-from rbac.service import RolePermissionCacheService
 
 
 def _configure_logging_once(settings: LoggingSettings) -> bool:
@@ -74,17 +73,6 @@ class Container(containers.DeclarativeContainer):
     retry_settings = providers.Singleton(RetrySettings)
 
     retry_handler = providers.Singleton(RetryHandler, settings=retry_settings)
-
-    # Holds process-wide in-memory state (cached roles/permissions, a lock)
-    # refreshed on an interval — a singleton like the providers above, not a
-    # per-request object. The app's startup/lifespan should call
-    # `await container.role_permission_cache_service().refresh()` eagerly so
-    # the cache is populated before the first request needs it.
-    role_permission_cache_service = providers.Singleton(
-        RolePermissionCacheService,
-        session_factory=db_session_factory,
-        cache_provider=cache_provider,
-    )
 
     cors_settings = providers.Singleton(CorsSettings)
 

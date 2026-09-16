@@ -1,6 +1,6 @@
-"""Unit tests for users' FastAPI dependency wiring. See
-tests/rbac/test_dependencies.py for why `get_db_session` is tested against a
-mocked container rather than the real one.
+"""Unit tests for users' FastAPI dependency wiring. `get_db_session` goes
+through the module-level `container`, so it's tested against a mocked
+stand-in rather than the real one (which would require a live DATABASE_URL).
 """
 
 from unittest.mock import MagicMock, patch

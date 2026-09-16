@@ -14,6 +14,7 @@ from core.storage.exceptions import StorageObjectNotFoundError
 from core.storage.provider import StorageObjectMetadata
 from main import app
 from tenants.dependencies import get_tenants_service
+from tenants.permissions import Role
 from tenants.router import (
     tenants_logo_upload_rate_limit,
     tenants_read_rate_limit,
@@ -26,7 +27,7 @@ _USER = AuthenticatedUser(
     email_verified=True,
     is_active=True,
 )
-_TENANT = TenantContext(tenant_id=uuid.uuid4(), role_id=uuid.uuid4())
+_TENANT = TenantContext(tenant_id=uuid.uuid4(), role=Role.OWNER)
 
 
 class FakeTenantsService:
@@ -43,8 +44,7 @@ class FakeTenantsService:
         return self.next_created or TenantMembershipSummary(
             tenant_id=uuid.uuid4(),
             tenant_name=name,
-            role_id=uuid.uuid4(),
-            role_name="owner",
+            role=Role.OWNER,
         )
 
 
@@ -68,8 +68,7 @@ class TestListMyTenants:
             TenantMembershipSummary(
                 tenant_id=uuid.uuid4(),
                 tenant_name="Acme",
-                role_id=uuid.uuid4(),
-                role_name="owner",
+                role=Role.OWNER,
             )
         ]
         _override(service)
@@ -117,8 +116,7 @@ class TestCreateTenant:
         service.next_created = TenantMembershipSummary(
             tenant_id=uuid.uuid4(),
             tenant_name="Acme",
-            role_id=uuid.uuid4(),
-            role_name="owner",
+            role=Role.OWNER,
         )
         _override(service)
 
@@ -130,7 +128,7 @@ class TestCreateTenant:
         assert response.status_code == 201
         body = response.json()
         assert body["tenant_name"] == "Acme"
-        assert body["role_name"] == "owner"
+        assert body["role"] == "owner"
         assert service.create_calls == [{"user_id": _USER.id, "name": "Acme"}]
 
     async def test_returns_422_when_name_missing(self) -> None:
@@ -216,6 +214,66 @@ _HEADERS = {"X-Tenant-ID": str(_TENANT.tenant_id)}
 
 
 class TestUploadTenantLogo:
+    @pytest.mark.parametrize("role", [Role.OWNER, Role.ADMIN])
+    async def test_returns_201_for_owner_and_admin(self, role: Role) -> None:
+        storage = FakeStorageProvider()
+        tenant = TenantContext(tenant_id=_TENANT.tenant_id, role=role)
+        _override_logo(storage, tenant=tenant)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/tenants/logo",
+                files={"file": ("brand.png", b"fake-png-bytes", "image/png")},
+                headers=_HEADERS,
+            )
+
+        assert response.status_code == 201
+
+    @pytest.mark.parametrize("role", [Role.MEMBER, Role.VIEWER])
+    async def test_returns_403_for_member_and_viewer(self, role: Role) -> None:
+        storage = FakeStorageProvider()
+        tenant = TenantContext(tenant_id=_TENANT.tenant_id, role=role)
+        _override_logo(storage, tenant=tenant)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/tenants/logo",
+                files={"file": ("brand.png", b"fake-png-bytes", "image/png")},
+                headers=_HEADERS,
+            )
+
+        assert response.status_code == 403
+        body = response.json()
+        assert body["error"] == "Permission denied"
+        assert "settings" in body["message"]
+        assert storage.uploaded == []
+
+    async def test_returns_401_when_unauthenticated(self) -> None:
+        """403 from PermissionDenied must be distinguishable from the 401
+        raised for an unauthenticated caller."""
+        storage = FakeStorageProvider()
+        _override_logo(storage)
+
+        async def _raise_unauthenticated():
+            raise AuthenticationError("unauthorized")
+
+        app.dependency_overrides[get_current_tenant] = _raise_unauthenticated
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/tenants/logo",
+                files={"file": ("brand.png", b"fake-png-bytes", "image/png")},
+                headers=_HEADERS,
+            )
+
+        assert response.status_code == 401
+
     async def test_stores_png_at_fixed_key_and_returns_public_url(self) -> None:
         storage = FakeStorageProvider()
         _override_logo(storage)
@@ -328,3 +386,19 @@ class TestGetTenantLogo:
 
         assert response.status_code == 200
         assert response.json() == {"url": None}
+
+    async def test_succeeds_for_viewer(self) -> None:
+        """The logo read route is not gated beyond the tenant context —
+        every Role, including the least-privileged Viewer, can fetch it."""
+        key = f"tenant/{_TENANT.tenant_id}/logo/logo.png"
+        storage = FakeStorageProvider(existing_keys={key})
+        tenant = TenantContext(tenant_id=_TENANT.tenant_id, role=Role.VIEWER)
+        _override_logo(storage, tenant=tenant)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/v1/tenants/logo", headers=_HEADERS)
+
+        assert response.status_code == 200
+        assert response.json() == {"url": f"https://cdn.example.com/{key}"}

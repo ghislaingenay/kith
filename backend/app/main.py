@@ -16,13 +16,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Order matters: logging must be configured before anything else has a
     # chance to log. `db_engine`/`cache_provider`/`rate_limiter` are called
     # eagerly so a bad DATABASE_URL/REDIS_URL fails fast at startup instead
-    # of on first request (see notes in core/container.py). The role cache
-    # needs both, so it refreshes last.
+    # of on first request (see notes in core/container.py).
     container.logging_configured()
     container.db_engine()
     container.cache_provider()
     container.rate_limiter()
-    await container.role_permission_cache_service().refresh()
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
     # connections rather than letting the process drop them.

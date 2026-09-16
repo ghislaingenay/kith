@@ -15,9 +15,26 @@ class InvalidLogoUploadError(Exception):
     large. Mapped to HTTP 422 at the API boundary."""
 
 
-class OwnerRoleNotConfiguredError(Exception):
-    """The 'owner' role is missing — run `scripts.seed_rbac` before any
-    tenant can be provisioned or created."""
+class PermissionDenied(Exception):
+    """Raised by `require_permission` when the current tenant context's Role
+    is not allowed to perform an action. Mapped to HTTP 403 at the API
+    boundary, distinct from the 401 raised for authentication errors."""
+
+    def __init__(self, action: object):
+        self.action = action
+        super().__init__(f"Not permitted to perform '{action}'.")
+
+
+class UnknownRoleOrActionError(Exception):
+    """Raised when the permission table is asked about a Role or an action it
+    does not know. This is a programming error or bad data, never a client
+    error, so it is mapped to HTTP 500 at the API boundary. A permission check
+    must never treat an unknown input as denied (or allowed) silently."""
+
+    def __init__(self, *, role: object, action: object):
+        self.role = role
+        self.action = action
+        super().__init__(f"Unknown role or action: role={role!r}, action={action!r}.")
 
 
 # This app consider only one tenant = one user
