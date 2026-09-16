@@ -15,6 +15,18 @@ class InvalidLogoUploadError(Exception):
     large. Mapped to HTTP 422 at the API boundary."""
 
 
+class UnknownRoleOrActionError(Exception):
+    """Raised when the permission table is asked about a Role or an action it
+    does not know. This is a programming error or bad data, never a client
+    error, so it is mapped to HTTP 500 at the API boundary. A permission check
+    must never treat an unknown input as denied (or allowed) silently."""
+
+    def __init__(self, *, role: object, action: object):
+        self.role = role
+        self.action = action
+        super().__init__(f"Unknown role or action: role={role!r}, action={action!r}.")
+
+
 class OwnerRoleNotConfiguredError(Exception):
     """The 'owner' role is missing — run `scripts.seed_rbac` before any
     tenant can be provisioned or created."""
