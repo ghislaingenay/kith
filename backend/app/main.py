@@ -21,6 +21,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     container.db_engine()
     container.cache_provider()
     container.rate_limiter()
+    container.mailer()
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
     # connections rather than letting the process drop them.
@@ -28,8 +29,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await container.cache_provider().close()
     await container.rate_limiter().close()
 
+
 def set_api_version(version: str = "v1") -> str:
     return f"/api/{version}"
+
 
 app = FastAPI(title="Kith", lifespan=lifespan)
 register_exception_handlers(app)

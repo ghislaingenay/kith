@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import TimeoutError
 
 from auth.exceptions import AuthenticationError
+from core.mail.exceptions import MailError
 from core.ratelimit.exception_handlers import register_ratelimit_exception_handlers
 from core.storage.exceptions import StorageError
 from tenants.exception_handlers import register_tenant_exception_handlers
@@ -24,6 +25,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _handle_authentication_error)  # type: ignore[arg-type]
     # See note in upload/exception_handlers.py on this ignore.
     app.add_exception_handler(StorageError, _handle_storage_error)  # type: ignore[arg-type]
+    app.add_exception_handler(MailError, _handle_mail_error)  # type: ignore[arg-type]
     app.add_exception_handler(TimeoutError, _handle_db_timeout_error)  # type: ignore[arg-type]
 
 
@@ -42,6 +44,16 @@ async def _handle_storage_error(_: Request, __: StorageError) -> JSONResponse:
         content={
             "error": "storage_unavailable",
             "message": "Storage provider is temporarily unavailable",
+        },
+    )
+
+
+async def _handle_mail_error(_: Request, __: MailError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "error": "mail_unavailable",
+            "message": "Mail provider is temporarily unavailable",
         },
     )
 

@@ -3,10 +3,12 @@
 from dependency_injector import containers, providers
 
 from core.cache.config import CacheSettings
-from core.cors import CorsSettings
 from core.cache.factory import CacheProviderFactory
+from core.cors import CorsSettings
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.logging.config import LoggingSettings, configure_logging
+from core.mail.config import MailSettings
+from core.mail.factory import MailerFactory
 from core.ratelimit.factory import RateLimiterFactory
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
@@ -76,5 +78,11 @@ class Container(containers.DeclarativeContainer):
 
     cors_settings = providers.Singleton(CorsSettings)
 
+    mail_settings = providers.Singleton(MailSettings)
+
+    # Same eager-init note as storage_provider/cache_provider: call
+    # `container.mailer()` during startup/lifespan so missing SMTP config
+    # fails fast instead of on first magic-link request.
+    mailer = providers.Singleton(MailerFactory.create, settings=mail_settings)
 
 container = Container()

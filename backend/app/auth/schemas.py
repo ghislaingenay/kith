@@ -17,3 +17,11 @@ class AuthenticatedUser(BaseModel):
 class TenantContext(BaseModel):
     tenant_id: uuid.UUID
     role: Role
+
+
+class MagicLinkRequest(BaseModel):
+    email: EmailStr
+
+
+class MagicLinkRequestResponse(BaseModel):
+    message: str

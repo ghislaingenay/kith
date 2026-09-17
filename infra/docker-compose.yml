@@ -45,6 +45,17 @@ services:
       timeout: 5s
       retries: 5
 
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI — view magic-link emails at http://localhost:8025
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8025/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   app:
     build: ../backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -58,6 +69,11 @@ services:
       S3_ENDPOINT: http://minio:9000
       REDIS_URL: redis://redis:6379/0
       CORS_ALLOWED_ORIGINS: http://localhost:3000
+      # Magic-link email (ADR-0006) — Mailpit locally, no auth/TLS needed.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      MAIL_FROM_ADDRESS: noreply@kith.dev
+      MAGIC_LINK_VERIFY_URL: http://localhost:8000/api/v1/auth/magic-link/verify
       # Clerk credentials — set these in a root .env (docker compose loads
       # it automatically); never hardcode real secrets here.
       AUTH_PROVIDER: ${AUTH_PROVIDER:-clerk}
@@ -84,6 +100,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_healthy
     volumes:
       - ./backend:/app
 
@@ -99,6 +117,9 @@ services:
       # Host-reachable on purpose — this runs in the browser, not inside
       # the compose network, so it can't resolve "app" as a hostname.
       VITE_API_BASE_URL: http://localhost:8000
+      # Next.js only exposes NEXT_PUBLIC_*-prefixed vars to the browser
+      # (the VITE_ vars above predate ADR-0006's move off Vite).
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
     volumes:
       - ../frontend:/app
       - /app/node_modules
