@@ -148,7 +148,7 @@ Redux Toolkit/RTK Query are not used on this project — TanStack Query owns cli
 
 ## 7. Testing
 
-- Unit/component tests: Vitest + React Testing Library (see `mvp-design.md` §8 — not Jest).
+- Unit/component tests: not set up yet (planned: Vitest + React Testing Library).
 - One end-to-end flow (sign in → upload → search → ask) via Playwright, run against the compose stack in CI.
 - Mock the API at the network boundary (e.g. MSW) in unit tests; feature `api/` modules should be the only thing that needs mocking.
 
