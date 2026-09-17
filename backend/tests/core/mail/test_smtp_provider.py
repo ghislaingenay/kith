@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import aiosmtplib
 import pytest
+
 from core.mail.exceptions import MailUnavailableError
 from core.mail.smtp_provider import SMTPMailer
 

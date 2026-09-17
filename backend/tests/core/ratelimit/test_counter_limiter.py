@@ -2,9 +2,9 @@
 rate limiter used by the magic-link flow."""
 
 import pytest
+
 from core.ratelimit.counter_limiter import CounterLimiter
 from core.ratelimit.exceptions import RateLimitExceededError
-
 from tests.support.fake_cache import FakeCacheProvider
 
 

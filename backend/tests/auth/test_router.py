@@ -5,13 +5,13 @@ enumeration-safety and rate-limit behavior are exercised end to end, not
 mocked away."""
 
 import pytest
+from httpx import ASGITransport, AsyncClient
+
 from auth.config import MAGIC_LINK_RATE_LIMIT_PER_HOUR
 from auth.dependencies import get_magic_link_service
 from auth.service import MagicLinkService
 from core.ratelimit.counter_limiter import CounterLimiter
-from httpx import ASGITransport, AsyncClient
 from main import app
-
 from tests.support.fake_cache import FakeCacheProvider
 from tests.support.fake_mailer import FakeMailer
 

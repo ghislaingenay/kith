@@ -3,6 +3,7 @@
 import hashlib
 
 import pytest
+
 from auth.config import (
     MAGIC_LINK_RATE_LIMIT_PER_HOUR,
     MAGIC_LINK_TOKEN_TTL_SECONDS,
@@ -10,7 +11,6 @@ from auth.config import (
 from auth.service import MagicLinkService
 from core.ratelimit.counter_limiter import CounterLimiter
 from core.ratelimit.exceptions import RateLimitExceededError
-
 from tests.support.fake_cache import FakeCacheProvider
 from tests.support.fake_mailer import FakeMailer
 

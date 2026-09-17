@@ -5,6 +5,7 @@ SMTP relay, including a provider like Resend's SMTP endpoint, in production).
 from email.message import EmailMessage
 
 import aiosmtplib
+
 from core.mail.exceptions import MailUnavailableError
 from core.mail.provider import Mailer
 

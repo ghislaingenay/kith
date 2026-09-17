@@ -60,11 +60,12 @@ class MagicLinkService:
         )
 
         link = f"{self._verify_url}?token={token}&email={quote(email)}"
+        ttl_minutes = MAGIC_LINK_TOKEN_TTL_SECONDS // 60
         await self._mailer.send(
             to=email,
             subject="Your Kith sign-in link",
             body=(
-                "Use the link below to sign in. It expires in 15 minutes "
+                f"Use the link below to sign in. It expires in {ttl_minutes} minutes "
                 f"and can only be used once.\n\n{link}"
             ),
         )
