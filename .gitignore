@@ -5,4 +5,7 @@ backend/.venv/
 backend/fast_os.egg-info/
 backend/kith.egg-info/
 
+frontend/**/.pnpm-store/
+frontend/node_modules/
+
 .vscode/*

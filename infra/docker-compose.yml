@@ -60,7 +60,7 @@ services:
 
   app:
     build: ../backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     environment:
@@ -112,12 +112,17 @@ services:
       mailpit:
         condition: service_healthy
     volumes:
-      - ./backend:/app
+      - ../backend:/app
 
   frontend:
     image: node:22.22
     working_dir: /app
-    command: sh -lc "corepack enable && corepack prepare pnpm@8.6.12 --activate && pnpm install --frozen-lockfile && pnpm run dev -- --host 0.0.0.0 --port 3000"
+    # `pnpm run dev -- --host ...` forwards a literal "--" into `next dev`,
+    # which this Next.js version's CLI then misparses as the positional
+    # project-directory argument ("Invalid project directory ... --host").
+    # `pnpm exec` calls the binary directly, sidestepping that passthrough.
+    # Also: this Next.js version's flag is `--hostname` (`-H`), not `--host`.
+    command: sh -lc "corepack enable && corepack prepare pnpm@8.6.12 --activate && pnpm install --frozen-lockfile && pnpm exec next dev --hostname 0.0.0.0 --port 3000"
     ports:
       - "3000:3000"
     environment:
