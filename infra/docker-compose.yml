@@ -130,6 +130,14 @@ services:
     volumes:
       - ../frontend:/app
       - /app/node_modules
+    healthcheck:
+      # No dedicated /health route on the frontend — the dev server
+      # answering "/" with 2xx is a fine readiness proxy for e2e/CI.
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     depends_on:
       app:
         condition: service_healthy

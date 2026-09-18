@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/config/env";
-
-import { meResponseSchema } from "../types";
+import { getSessionIdentity, workspacePath } from "@/lib/session_identity";
 
 function redirectTo(path: string, request: NextRequest): NextResponse {
   return NextResponse.redirect(new URL(path, request.url));
@@ -10,12 +9,13 @@ function redirectTo(path: string, request: NextRequest): NextResponse {
 
 /**
  * Verifies a magic-link token server-side, then forwards the session
- * cookie the API just issued into a GET /me call to decide where to send
- * the browser — the cookie itself is attached to the redirect response so
- * the browser stores it (ADR-0006: only FastAPI ever sets/clears this
- * cookie, but a Set-Cookie on a server-side fetch response is otherwise
- * dropped, so it's copied across by hand here rather than relying on
- * fetch's cookie jar, which doesn't exist server-side).
+ * cookie the API just issued into a GET /me call (via the shared
+ * `getSessionIdentity`, coding-standards §4.2) to decide where to send the
+ * browser — the cookie itself is attached to the redirect response so the
+ * browser stores it (ADR-0006: only FastAPI ever sets/clears this cookie,
+ * but a Set-Cookie on a server-side fetch response is otherwise dropped, so
+ * it's copied across by hand here rather than relying on fetch's cookie
+ * jar, which doesn't exist server-side).
  */
 export async function verifyMagicLinkAndRedirect(
   request: NextRequest,
@@ -45,27 +45,20 @@ export async function verifyMagicLinkAndRedirect(
   }
   const sessionCookiePair = setCookieHeader.split(";")[0];
 
-  const meResponse = await fetch(`${env.NEXT_PUBLIC_API_URL}/me`, {
-    headers: { cookie: sessionCookiePair },
-  });
+  // Right after verifying, any /me failure (invalid session, backend
+  // outage) is treated the same way — there's no useful distinction to
+  // surface to a visitor who just clicked a fresh link.
+  const identity = await getSessionIdentity(sessionCookiePair).catch(() => null);
+  const destination = identity ? destinationFor(identity) : "/sign-in?error=session-failed";
 
-  const redirectResponse = redirectTo(await destinationFor(meResponse), request);
+  const redirectResponse = redirectTo(destination, request);
   redirectResponse.headers.set("set-cookie", setCookieHeader);
   return redirectResponse;
 }
 
-async function destinationFor(meResponse: Response): Promise<string> {
-  if (!meResponse.ok) {
-    return "/sign-in?error=session-failed";
-  }
-
-  const parsed = meResponseSchema.safeParse(await meResponse.json());
-  if (!parsed.success) {
-    return "/sign-in?error=session-failed";
-  }
-
-  if (parsed.data.memberships.length === 0) {
+function destinationFor(identity: { memberships: readonly { tenant_slug: string }[] }): string {
+  if (identity.memberships.length === 0) {
     return "/onboarding";
   }
-  return `/w/${parsed.data.memberships[0].tenant_slug}`;
+  return workspacePath(identity.memberships[0].tenant_slug);
 }

@@ -22,7 +22,8 @@ frontend/
 ├── stores/         # Zustand stores for global UI state
 ├── test/           # Mock servers, test setup, utility overrides
 ├── types/          # Global TypeScript types and interfaces
-└── utils/          # Generic, domain-agnostic helper functions
+├── utils/          # Generic, domain-agnostic helper functions
+└── proxy.ts        # Centralized route protection (§4.2) — the only auth gate in the app (Next 16 renamed "middleware" to "proxy")
 ```
 
 A route segment's `page.tsx` is a thin adapter: it imports from a feature's public surface and renders it. It does not contain fetching logic, form state, or business rules itself.
@@ -83,10 +84,12 @@ The `index.ts` file is the explicit public boundary for a feature.
 | :--------------------------------- | :--------- | :------------------------------------ |
 | Components & Interfaces           | PascalCase | `SignInForm`, `SignInFormProps`       |
 | Variables, Functions, Hooks       | camelCase  | `getCurrentUser`, `useSession`        |
-| Files & Directories               | kebab-case | `sign-in-form.tsx`, `sign-in`         |
+| Files & Directories               | snake_case | `onboarding_form.tsx`, `create_tenant.ts` |
 | Constants & Environment Variables | UPPERCASE  | `MAX_RETRY_COUNT`, `NEXT_PUBLIC_API_URL` |
 
 Avoid classes; use functional and declarative patterns throughout.
+
+As of #11, new files use snake_case (previous kebab-case files, e.g. `sign-in-form.tsx`, are not retroactively renamed). Framework-mandated filenames (`page.tsx`, `layout.tsx`, `route.ts`, `proxy.ts`, `vitest.config.ts`, `playwright.config.ts`) keep their required spelling regardless of convention.
 
 ---
 
@@ -112,7 +115,7 @@ export type User = Readonly<z.infer<typeof userSchema>>;
 - Default to Server Components. Add "use client" only where interactivity, browser APIs, or a hook that needs it (`useState`, TanStack Query, Zustand) actually requires it.
 - Server Components and Route Handlers that call the API must forward the incoming request's cookie header explicitly — server-side `fetch` has no cookie jar, and only FastAPI ever sets or clears the session cookie (ADR-0006). A `Set-Cookie` on a response to a server-side fetch is dropped; only a browser-direct request refreshes the session's sliding expiry.
 - Never read or write the session cookie from client-side JavaScript. It's httpOnly by design (ADR-0006) — there is nothing to read, and attempting to is a sign the request should have gone through a Server Component or Route Handler instead.
-- Route protection (checking the session cookie before a protected route renders) is not implemented yet. When added, keep it centralized in a single project-root entrypoint rather than scattering auth checks across routes/components.
+- Route protection (checking the session cookie before a protected route renders) lives in `proxy.ts` at the project root (Next 16's rename of "Middleware" — same file convention, same purpose) — a single centralized gate, not scattered per-route checks. It only checks the cookie's *presence*; actual validation happens where a route calls `lib/session_identity.ts`'s `getSessionIdentity`, since only the backend can say whether a session is still good.
 ### 4.3 Component Design
 
 - Functional components with destructured props and default parameters.
@@ -148,9 +151,9 @@ Redux Toolkit/RTK Query are not used on this project — TanStack Query owns cli
 
 ## 7. Testing
 
-- Unit/component tests: not set up yet (planned: Vitest + React Testing Library).
-- One end-to-end flow (sign in → upload → search → ask) via Playwright, run against the compose stack in CI.
-- Mock the API at the network boundary (e.g. MSW) in unit tests; feature `api/` modules should be the only thing that needs mocking.
+- Unit/component tests: Vitest + React Testing Library (`pnpm test`). Config in `vitest.config.ts`; shared setup/mocks live in `test/`.
+- End-to-end: Playwright (`pnpm test:e2e`), run against the compose stack in CI (`.github/workflows/e2e.yml`). Currently covers sign in → onboarding → landing; the eventual full flow (sign in → upload → search → ask) grows this same suite as those features land.
+- Mock the API at the network boundary (MSW) in unit tests; feature `api/` modules should be the only thing that needs mocking.
 
 ---
 
