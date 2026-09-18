@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from auth.router import me_router
 from auth.router import router as auth_router
 from core.container import container
 from core.exceptions import register_exception_handlers
@@ -46,6 +47,7 @@ app.add_middleware(
     allow_headers=["*"],  # must cover X-Tenant-ID + Content-Type
 )
 app.include_router(auth_router, prefix=set_api_version())
+app.include_router(me_router, prefix=set_api_version())
 app.include_router(tenants_router, prefix=set_api_version())
 app.include_router(templates_router, prefix=set_api_version())
 

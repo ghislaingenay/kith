@@ -75,19 +75,19 @@ class TenantsRepository:
 
     async def list_active_membership_details(
         self, user_id: uuid.UUID
-    ) -> list[tuple[TenantMembership, str, Role]]:
-        """(membership, tenant_name, role) tuples — the display shape
-        for /tenants and /me's memberships list. The Role comes straight off
-        the membership row, no Roles table to join."""
+    ) -> list[tuple[TenantMembership, str, str, Role]]:
+        """(membership, tenant_name, tenant_slug, role) tuples — the display
+        shape for /tenants and /me's memberships list. The Role comes
+        straight off the membership row, no Roles table to join."""
         result = await self.session.execute(
-            select(TenantMembership, Tenant.name)
+            select(TenantMembership, Tenant.name, Tenant.slug)
             .join(Tenant, Tenant.id == TenantMembership.tenant_id)
             .where(
                 TenantMembership.user_id == user_id,
                 TenantMembership.deactivated_at.is_(None),
             )
         )
-        return [(row[0], row[1], Role(row[0].role)) for row in result.all()]
+        return [(row[0], row[1], row[2], Role(row[0].role)) for row in result.all()]
 
     async def provision_default_membership(
         self, *, user_id: uuid.UUID, email: str, first_name: str | None = None
@@ -140,7 +140,7 @@ class TenantsRepository:
 
     async def create_tenant(
         self, *, user_id: uuid.UUID, name: str
-    ) -> tuple[TenantMembership, str, Role]:
+    ) -> tuple[TenantMembership, str, str, Role]:
         """Explicit, user-initiated action: an already-authenticated
         identity creates a new tenant and becomes its owner. Not idempotent
         like provision_default_membership — each call makes a brand-new
@@ -169,4 +169,4 @@ class TenantsRepository:
         )
         self.session.add(membership)
         await self.session.commit()
-        return membership, tenant.name, Role.OWNER
+        return membership, tenant.name, tenant.slug, Role.OWNER

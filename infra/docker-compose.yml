@@ -73,7 +73,14 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       MAIL_FROM_ADDRESS: noreply@kith.dev
-      MAGIC_LINK_VERIFY_URL: http://localhost:8000/api/v1/auth/magic-link/verify
+      # Points at the frontend's verify route (not the API directly): it
+      # does the server-side GET /auth/magic-link/verify + GET /me call,
+      # forwarding cookies, then redirects (see frontend/app/verify/route.ts).
+      MAGIC_LINK_VERIFY_URL: http://localhost:3000/verify
+      # Local dev serves plain HTTP, so the session cookie's Secure flag
+      # must be off here (ADR-0006) — prod overrides this to true (the
+      # default) via real environment.
+      SESSION_COOKIE_SECURE: "false"
       # Clerk credentials — set these in a root .env (docker compose loads
       # it automatically); never hardcode real secrets here.
       AUTH_PROVIDER: ${AUTH_PROVIDER:-clerk}

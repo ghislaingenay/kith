@@ -13,6 +13,7 @@ class TenantMembershipSummary(BaseModel):
 
     tenant_id: uuid.UUID
     tenant_name: str
+    tenant_slug: str
     role: Role
 
 

@@ -64,8 +64,9 @@ class TestListActiveMembershipDetails:
         rows = await repository.list_active_membership_details(user.id)
 
         assert len(rows) == 1
-        _, tenant_name, role = rows[0]
+        _, tenant_name, tenant_slug, role = rows[0]
         assert tenant_name == "Hank's organization"
+        assert tenant_slug
         assert role == Role.OWNER
 
 
@@ -75,13 +76,14 @@ class TestCreateTenant:
     ) -> None:
         user = await _make_user(db_session, "ivan@example.com")
 
-        membership, tenant_name, role = await repository.create_tenant(
+        membership, tenant_name, tenant_slug, role = await repository.create_tenant(
             user_id=user.id, name="Ivan's Second Company"
         )
 
         assert membership.user_id == user.id
         assert membership.role == Role.OWNER
         assert tenant_name == "Ivan's Second Company"
+        assert tenant_slug
         assert role == Role.OWNER
 
     async def test_two_calls_with_same_name_create_distinct_tenants(
@@ -89,8 +91,8 @@ class TestCreateTenant:
     ) -> None:
         user = await _make_user(db_session, "jill@example.com")
 
-        first, _, _ = await repository.create_tenant(user_id=user.id, name="Acme")
-        second, _, _ = await repository.create_tenant(user_id=user.id, name="Acme")
+        first, _, _, _ = await repository.create_tenant(user_id=user.id, name="Acme")
+        second, _, _, _ = await repository.create_tenant(user_id=user.id, name="Acme")
 
         assert first.tenant_id != second.tenant_id
 
@@ -165,7 +167,7 @@ class TestProvisionDefaultMembershipEdgeCases:
         )
 
         rows = await repository.list_active_membership_details(user.id)
-        _, tenant_name, _ = rows[0]
+        _, tenant_name, _, _ = rows[0]
         assert tenant_name == "Oliver's organization"
 
     async def test_tenant_name_uses_email_prefix_when_no_first_name(
@@ -178,7 +180,7 @@ class TestProvisionDefaultMembershipEdgeCases:
         )
 
         rows = await repository.list_active_membership_details(user.id)
-        _, tenant_name, _ = rows[0]
+        _, tenant_name, _, _ = rows[0]
         assert tenant_name == "paula's organization"
 
 
@@ -227,7 +229,7 @@ class TestListActiveMembershipDetailsMultipleTenants:
         rows = await repository.list_active_membership_details(user.id)
 
         assert len(rows) == 1
-        _, tenant_name, _ = rows[0]
+        _, tenant_name, _, _ = rows[0]
         assert tenant_name == "Sam's Active Company"
 
     async def test_returns_empty_list_when_no_memberships(
@@ -247,7 +249,7 @@ class TestRoleColumnConstraint:
         from tenants.models import TenantMembership
 
         user = await _make_user(db_session, "uma@example.com")
-        tenant_membership, _, _ = await repository.create_tenant(
+        tenant_membership, _, _, _ = await repository.create_tenant(
             user_id=user.id, name="Uma's Company"
         )
 
@@ -268,7 +270,7 @@ class TestSlugGeneration:
     ) -> None:
         user = await _make_user(db_session, "user@example.com")
 
-        membership, tenant_name, _ = await repository.create_tenant(
+        membership, _, _, _ = await repository.create_tenant(
             user_id=user.id, name="Test@Company#123!"
         )
 
@@ -289,7 +291,7 @@ class TestSlugGeneration:
     ) -> None:
         user = await _make_user(db_session, "user@example.com")
 
-        membership, tenant_name, _ = await repository.create_tenant(
+        membership, _, _, _ = await repository.create_tenant(
             user_id=user.id, name="Café Société"
         )
 
@@ -312,7 +314,7 @@ class TestSlugGeneration:
         user = await _make_user(db_session, "user@example.com")
         long_name = "A" * 200  # Very long tenant name
 
-        membership, tenant_name, _ = await repository.create_tenant(
+        membership, _, _, _ = await repository.create_tenant(
             user_id=user.id, name=long_name
         )
 

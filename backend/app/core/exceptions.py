@@ -12,9 +12,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import TimeoutError
 
-from auth.exceptions import AuthenticationError
+from auth.exceptions import AuthenticationError, MagicLinkTokenInvalidError
 from core.mail.exceptions import MailError
 from core.ratelimit.exception_handlers import register_ratelimit_exception_handlers
+from core.security.exception_handlers import register_security_exception_handlers
 from core.storage.exceptions import StorageError
 from tenants.exception_handlers import register_tenant_exception_handlers
 
@@ -22,7 +23,11 @@ from tenants.exception_handlers import register_tenant_exception_handlers
 def register_exception_handlers(app: FastAPI) -> None:
     register_tenant_exception_handlers(app)
     register_ratelimit_exception_handlers(app)
+    register_security_exception_handlers(app)
     app.add_exception_handler(AuthenticationError, _handle_authentication_error)  # type: ignore[arg-type]
+    app.add_exception_handler(
+        MagicLinkTokenInvalidError, _handle_magic_link_token_invalid
+    )  # type: ignore[arg-type]
     # See note in upload/exception_handlers.py on this ignore.
     app.add_exception_handler(StorageError, _handle_storage_error)  # type: ignore[arg-type]
     app.add_exception_handler(MailError, _handle_mail_error)  # type: ignore[arg-type]
@@ -35,6 +40,18 @@ async def _handle_authentication_error(
     return JSONResponse(
         status_code=status.HTTP_401_UNAUTHORIZED,
         content={"error": "unauthorized", "message": str(exc)},
+    )
+
+
+async def _handle_magic_link_token_invalid(
+    _: Request, __: MagicLinkTokenInvalidError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "error": "invalid_magic_link",
+            "message": "This sign-in link is invalid, expired, or already used.",
+        },
     )
 
 

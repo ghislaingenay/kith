@@ -1,6 +1,7 @@
-"""Unit tests for `MagicLinkService` (ADR-0006)."""
+"""Unit tests for `MagicLinkService`/`MagicLinkVerificationService` (ADR-0006)."""
 
 import hashlib
+import uuid
 
 import pytest
 
@@ -8,11 +9,14 @@ from auth.config import (
     MAGIC_LINK_RATE_LIMIT_PER_HOUR,
     MAGIC_LINK_TOKEN_TTL_SECONDS,
 )
-from auth.service import MagicLinkService
+from auth.exceptions import MagicLinkTokenInvalidError
+from auth.service import MagicLinkService, MagicLinkVerificationService
+from auth.session import SessionService
 from core.ratelimit.counter_limiter import CounterLimiter
 from core.ratelimit.exceptions import RateLimitExceededError
 from tests.support.fake_cache import FakeCacheProvider
 from tests.support.fake_mailer import FakeMailer
+from users.models import User
 
 _VERIFY_URL = "http://localhost:8000/api/v1/auth/magic-link/verify"
 
@@ -106,3 +110,85 @@ async def test_rate_limit_is_scoped_per_email() -> None:
 
 async def test_token_ttl_matches_the_documented_15_minutes() -> None:
     assert MAGIC_LINK_TOKEN_TTL_SECONDS == 15 * 60
+
+
+class FakeUserRepository:
+    """Stands in for `UserRepository.get_or_create_user` — always
+    "creates" a fresh User, since verifying which existing/new case
+    applies is `UserRepository`'s own, already-tested job."""
+
+    def __init__(self) -> None:
+        self.emails_seen: list[str] = []
+
+    async def get_or_create_user(self, email: str) -> User:
+        self.emails_seen.append(email)
+        return User(id=uuid.uuid4(), email=email, email_verified=False, is_active=True)
+
+
+def _verification_service(
+    cache: FakeCacheProvider,
+) -> tuple[MagicLinkVerificationService, FakeUserRepository]:
+    user_repository = FakeUserRepository()
+    service = MagicLinkVerificationService(
+        cache=cache,
+        user_repository=user_repository,
+        session_service=SessionService(cache),
+    )
+    return service, user_repository
+
+
+def _seed_valid_token(cache: FakeCacheProvider, *, email: str, token: str) -> None:
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    cache._store[f"magic_link:token:{email.lower()}"] = token_hash
+
+
+class TestVerify:
+    async def test_valid_token_creates_a_user_and_issues_a_session(self) -> None:
+        cache = FakeCacheProvider()
+        service, user_repository = _verification_service(cache)
+        _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
+
+        user, raw_session_id = await service.verify(
+            email="jane@example.com", token="a-real-token"
+        )
+
+        assert user_repository.emails_seen == ["jane@example.com"]
+        assert raw_session_id
+        session_service = SessionService(cache)
+        assert await session_service.resolve_user_id(raw_session_id) == user.id
+
+    async def test_valid_token_is_consumed_and_cannot_be_reused(self) -> None:
+        cache = FakeCacheProvider()
+        service, _ = _verification_service(cache)
+        _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
+
+        await service.verify(email="jane@example.com", token="a-real-token")
+
+        with pytest.raises(MagicLinkTokenInvalidError):
+            await service.verify(email="jane@example.com", token="a-real-token")
+
+    async def test_raises_when_no_token_was_ever_requested(self) -> None:
+        cache = FakeCacheProvider()
+        service, user_repository = _verification_service(cache)
+
+        with pytest.raises(MagicLinkTokenInvalidError):
+            await service.verify(email="jane@example.com", token="whatever")
+
+        assert user_repository.emails_seen == []
+
+    async def test_raises_when_the_token_does_not_match_the_stored_hash(self) -> None:
+        cache = FakeCacheProvider()
+        service, _ = _verification_service(cache)
+        _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
+
+        with pytest.raises(MagicLinkTokenInvalidError):
+            await service.verify(email="jane@example.com", token="a-different-token")
+
+    async def test_email_lookup_is_case_insensitive(self) -> None:
+        cache = FakeCacheProvider()
+        service, user_repository = _verification_service(cache)
+        _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
+
+        await service.verify(email="Jane@Example.com", token="a-real-token")
+
+        assert user_repository.emails_seen == ["Jane@Example.com"]

@@ -1,8 +1,7 @@
-"""Minimal auth service surface used by dependencies and tests."""
+"""Magic-link issuance and verification (ADR-0006)."""
 
 import hashlib
 import secrets
-from types import SimpleNamespace
 from urllib.parse import quote
 
 from auth.config import (
@@ -10,13 +9,13 @@ from auth.config import (
     MAGIC_LINK_RATE_LIMIT_WINDOW_SECONDS,
     MAGIC_LINK_TOKEN_TTL_SECONDS,
 )
+from auth.exceptions import MagicLinkTokenInvalidError
+from auth.session import SessionService
 from core.cache.provider import CacheProvider
 from core.mail.provider import Mailer
 from core.ratelimit.counter_limiter import CounterLimiter
-
-
-async def authenticate_request(*_, **__) -> SimpleNamespace:
-    return SimpleNamespace(is_signed_in=False, payload=None, reason="unauthenticated")
+from users.models import User
+from users.repository import UserRepository
 
 
 def _token_key(email: str) -> str:
@@ -69,3 +68,35 @@ class MagicLinkService:
                 f"and can only be used once.\n\n{link}"
             ),
         )
+
+
+class MagicLinkVerificationService:
+    """Orchestrates `GET /auth/magic-link/verify`: atomically consumes the
+    single-use token, creates or fetches the User (first sign-in is
+    signup — see `UserRepository.get_or_create_user`), and issues a
+    session. Kept separate from `MagicLinkService` (which only issues the
+    request-side token) so that class's tests don't need a
+    `UserRepository`/`SessionService`."""
+
+    def __init__(
+        self,
+        cache: CacheProvider,
+        user_repository: UserRepository,
+        session_service: SessionService,
+    ) -> None:
+        self._cache = cache
+        self._user_repository = user_repository
+        self._session_service = session_service
+
+    async def verify(self, *, email: str, token: str) -> tuple[User, str]:
+        """Returns the signed-in `User` and the raw session id to set as
+        the session cookie. Raises `MagicLinkTokenInvalidError` if `token`
+        is missing, expired, or already used."""
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        consumed = await self._cache.delete_if_matches(_token_key(email), token_hash)
+        if not consumed:
+            raise MagicLinkTokenInvalidError()
+
+        user = await self._user_repository.get_or_create_user(email)
+        raw_session_id = await self._session_service.create_session(user.id)
+        return user, raw_session_id
