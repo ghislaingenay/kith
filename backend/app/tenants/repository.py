@@ -2,6 +2,7 @@
 
 import re
 import uuid
+from typing import NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -9,6 +10,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tenants.models import Tenant, TenantMembership
 from tenants.permissions import Role
+
+
+class MembershipDetails(NamedTuple):
+    """The display shape for /tenants and /me's memberships list — still
+    unpacks positionally like a plain tuple, so existing callers (and
+    fakes in tests) that destructure it don't need to change; naming the
+    fields just keeps `list_active_membership_details`/`create_tenant`'s
+    growing return shape from being a bag of positional primitives."""
+
+    membership: TenantMembership
+    tenant_name: str
+    tenant_slug: str
+    role: Role
 
 _DEFAULT_TENANT_TIER = "free"
 _DEFAULT_TENANT_MAX_USERS = (
@@ -75,10 +89,9 @@ class TenantsRepository:
 
     async def list_active_membership_details(
         self, user_id: uuid.UUID
-    ) -> list[tuple[TenantMembership, str, str, Role]]:
-        """(membership, tenant_name, tenant_slug, role) tuples — the display
-        shape for /tenants and /me's memberships list. The Role comes
-        straight off the membership row, no Roles table to join."""
+    ) -> list[MembershipDetails]:
+        """The Role comes straight off the membership row, no Roles table
+        to join."""
         result = await self.session.execute(
             select(TenantMembership, Tenant.name, Tenant.slug)
             .join(Tenant, Tenant.id == TenantMembership.tenant_id)
@@ -87,7 +100,10 @@ class TenantsRepository:
                 TenantMembership.deactivated_at.is_(None),
             )
         )
-        return [(row[0], row[1], row[2], Role(row[0].role)) for row in result.all()]
+        return [
+            MembershipDetails(row[0], row[1], row[2], Role(row[0].role))
+            for row in result.all()
+        ]
 
     async def provision_default_membership(
         self, *, user_id: uuid.UUID, email: str, first_name: str | None = None
@@ -138,9 +154,7 @@ class TenantsRepository:
             )
         return membership
 
-    async def create_tenant(
-        self, *, user_id: uuid.UUID, name: str
-    ) -> tuple[TenantMembership, str, str, Role]:
+    async def create_tenant(self, *, user_id: uuid.UUID, name: str) -> MembershipDetails:
         """Explicit, user-initiated action: an already-authenticated
         identity creates a new tenant and becomes its owner. Not idempotent
         like provision_default_membership — each call makes a brand-new
@@ -169,4 +183,4 @@ class TenantsRepository:
         )
         self.session.add(membership)
         await self.session.commit()
-        return membership, tenant.name, tenant.slug, Role.OWNER
+        return MembershipDetails(membership, tenant.name, tenant.slug, Role.OWNER)

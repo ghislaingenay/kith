@@ -35,9 +35,14 @@ _MAGIC_LINK_RESPONSE = MagicLinkRequestResponse(
     message="If that email has an account, a magic link is on its way."
 )
 
+# Every field has a default (unlike MagicLinkSettings.verify_url), so this
+# can be a module-level singleton instead of the per-request instantiation
+# `MagicLinkSettings` needs to keep unrelated importers of `auth.dependencies`
+# from being forced to set an env var they don't need.
+_cookie_settings = SessionCookieSettings()
+
 
 def _set_session_cookie(response: Response, raw_session_id: str) -> None:
-    cookie_settings = SessionCookieSettings()
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=raw_session_id,
@@ -45,8 +50,8 @@ def _set_session_cookie(response: Response, raw_session_id: str) -> None:
         path="/",
         httponly=True,
         samesite="lax",
-        secure=cookie_settings.cookie_secure,
-        domain=cookie_settings.cookie_domain,
+        secure=_cookie_settings.cookie_secure,
+        domain=_cookie_settings.cookie_domain,
     )
 
 
@@ -101,11 +106,10 @@ async def logout(
     not signed in"."""
     if session_cookie:
         await session_service.delete_session(session_cookie)
-    cookie_settings = SessionCookieSettings()
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
         path="/",
-        domain=cookie_settings.cookie_domain,
+        domain=_cookie_settings.cookie_domain,
     )
     return LogoutResponse(message="Signed out.")
 

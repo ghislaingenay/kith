@@ -79,6 +79,9 @@ async def get_current_tenant(
     except ValueError as exc:
         raise AuthenticationError("invalid tenant context") from exc
 
+    # Constructed directly rather than via tenants.dependencies.get_tenant_repository
+    # for the same circular-import reason noted on get_db_session above:
+    # tenants.dependencies imports get_current_tenant from this module.
     membership = await TenantsRepository(session).get_active_membership(
         user_id=user.id, tenant_id=tenant_id
     )
