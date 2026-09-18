@@ -1,0 +1,409 @@
+"""HTTP-level tests for the auth router — dependency overrides only,
+no DB (mirrors tests/tenants/test_router.py's ASGITransport pattern). Uses
+real services wired to fakes (`FakeCacheProvider`/`FakeMailer`/an in-memory
+user repository) so behavior is exercised end to end, not mocked away."""
+
+import hashlib
+import uuid
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from auth.config import MAGIC_LINK_RATE_LIMIT_PER_HOUR, SESSION_COOKIE_NAME
+from auth.dependencies import (
+    get_current_user,
+    get_magic_link_service,
+    get_magic_link_verification_service,
+    get_session_service,
+)
+from auth.schemas import AuthenticatedUser
+from auth.service import MagicLinkService, MagicLinkVerificationService
+from auth.session import SessionService
+from core.ratelimit.counter_limiter import CounterLimiter
+from core.security import dependencies as security_dependencies
+from main import app
+from tenants.dependencies import get_tenants_service
+from tenants.permissions import Role
+from tenants.schemas import TenantMembershipSummary
+from tests.support.fake_cache import FakeCacheProvider
+from tests.support.fake_mailer import FakeMailer
+from users.models import User
+
+_VERIFY_URL = "http://localhost:8000/api/v1/auth/magic-link/verify"
+
+
+@pytest.fixture(autouse=True)
+def _clear_overrides():
+    yield
+    app.dependency_overrides.clear()
+
+
+def _override() -> tuple[FakeCacheProvider, FakeMailer]:
+    cache = FakeCacheProvider()
+    mailer = FakeMailer()
+    service = MagicLinkService(
+        cache=cache,
+        mailer=mailer,
+        limiter=CounterLimiter(cache),
+        verify_url=_VERIFY_URL,
+    )
+    app.dependency_overrides[get_magic_link_service] = lambda: service
+    return cache, mailer
+
+
+class TestRequestMagicLink:
+    async def test_returns_200_for_a_valid_email(self) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/auth/magic-link", json={"email": "jane@example.com"}
+            )
+
+        assert response.status_code == 200
+
+    async def test_sends_an_email_for_a_valid_address(self) -> None:
+        _, mailer = _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.post(
+                "/api/v1/auth/magic-link", json={"email": "jane@example.com"}
+            )
+
+        assert len(mailer.sent) == 1
+        assert mailer.sent[0]["to"] == "jane@example.com"
+
+    async def test_unknown_email_gets_the_identical_response_as_a_known_one(
+        self,
+    ) -> None:
+        """The service never checks account existence, so "unknown" here
+        just means an address with no special-cased handling anywhere —
+        same 200, same body shape, an email still goes out."""
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            known_response = await client.post(
+                "/api/v1/auth/magic-link", json={"email": "known@example.com"}
+            )
+
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            unknown_response = await client.post(
+                "/api/v1/auth/magic-link", json={"email": "unknown@example.com"}
+            )
+
+        assert known_response.status_code == unknown_response.status_code == 200
+        assert known_response.json() == unknown_response.json()
+
+    async def test_returns_422_for_a_malformed_email(self) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/auth/magic-link", json={"email": "not-an-email"}
+            )
+
+        assert response.status_code == 422
+
+    async def test_malformed_email_never_sends_mail(self) -> None:
+        _, mailer = _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.post("/api/v1/auth/magic-link", json={"email": "not-an-email"})
+
+        assert mailer.sent == []
+
+    async def test_returns_429_once_the_per_email_rate_limit_is_exceeded(self) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            for _ in range(MAGIC_LINK_RATE_LIMIT_PER_HOUR):
+                response = await client.post(
+                    "/api/v1/auth/magic-link", json={"email": "jane@example.com"}
+                )
+                assert response.status_code == 200
+
+            response = await client.post(
+                "/api/v1/auth/magic-link", json={"email": "jane@example.com"}
+            )
+
+        assert response.status_code == 429
+
+    async def test_rate_limit_headers_are_present_on_429(self) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            for _ in range(MAGIC_LINK_RATE_LIMIT_PER_HOUR):
+                await client.post(
+                    "/api/v1/auth/magic-link", json={"email": "jane@example.com"}
+                )
+            response = await client.post(
+                "/api/v1/auth/magic-link", json={"email": "jane@example.com"}
+            )
+
+        assert response.headers["X-RateLimit-Limit"] == str(
+            MAGIC_LINK_RATE_LIMIT_PER_HOUR
+        )
+        assert "Retry-After" in response.headers
+
+
+class FakeUserRepository:
+    def __init__(self) -> None:
+        self.emails_seen: list[str] = []
+
+    async def get_or_create_user(self, email: str) -> User:
+        self.emails_seen.append(email)
+        return User(id=uuid.uuid4(), email=email, email_verified=False, is_active=True)
+
+
+def _seed_token(cache: FakeCacheProvider, *, email: str, token: str) -> None:
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    cache._store[f"magic_link:token:{email.lower()}"] = token_hash
+
+
+def _override_verify() -> tuple[FakeCacheProvider, FakeUserRepository, SessionService]:
+    cache = FakeCacheProvider()
+    user_repository = FakeUserRepository()
+    session_service = SessionService(cache)
+    service = MagicLinkVerificationService(
+        cache=cache, user_repository=user_repository, session_service=session_service
+    )
+    app.dependency_overrides[get_magic_link_verification_service] = lambda: service
+    return cache, user_repository, session_service
+
+
+class TestVerifyMagicLink:
+    async def test_valid_token_returns_200_creates_a_user_and_sets_a_session_cookie(
+        self,
+    ) -> None:
+        cache, user_repository, session_service = _override_verify()
+        _seed_token(cache, email="jane@example.com", token="a-real-token")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/v1/auth/magic-link/verify",
+                params={"token": "a-real-token", "email": "jane@example.com"},
+            )
+
+        assert response.status_code == 200
+        assert user_repository.emails_seen == ["jane@example.com"]
+
+        raw_session_id = response.cookies.get(SESSION_COOKIE_NAME)
+        assert raw_session_id is not None
+        assert await session_service.resolve_user_id(raw_session_id) is not None
+
+        set_cookie_header = response.headers.get("set-cookie")
+        assert set_cookie_header is not None
+        assert "httponly" in set_cookie_header.lower()
+        assert "samesite=lax" in set_cookie_header.lower()
+
+    async def test_missing_or_expired_token_returns_400(self) -> None:
+        _override_verify()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/v1/auth/magic-link/verify",
+                params={"token": "never-issued", "email": "jane@example.com"},
+            )
+
+        assert response.status_code == 400
+
+    async def test_already_used_token_cannot_be_replayed(self) -> None:
+        cache, *_ = _override_verify()
+        _seed_token(cache, email="jane@example.com", token="a-real-token")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            first = await client.get(
+                "/api/v1/auth/magic-link/verify",
+                params={"token": "a-real-token", "email": "jane@example.com"},
+            )
+            second = await client.get(
+                "/api/v1/auth/magic-link/verify",
+                params={"token": "a-real-token", "email": "jane@example.com"},
+            )
+
+        assert first.status_code == 200
+        assert second.status_code == 400
+
+
+def _override_logout() -> SessionService:
+    cache = FakeCacheProvider()
+    session_service = SessionService(cache)
+    app.dependency_overrides[get_session_service] = lambda: session_service
+    return session_service
+
+
+class TestLogout:
+    async def test_logout_invalidates_the_session_and_clears_the_cookie(self) -> None:
+        session_service = _override_logout()
+        raw_session_id = await session_service.create_session(uuid.uuid4())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={SESSION_COOKIE_NAME: raw_session_id},
+        ) as client:
+            response = await client.post("/api/v1/auth/logout")
+
+        assert response.status_code == 200
+        assert await session_service.resolve_user_id(raw_session_id) is None
+        set_cookie_header = response.headers.get("set-cookie")
+        assert set_cookie_header is not None
+        assert f"{SESSION_COOKIE_NAME}=" in set_cookie_header
+
+    async def test_logout_without_a_cookie_still_succeeds(self) -> None:
+        _override_logout()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post("/api/v1/auth/logout")
+
+        assert response.status_code == 200
+
+    async def test_logout_twice_is_not_an_error(self) -> None:
+        session_service = _override_logout()
+        raw_session_id = await session_service.create_session(uuid.uuid4())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={SESSION_COOKIE_NAME: raw_session_id},
+        ) as client:
+            first = await client.post("/api/v1/auth/logout")
+            second = await client.post("/api/v1/auth/logout")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+
+class FakeTenantsService:
+    def __init__(self) -> None:
+        self.memberships: list[TenantMembershipSummary] = []
+
+    async def list_my_memberships(self, user_id):
+        return self.memberships
+
+
+_ME_USER = AuthenticatedUser(
+    id=uuid.uuid4(), email="jane@example.com", email_verified=True, is_active=True
+)
+
+
+class TestGetMe:
+    async def test_returns_identity_and_memberships_with_no_x_tenant_id_header(
+        self,
+    ) -> None:
+        service = FakeTenantsService()
+        service.memberships = [
+            TenantMembershipSummary(
+                tenant_id=uuid.uuid4(),
+                tenant_name="Acme",
+                tenant_slug="acme",
+                role=Role.OWNER,
+            )
+        ]
+        app.dependency_overrides[get_current_user] = lambda: _ME_USER
+        app.dependency_overrides[get_tenants_service] = lambda: service
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/v1/me")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["user"]["email"] == "jane@example.com"
+        assert len(body["memberships"]) == 1
+        assert body["memberships"][0]["tenant_slug"] == "acme"
+
+    async def test_returns_401_when_unauthenticated(self) -> None:
+        from auth.exceptions import AuthenticationError
+
+        async def _raise_unauthenticated():
+            raise AuthenticationError("unauthorized")
+
+        app.dependency_overrides[get_current_user] = _raise_unauthenticated
+        app.dependency_overrides[get_tenants_service] = lambda: FakeTenantsService()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/v1/me")
+
+        assert response.status_code == 401
+
+
+def _mock_container_allowing(allowed_origins: list[str]) -> MagicMock:
+    mock_container = MagicMock()
+    mock_container.cors_settings.return_value = SimpleNamespace(
+        allowed_origins=allowed_origins
+    )
+    return mock_container
+
+
+class TestOriginHeaderCheck:
+    async def test_disallowed_origin_is_rejected_on_a_state_changing_auth_route(
+        self,
+    ) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            with patch.object(
+                security_dependencies,
+                "container",
+                _mock_container_allowing(["http://localhost:3000"]),
+            ):
+                response = await client.post(
+                    "/api/v1/auth/magic-link",
+                    json={"email": "jane@example.com"},
+                    headers={"Origin": "http://evil.example.com"},
+                )
+
+        assert response.status_code == 403
+
+    async def test_allowed_origin_passes_through(self) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            with patch.object(
+                security_dependencies,
+                "container",
+                _mock_container_allowing(["http://localhost:3000"]),
+            ):
+                response = await client.post(
+                    "/api/v1/auth/magic-link",
+                    json={"email": "jane@example.com"},
+                    headers={"Origin": "http://localhost:3000"},
+                )
+
+        assert response.status_code == 200

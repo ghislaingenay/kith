@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from auth.router import me_router
 from auth.router import router as auth_router
 from core.container import container
 from core.exceptions import register_exception_handlers
@@ -21,6 +22,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     container.db_engine()
     container.cache_provider()
     container.rate_limiter()
+    container.mailer()
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
     # connections rather than letting the process drop them.
@@ -28,8 +30,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await container.cache_provider().close()
     await container.rate_limiter().close()
 
+
 def set_api_version(version: str = "v1") -> str:
     return f"/api/{version}"
+
 
 app = FastAPI(title="Kith", lifespan=lifespan)
 register_exception_handlers(app)
@@ -43,6 +47,7 @@ app.add_middleware(
     allow_headers=["*"],  # must cover X-Tenant-ID + Content-Type
 )
 app.include_router(auth_router, prefix=set_api_version())
+app.include_router(me_router, prefix=set_api_version())
 app.include_router(tenants_router, prefix=set_api_version())
 app.include_router(templates_router, prefix=set_api_version())
 

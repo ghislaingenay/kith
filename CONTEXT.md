@@ -46,6 +46,16 @@ _Avoid_: Retention window, soft-delete window
 A Tenant Membership an Admin created for an email that has not signed in yet. It becomes active on that email's first sign-in. There is no token and no expiry.
 _Avoid_: Invitation, invite, allowlist, whitelist
 
+### Authentication
+
+**Session**:
+The signed-in state a User's browser holds after authenticating: an opaque id in an httpOnly cookie, resolved server-side against Redis. Ends on logout, on the 30-day sliding expiry, or on revocation.
+_Avoid_: Token (reserved for the Magic Link's one-time secret), login
+
+**Magic Link**:
+A single-use, time-limited link emailed to a User's address that signs them in without a password.
+_Avoid_: Invite link (unrelated to Pending Membership), token
+
 ### Documents
 
 **Document**:

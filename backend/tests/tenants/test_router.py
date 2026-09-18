@@ -44,6 +44,7 @@ class FakeTenantsService:
         return self.next_created or TenantMembershipSummary(
             tenant_id=uuid.uuid4(),
             tenant_name=name,
+            tenant_slug=name.lower(),
             role=Role.OWNER,
         )
 
@@ -68,6 +69,7 @@ class TestListMyTenants:
             TenantMembershipSummary(
                 tenant_id=uuid.uuid4(),
                 tenant_name="Acme",
+                tenant_slug="acme",
                 role=Role.OWNER,
             )
         ]
@@ -116,6 +118,7 @@ class TestCreateTenant:
         service.next_created = TenantMembershipSummary(
             tenant_id=uuid.uuid4(),
             tenant_name="Acme",
+            tenant_slug="acme",
             role=Role.OWNER,
         )
         _override(service)

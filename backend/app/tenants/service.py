@@ -35,12 +35,13 @@ class TenantsService:
         if rows:
             raise TenantAlreadyExistsError(name)
 
-        membership, tenant_name, role = await self.repository.create_tenant(
+        membership, tenant_name, tenant_slug, role = await self.repository.create_tenant(
             user_id=user_id, name=name
         )
         return TenantMembershipSummary(
             tenant_id=membership.tenant_id,
             tenant_name=tenant_name,
+            tenant_slug=tenant_slug,
             role=role,
         )
 
@@ -52,7 +53,8 @@ class TenantsService:
             TenantMembershipSummary(
                 tenant_id=membership.tenant_id,
                 tenant_name=tenant_name,
+                tenant_slug=tenant_slug,
                 role=role,
             )
-            for membership, tenant_name, role in rows
+            for membership, tenant_name, tenant_slug, role in rows
         ]
