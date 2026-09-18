@@ -109,11 +109,10 @@ export type User = Readonly<z.infer<typeof userSchema>>;
 
 ### 4.2 Server vs. Client Components
 
-- Default to Server Components. Add `"use client"` only where interactivity, browser APIs, or a hook that needs it (`useState`, TanStack Query, Zustand) actually requires it.
+- Default to Server Components. Add "use client" only where interactivity, browser APIs, or a hook that needs it (`useState`, TanStack Query, Zustand) actually requires it.
 - Server Components and Route Handlers that call the API must forward the incoming request's cookie header explicitly — server-side `fetch` has no cookie jar, and only FastAPI ever sets or clears the session cookie (ADR-0006). A `Set-Cookie` on a response to a server-side fetch is dropped; only a browser-direct request refreshes the session's sliding expiry.
 - Never read or write the session cookie from client-side JavaScript. It's httpOnly by design (ADR-0006) — there is nothing to read, and attempting to is a sign the request should have gone through a Server Component or Route Handler instead.
-- Route protection (checking the session cookie before a protected route renders) lives in `proxy.ts` at the project root, not `middleware.ts` — Next.js 16 deprecated and renamed the `middleware` file convention to `proxy` (same capabilities, `export function proxy(request)` instead of `middleware`). This project is on Next.js 16; do not create a `middleware.ts` file.
-
+- Route protection (checking the session cookie before a protected route renders) is not implemented yet. When added, keep it centralized in a single project-root entrypoint rather than scattering auth checks across routes/components.
 ### 4.3 Component Design
 
 - Functional components with destructured props and default parameters.
@@ -149,7 +148,7 @@ Redux Toolkit/RTK Query are not used on this project — TanStack Query owns cli
 
 ## 7. Testing
 
-- Unit/component tests: Vitest + React Testing Library (see `mvp-design.md` §8 — not Jest).
+- Unit/component tests: not set up yet (planned: Vitest + React Testing Library).
 - One end-to-end flow (sign in → upload → search → ask) via Playwright, run against the compose stack in CI.
 - Mock the API at the network boundary (e.g. MSW) in unit tests; feature `api/` modules should be the only thing that needs mocking.
 
