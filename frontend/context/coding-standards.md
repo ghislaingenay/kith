@@ -152,7 +152,7 @@ Redux Toolkit/RTK Query are not used on this project — TanStack Query owns cli
 ## 7. Testing
 
 - Unit/component tests: Vitest + React Testing Library (`pnpm test`). Config in `vitest.config.ts`; shared setup/mocks live in `test/`.
-- End-to-end: Playwright (`pnpm test:e2e`), run against the compose stack in CI (`.github/workflows/e2e.yml`). Currently covers sign in → onboarding → landing; the eventual full flow (sign in → upload → search → ask) grows this same suite as those features land.
+- End-to-end: Playwright (`pnpm test:e2e`), run locally against the compose stack (not yet wired into CI — pending more shakeout). Currently covers sign in → onboarding → landing; the eventual full flow (sign in → upload → search → ask) grows this same suite as those features land.
 - Mock the API at the network boundary (MSW) in unit tests; feature `api/` modules should be the only thing that needs mocking.
 
 ---
