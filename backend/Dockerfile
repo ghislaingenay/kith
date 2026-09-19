@@ -12,4 +12,4 @@ COPY alembic.ini ./
 
 ENV PYTHONPATH=/app/app
 
-CMD ["gunicorn", "-k", "uvicorn_worker.UvicornWorker", "app.main:app", "--bind", "0.0.0.0:8000"]
+CMD ["gunicorn", "-k", "uvicorn_worker.UvicornWorker", "main:app", "--bind", "0.0.0.0:8000"]
