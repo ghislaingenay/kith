@@ -14,5 +14,10 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./test/setup.ts"],
     exclude: ["**/node_modules/**", "**/.next/**", "**/e2e/**"],
+    // Explicit rather than relied-on-implicitly: Vitest 5 defaults this to
+    // true (unlike Jest), which is what keeps module-scoped mocks (e.g. a
+    // `vi.mock("next/navigation")` router spy) from leaking call history
+    // between `it` blocks in the same file.
+    clearMocks: true,
   },
 });
