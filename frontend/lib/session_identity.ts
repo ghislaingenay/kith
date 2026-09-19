@@ -41,8 +41,7 @@ export async function getSessionIdentity(
     throw err;
   }
 
-  const parsed = sessionIdentitySchema.safeParse(data);
-  return parsed.success ? parsed.data : null;
+  return sessionIdentitySchema.parse(data);
 }
 
 export function workspacePath(tenantSlug: string): string {
