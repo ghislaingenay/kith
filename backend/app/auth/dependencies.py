@@ -4,9 +4,6 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Cookie, Depends, Header
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from auth.config import SESSION_COOKIE_NAME, MagicLinkSettings
 from auth.exceptions import AuthenticationError
 from auth.schemas import AuthenticatedUser, TenantContext
@@ -18,8 +15,11 @@ from core.database import get_session
 from core.mail.dependencies import get_mailer
 from core.mail.provider import Mailer
 from core.ratelimit.counter_limiter import CounterLimiter
+from fastapi import Cookie, Depends, Header
+from sqlalchemy.ext.asyncio import AsyncSession
 from tenants.permissions import Role
 from tenants.repository import TenantsRepository
+from tenants.service import TenantsService
 from users.dependencies import get_user_repository
 from users.repository import UserRepository
 
@@ -116,9 +116,15 @@ def get_magic_link_verification_service(
     cache: Annotated[CacheProvider, Depends(get_cache_provider)],
     user_repository: Annotated[UserRepository, Depends(get_user_repository)],
     session_service: Annotated[SessionService, Depends(get_session_service)],
+    session: AsyncSession = Depends(get_db_session),
 ) -> MagicLinkVerificationService:
+    # TenantsService is constructed directly (not via
+    # tenants.dependencies.get_tenants_service) for the same circular-import
+    # reason noted on get_current_tenant above: tenants.dependencies imports
+    # get_current_tenant from this module.
     return MagicLinkVerificationService(
         cache=cache,
         user_repository=user_repository,
         session_service=session_service,
+        tenants_service=TenantsService(TenantsRepository(session)),
     )

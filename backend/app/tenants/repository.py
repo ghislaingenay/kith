@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tenants.models import Tenant, TenantMembership
+from tenants.models import PendingMembership, Tenant, TenantMembership
 from tenants.permissions import Role
 
 
@@ -91,7 +91,10 @@ class TenantsRepository:
         self, user_id: uuid.UUID
     ) -> list[MembershipDetails]:
         """The Role comes straight off the membership row, no Roles table
-        to join."""
+        to join. Ordered deterministically (created_at, tenant_id) so a
+        caller picking "the first membership" gets a stable answer across
+        calls rather than whatever order Postgres happens to return rows
+        in."""
         result = await self.session.execute(
             select(TenantMembership, Tenant.name, Tenant.slug)
             .join(Tenant, Tenant.id == TenantMembership.tenant_id)
@@ -99,11 +102,70 @@ class TenantsRepository:
                 TenantMembership.user_id == user_id,
                 TenantMembership.deactivated_at.is_(None),
             )
+            .order_by(TenantMembership.created_at, TenantMembership.tenant_id)
         )
         return [
             MembershipDetails(row[0], row[1], row[2], Role(row[0].role))
             for row in result.all()
         ]
+
+    async def get_earliest_pending_membership(
+        self, email: str
+    ) -> PendingMembership | None:
+        """The one Pending Membership TenantsService.activate_pending_membership
+        will activate for `email` — deterministically the earliest-created
+        (created_at, tenant_id) row, so a caller with several tenants'
+        invites waiting for the same email always resolves to the same
+        one across calls. `None` if nothing is pending for this email."""
+        result = await self.session.execute(
+            select(PendingMembership)
+            .where(PendingMembership.email == email)
+            .order_by(PendingMembership.created_at, PendingMembership.tenant_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def activate_pending_membership(
+        self, *, user_id: uuid.UUID, tenant_id: uuid.UUID, email: str
+    ) -> TenantMembership | None:
+        """Activates the Pending Membership at `(tenant_id, email)` — its
+        composite PK — converting it into a real TenantMembership carrying
+        its stored Role and deleting the Pending Membership row. Returns
+        `None` if no such row exists.
+
+        Deliberately scoped to one exact row, not "every Pending
+        Membership matching this email": which row to activate when
+        several tenants have invited the same email is a business
+        decision (this app enforces one active tenant per user — see
+        TenantAlreadyExistsError — and switching between tenants is out of
+        scope this pass, ADR-0008) that TenantsService.activate_pending_membership
+        makes before calling this; this method just carries it out on the
+        exact key it's given.
+
+        ON CONFLICT DO NOTHING guards against the row already existing as
+        a TenantMembership (e.g. this ran once already for a retried
+        verify)."""
+        pending = await self.session.get(PendingMembership, (tenant_id, email))
+        if pending is None:
+            return None
+
+        membership_insert = (
+            insert(TenantMembership)
+            .values(tenant_id=tenant_id, user_id=user_id, role=pending.role)
+            .on_conflict_do_nothing(
+                index_elements=[TenantMembership.tenant_id, TenantMembership.user_id]
+            )
+            .returning(TenantMembership)
+        )
+        result = await self.session.execute(membership_insert)
+        membership = result.scalar_one_or_none()
+        if membership is None:
+            membership = await self.get_active_membership(
+                user_id=user_id, tenant_id=tenant_id
+            )
+        await self.session.delete(pending)
+        await self.session.commit()
+        return membership
 
     async def provision_default_membership(
         self, *, user_id: uuid.UUID, email: str, first_name: str | None = None
