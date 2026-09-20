@@ -26,7 +26,7 @@ def _normalize_email(email: str) -> str:
 
 
 def _token_key(email: str) -> str:
-    return f"magic_link:token:{email.lower()}"
+    return f"magic_link:token:{_normalize_email(email)}"
 
 
 def _rate_limit_key(email: str) -> str:
