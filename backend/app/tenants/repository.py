@@ -1,15 +1,20 @@
 """Persistence access for the tenants domain."""
 
+from datetime import timedelta, datetime
 import re
 import uuid
 from typing import NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.logging import setup_logger
 from tenants.models import PendingMembership, Tenant, TenantMembership
 from tenants.permissions import Role
+
+logger = setup_logger(__name__)
 
 
 class MembershipDetails(NamedTuple):
@@ -90,11 +95,6 @@ class TenantsRepository:
     async def list_active_membership_details(
         self, user_id: uuid.UUID
     ) -> list[MembershipDetails]:
-        """The Role comes straight off the membership row, no Roles table
-        to join. Ordered deterministically (created_at, tenant_id) so a
-        caller picking "the first membership" gets a stable answer across
-        calls rather than whatever order Postgres happens to return rows
-        in."""
         result = await self.session.execute(
             select(TenantMembership, Tenant.name, Tenant.slug)
             .join(Tenant, Tenant.id == TenantMembership.tenant_id)
@@ -108,43 +108,38 @@ class TenantsRepository:
             MembershipDetails(row[0], row[1], row[2], Role(row[0].role))
             for row in result.all()
         ]
-
-    async def get_earliest_pending_membership(
-        self, email: str
+        
+    async def get_pending_membership(
+        self, *, tenant_id: uuid.UUID, email: str
     ) -> PendingMembership | None:
-        """The one Pending Membership TenantsService.activate_pending_membership
-        will activate for `email` — deterministically the earliest-created
-        (created_at, tenant_id) row, so a caller with several tenants'
-        invites waiting for the same email always resolves to the same
-        one across calls. `None` if nothing is pending for this email."""
-        result = await self.session.execute(
-            select(PendingMembership)
-            .where(PendingMembership.email == email)
-            .order_by(PendingMembership.created_at, PendingMembership.tenant_id)
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
+        try:
+            result = await self.session.execute(
+                select(PendingMembership)
+                .where(PendingMembership.tenant_id == tenant_id)
+                .where(PendingMembership.email == email)
+                .where(PendingMembership.status == 'pending')
+                .order_by(PendingMembership.created_at, PendingMembership.tenant_id)
+                .limit(1)
+            )
+            
+            membership = result.scalar_one_or_none()
+            if not membership:
+                return None
+            # expire membership if it is past its validity period
+            if membership.status != 'pending':
+                return None
+            if membership.created_at + timedelta(days=7) < datetime.utcnow():
+                membership.status = 'expired'
+                await self.session.commit()
+                return None
+            return membership
+        except SQLAlchemyError:
+            logger.error(f"Failed to fetch pending membership for tenant {tenant_id}")
+            raise
 
     async def activate_pending_membership(
         self, *, user_id: uuid.UUID, tenant_id: uuid.UUID, email: str
     ) -> TenantMembership | None:
-        """Activates the Pending Membership at `(tenant_id, email)` — its
-        composite PK — converting it into a real TenantMembership carrying
-        its stored Role and deleting the Pending Membership row. Returns
-        `None` if no such row exists.
-
-        Deliberately scoped to one exact row, not "every Pending
-        Membership matching this email": which row to activate when
-        several tenants have invited the same email is a business
-        decision (this app enforces one active tenant per user — see
-        TenantAlreadyExistsError — and switching between tenants is out of
-        scope this pass, ADR-0008) that TenantsService.activate_pending_membership
-        makes before calling this; this method just carries it out on the
-        exact key it's given.
-
-        ON CONFLICT DO NOTHING guards against the row already existing as
-        a TenantMembership (e.g. this ran once already for a retried
-        verify)."""
         pending = await self.session.get(PendingMembership, (tenant_id, email))
         if pending is None:
             return None
@@ -217,18 +212,6 @@ class TenantsRepository:
         return membership
 
     async def create_tenant(self, *, user_id: uuid.UUID, name: str) -> MembershipDetails:
-        """Explicit, user-initiated action: an already-authenticated
-        identity creates a new tenant and becomes its owner. Not idempotent
-        like provision_default_membership — each call makes a brand-new
-        Tenant even if `name` repeats (two tenants may share a display
-        name), safe because the slug embeds a random suffix rather than a
-        deterministic per-user hash, so there's nothing to retry into a
-        collision.
-
-        This method itself enforces no per-user limit — callers that need
-        "one active tenant per user" (currently TenantsService.create_tenant)
-        must check eligibility themselves, e.g. via
-        acquire_user_tenant_lock() + list_active_membership_details()."""
         slug = f"{_slugify(name)[:80]}-{uuid.uuid4().hex[:8]}"
 
         tenant = Tenant(

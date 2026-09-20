@@ -23,9 +23,11 @@ def upgrade() -> None:
     sa.Column('tenant_id', sa.UUID(), nullable=False),
     sa.Column('email', sa.String(length=255), nullable=False),
     sa.Column('role', sa.String(), nullable=False),
+    sa.Column('status', sa.String(), nullable=False, server_default='pending'),
     sa.Column('invited_by', sa.UUID(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.CheckConstraint("role IN ('owner', 'admin', 'member', 'viewer')", name='ck_pending_memberships_role'),
+    sa.CheckConstraint("status IN ('pending', 'accepted', 'rejected', 'expired')", name='ck_pending_memberships_status'),
     sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['invited_by'], ['users.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('tenant_id', 'email')

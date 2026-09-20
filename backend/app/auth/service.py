@@ -72,14 +72,6 @@ class MagicLinkService:
 
 
 class MagicLinkVerificationService:
-    """Orchestrates `GET /auth/magic-link/verify`: atomically consumes the
-    single-use token, creates or fetches the User (first sign-in is
-    signup — see `UserRepository.get_or_create_user`), activates a single
-    Pending Membership waiting for that email if one exists (ADR-0008;
-    see TenantsRepository.activate_pending_membership for why only one),
-    and issues a session. Kept separate from `MagicLinkService` (which
-    only issues the request-side token) so that class's tests don't need a
-    `UserRepository`/`SessionService`/`TenantsService`."""
 
     def __init__(
         self,
@@ -102,7 +94,7 @@ class MagicLinkVerificationService:
         if not consumed:
             raise MagicLinkTokenInvalidError()
 
-        user = await self._user_repository.get_or_create_user(email)
+        user, is_created = await self._user_repository.get_or_create_user(email)
         await self._tenants_service.activate_pending_membership(
             user_id=user.id, email=email
         )

@@ -95,14 +95,6 @@ def get_magic_link_service(
     cache: Annotated[CacheProvider, Depends(get_cache_provider)],
     mailer: Annotated[Mailer, Depends(get_mailer)],
 ) -> MagicLinkService:
-    # CounterLimiter is constructed directly (not via
-    # core.ratelimit.dependencies) because that module imports
-    # get_current_tenant/get_current_user from this one — importing it back
-    # here would be circular. See the same note in tenants/router.py.
-    #
-    # `MagicLinkSettings` is instantiated here rather than module-level so
-    # importing this module (done by unrelated domains for get_current_user)
-    # doesn't require `MAGIC_LINK_VERIFY_URL` to be set.
     settings = MagicLinkSettings()
     return MagicLinkService(
         cache=cache,
@@ -118,10 +110,6 @@ def get_magic_link_verification_service(
     session_service: Annotated[SessionService, Depends(get_session_service)],
     session: AsyncSession = Depends(get_db_session),
 ) -> MagicLinkVerificationService:
-    # TenantsService is constructed directly (not via
-    # tenants.dependencies.get_tenants_service) for the same circular-import
-    # reason noted on get_current_tenant above: tenants.dependencies imports
-    # get_current_tenant from this module.
     return MagicLinkVerificationService(
         cache=cache,
         user_repository=user_repository,

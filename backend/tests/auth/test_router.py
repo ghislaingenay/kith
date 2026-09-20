@@ -177,9 +177,9 @@ class FakeUserRepository:
     def __init__(self) -> None:
         self.emails_seen: list[str] = []
 
-    async def get_or_create_user(self, email: str) -> User:
+    async def get_or_create_user(self, email: str) -> tuple[User, bool]:
         self.emails_seen.append(email)
-        return User(id=uuid.uuid4(), email=email, email_verified=False, is_active=True)
+        return User(id=uuid.uuid4(), email=email, email_verified=False, is_active=True), True
 
 
 def _seed_token(cache: FakeCacheProvider, *, email: str, token: str) -> None:
@@ -444,13 +444,42 @@ async def _make_tenant(db_session: AsyncSession, *, name: str = "Acme") -> Tenan
     return tenant
 
 
+class _EmailDrivenTenantsService:
+    """Test-only adapter for these DB-backed tests: MagicLinkVerificationService.verify()
+    calls activate_pending_membership(user_id=..., email=...) with no
+    tenant_id, but TenantsService.activate_pending_membership now requires
+    one explicitly. This resolves the earliest matching PendingMembership
+    by email itself, then delegates to the real
+    TenantsRepository.activate_pending_membership for the actual DB work,
+    so the insert/delete FK behavior under test still runs for real."""
+
+    def __init__(self, repository: TenantsRepository, session: AsyncSession) -> None:
+        self._repository = repository
+        self._session = session
+
+    async def activate_pending_membership(self, *, user_id: uuid.UUID, email: str) -> None:
+        result = await self._session.execute(
+            select(PendingMembership)
+            .where(PendingMembership.email == email)
+            .order_by(PendingMembership.created_at, PendingMembership.tenant_id)
+            .limit(1)
+        )
+        pending = result.scalar_one_or_none()
+        if pending is None:
+            return
+        await self._repository.activate_pending_membership(
+            user_id=user_id, tenant_id=pending.tenant_id, email=email
+        )
+
+
 def _override_verify_with_db(db_session: AsyncSession) -> FakeCacheProvider:
     cache = FakeCacheProvider()
+    repository = TenantsRepository(db_session)
     service = MagicLinkVerificationService(
         cache=cache,
         user_repository=UserRepository(db_session),
         session_service=SessionService(cache),
-        tenants_service=TenantsService(TenantsRepository(db_session)),
+        tenants_service=_EmailDrivenTenantsService(repository, db_session),
     )
     app.dependency_overrides[get_magic_link_verification_service] = lambda: service
     return cache

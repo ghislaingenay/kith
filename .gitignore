@@ -4,6 +4,9 @@ backend/.env
 backend/.venv/
 backend/fast_os.egg-info/
 backend/kith.egg-info/
+backend/coverage.xml
+backend/.coverage
+
 
 frontend/**/.pnpm-store/
 frontend/node_modules/

@@ -120,9 +120,9 @@ class FakeUserRepository:
     def __init__(self) -> None:
         self.emails_seen: list[str] = []
 
-    async def get_or_create_user(self, email: str) -> User:
+    async def get_or_create_user(self, email: str) -> tuple[User, bool]:
         self.emails_seen.append(email)
-        return User(id=uuid.uuid4(), email=email, email_verified=False, is_active=True)
+        return User(id=uuid.uuid4(), email=email, email_verified=False, is_active=True), True
 
 
 class FakeTenantsService:

@@ -60,21 +60,9 @@ class TenantsService:
         ]
 
     async def activate_pending_membership(
-        self, *, user_id: uuid.UUID, email: str
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, email: str
     ) -> None:
-        """Activates at most one Pending Membership matching `email` —
-        called once per sign-in, from MagicLinkVerificationService.verify
-        (ADR-0008). No return value: the caller that needs the resulting
-        membership (GET /me, called separately right after verify) reads
-        it fresh via list_my_memberships.
-
-        When several tenants have invited the same email,
-        get_earliest_pending_membership resolves which one tenant to
-        activate for; this app enforces one active tenant per user (see
-        TenantAlreadyExistsError) and the tenant switcher is out of scope
-        this pass, so the rest are left pending for a future multi-tenant
-        pass rather than all being converted at once."""
-        pending = await self.repository.get_earliest_pending_membership(email)
+        pending = await self.repository.get_pending_membership(tenant_id=tenant_id, email=email)
         if pending is None:
             return
         await self.repository.activate_pending_membership(

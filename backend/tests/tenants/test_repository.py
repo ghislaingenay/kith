@@ -342,45 +342,6 @@ class TestSlugGeneration:
         # Slug should be truncated to prevent database issues
         assert len(tenant.slug) <= 89  # 80 chars + hyphen + 8-char suffix
 
-
-class TestGetEarliestPendingMembership:
-    async def test_returns_the_earliest_created_row_when_several_match(
-        self, repository: TenantsRepository, db_session: AsyncSession
-    ) -> None:
-        earlier_tenant = await _make_tenant(db_session, name="Earlier")
-        later_tenant = await _make_tenant(db_session, name="Later")
-        now = datetime.now(UTC)
-        db_session.add_all(
-            [
-                PendingMembership(
-                    tenant_id=later_tenant.id,
-                    email="gia@example.com",
-                    role=Role.MEMBER,
-                    created_at=now + timedelta(seconds=5),
-                ),
-                PendingMembership(
-                    tenant_id=earlier_tenant.id,
-                    email="gia@example.com",
-                    role=Role.VIEWER,
-                    created_at=now,
-                ),
-            ]
-        )
-        await db_session.commit()
-
-        pending = await repository.get_earliest_pending_membership("gia@example.com")
-
-        assert pending is not None
-        assert pending.tenant_id == earlier_tenant.id
-
-    async def test_returns_none_when_nothing_matches(
-        self, repository: TenantsRepository, db_session: AsyncSession
-    ) -> None:
-        pending = await repository.get_earliest_pending_membership("nobody@example.com")
-
-        assert pending is None
-
-
 class TestActivatePendingMembership:
     async def test_converts_the_pending_row_into_a_real_membership(
         self, repository: TenantsRepository, db_session: AsyncSession

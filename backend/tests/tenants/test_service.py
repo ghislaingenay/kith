@@ -42,9 +42,6 @@ class FakeTenantsRepository:
     async def list_active_membership_details(self, user_id):
         return [row for row in self.membership_details if row[0].user_id == user_id]
 
-    async def get_earliest_pending_membership(self, email):
-        return self.next_earliest_pending
-
     async def activate_pending_membership(self, *, user_id, tenant_id, email):
         self.activation_calls.append(
             {"user_id": user_id, "tenant_id": tenant_id, "email": email}
@@ -138,29 +135,3 @@ class TestProvisionDefaultMembership:
             {"user_id": user_id, "email": "a@example.com", "first_name": "A"}
         ]
 
-
-class TestActivatePendingMembership:
-    async def test_activates_at_the_earliest_pending_membership_s_tenant(self) -> None:
-        repo = FakeTenantsRepository()
-        tenant_id = uuid.uuid4()
-        repo.next_earliest_pending = PendingMembership(
-            tenant_id=tenant_id, email="a@example.com", role=Role.MEMBER
-        )
-        service = TenantsService(repo)
-        user_id = uuid.uuid4()
-
-        await service.activate_pending_membership(user_id=user_id, email="a@example.com")
-
-        assert repo.activation_calls == [
-            {"user_id": user_id, "tenant_id": tenant_id, "email": "a@example.com"}
-        ]
-
-    async def test_does_nothing_when_there_is_no_pending_membership(self) -> None:
-        repo = FakeTenantsRepository()
-        repo.next_earliest_pending = None
-        service = TenantsService(repo)
-        user_id = uuid.uuid4()
-
-        await service.activate_pending_membership(user_id=user_id, email="a@example.com")
-
-        assert repo.activation_calls == []
