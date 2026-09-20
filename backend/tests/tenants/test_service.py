@@ -18,8 +18,7 @@ class FakeTenantsRepository:
         self.created: list[dict] = []
         self.locks_acquired: list[uuid.UUID] = []
         self.activation_calls: list[dict] = []
-        self.next_activated: TenantMembership | None = None
-        self.next_earliest_pending: PendingMembership | None = None
+        self.pending_memberships: list[PendingMembership] = []
 
     async def acquire_user_tenant_lock(self, user_id):
         self.locks_acquired.append(user_id)
@@ -42,11 +41,14 @@ class FakeTenantsRepository:
     async def list_active_membership_details(self, user_id):
         return [row for row in self.membership_details if row[0].user_id == user_id]
 
-    async def activate_pending_membership(self, *, user_id, tenant_id, email):
+    async def list_pending_memberships(self, email):
+        return [p for p in self.pending_memberships if p.email == email]
+
+    async def activate_pending_memberships(self, *, user_id, email, tenant_ids):
         self.activation_calls.append(
-            {"user_id": user_id, "tenant_id": tenant_id, "email": email}
+            {"user_id": user_id, "email": email, "tenant_ids": list(tenant_ids)}
         )
-        return self.next_activated
+        return []
 
 
 class TestListMyMemberships:
@@ -135,3 +137,44 @@ class TestProvisionDefaultMembership:
             {"user_id": user_id, "email": "a@example.com", "first_name": "A"}
         ]
 
+
+class TestActivatePendingMemberships:
+    async def test_activates_every_listed_tenant_in_a_single_repository_call(
+        self,
+    ) -> None:
+        """One call, not one per row: the repository closes all of them in
+        one transaction so a failure can't leave the email half-activated."""
+        repo = FakeTenantsRepository()
+        user_id = uuid.uuid4()
+        first_tenant, second_tenant = uuid.uuid4(), uuid.uuid4()
+        repo.pending_memberships = [
+            PendingMembership(
+                tenant_id=first_tenant, email="dana@example.com", role=Role.ADMIN
+            ),
+            PendingMembership(
+                tenant_id=second_tenant, email="dana@example.com", role=Role.VIEWER
+            ),
+        ]
+        service = TenantsService(repo)
+
+        await service.activate_pending_memberships(
+            user_id=user_id, email="dana@example.com"
+        )
+
+        assert repo.activation_calls == [
+            {
+                "user_id": user_id,
+                "email": "dana@example.com",
+                "tenant_ids": [first_tenant, second_tenant],
+            }
+        ]
+
+    async def test_does_not_call_the_repository_when_nothing_is_pending(self) -> None:
+        repo = FakeTenantsRepository()
+        service = TenantsService(repo)
+
+        await service.activate_pending_memberships(
+            user_id=uuid.uuid4(), email="nobody@example.com"
+        )
+
+        assert repo.activation_calls == []

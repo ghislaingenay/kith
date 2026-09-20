@@ -126,7 +126,7 @@ class FakeUserRepository:
 
 
 class FakeTenantsService:
-    """Stands in for `TenantsService.activate_pending_membership` — records
+    """Stands in for `TenantsService.activate_pending_memberships` — records
     calls so tests can assert *when* activation is attempted without a real
     TenantsRepository/Postgres; the conversion behavior itself is exercised
     in tests/tenants/test_repository.py."""
@@ -134,7 +134,7 @@ class FakeTenantsService:
     def __init__(self) -> None:
         self.activation_calls: list[dict] = []
 
-    async def activate_pending_membership(self, *, user_id: uuid.UUID, email: str) -> None:
+    async def activate_pending_memberships(self, *, user_id: uuid.UUID, email: str) -> None:
         self.activation_calls.append({"user_id": user_id, "email": email})
 
 
@@ -206,7 +206,7 @@ class TestVerify:
 
         await service.verify(email="Jane@Example.com", token="a-real-token")
 
-        assert user_repository.emails_seen == ["Jane@Example.com"]
+        assert user_repository.emails_seen == ["jane@example.com"]
 
     async def test_activates_a_pending_membership_for_the_signing_in_email(
         self,
@@ -231,3 +231,22 @@ class TestVerify:
             await service.verify(email="jane@example.com", token="whatever")
 
         assert tenants_service.activation_calls == []
+
+    async def test_email_is_trimmed_and_lowercased_before_it_is_written_or_matched(
+        self,
+    ) -> None:
+        """One canonical form, so the users row and any Pending Membership
+        (stored normalized, see ck_pending_memberships_email_normalized)
+        meet on the same string."""
+        cache = FakeCacheProvider()
+        service, user_repository, tenants_service = _verification_service(cache)
+        _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
+
+        user, _ = await service.verify(
+            email="  Jane@Example.COM ", token="a-real-token"
+        )
+
+        assert user_repository.emails_seen == ["jane@example.com"]
+        assert tenants_service.activation_calls == [
+            {"user_id": user.id, "email": "jane@example.com"}
+        ]

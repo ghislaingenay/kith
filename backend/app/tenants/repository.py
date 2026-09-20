@@ -1,20 +1,22 @@
 """Persistence access for the tenants domain."""
 
-from datetime import timedelta, datetime
+from collections.abc import Sequence
+from datetime import timedelta
 import re
 import uuid
 from typing import NamedTuple
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.logging import setup_logger
-from tenants.models import PendingMembership, Tenant, TenantMembership
+from tenants.models import (
+    PendingMembership,
+    PendingMembershipStatus,
+    Tenant,
+    TenantMembership,
+)
 from tenants.permissions import Role
-
-logger = setup_logger(__name__)
 
 
 class MembershipDetails(NamedTuple):
@@ -28,6 +30,11 @@ class MembershipDetails(NamedTuple):
     tenant_name: str
     tenant_slug: str
     role: Role
+
+# How long a Pending Membership stays activatable (ADR-0008). Applied at
+# match time from `created_at`, never read from the stored status — a
+# lazily-written 'expired' could be stale.
+PENDING_MEMBERSHIP_TTL = timedelta(days=7)
 
 _DEFAULT_TENANT_TIER = "free"
 _DEFAULT_TENANT_MAX_USERS = (
@@ -109,58 +116,74 @@ class TenantsRepository:
             for row in result.all()
         ]
         
-    async def get_pending_membership(
-        self, *, tenant_id: uuid.UUID, email: str
-    ) -> PendingMembership | None:
-        try:
-            result = await self.session.execute(
-                select(PendingMembership)
-                .where(PendingMembership.tenant_id == tenant_id)
-                .where(PendingMembership.email == email)
-                .where(PendingMembership.status == 'pending')
-                .order_by(PendingMembership.created_at, PendingMembership.tenant_id)
-                .limit(1)
+    async def list_pending_memberships(self, email: str) -> list[PendingMembership]:
+        """The live Pending Memberships for `email` across all Tenants:
+        status 'pending' and inside the TTL. Ordered only so processing is
+        stable, not to pick one."""
+        result = await self.session.execute(
+            select(PendingMembership)
+            .where(
+                PendingMembership.email == email,
+                PendingMembership.status == PendingMembershipStatus.PENDING,
+                PendingMembership.created_at > func.now() - PENDING_MEMBERSHIP_TTL,
             )
-            
-            membership = result.scalar_one_or_none()
-            if not membership:
-                return None
-            # expire membership if it is past its validity period
-            if membership.status != 'pending':
-                return None
-            if membership.created_at + timedelta(days=7) < datetime.utcnow():
-                membership.status = 'expired'
-                await self.session.commit()
-                return None
-            return membership
-        except SQLAlchemyError:
-            logger.error(f"Failed to fetch pending membership for tenant {tenant_id}")
-            raise
-
-    async def activate_pending_membership(
-        self, *, user_id: uuid.UUID, tenant_id: uuid.UUID, email: str
-    ) -> TenantMembership | None:
-        pending = await self.session.get(PendingMembership, (tenant_id, email))
-        if pending is None:
-            return None
-
-        membership_insert = (
-            insert(TenantMembership)
-            .values(tenant_id=tenant_id, user_id=user_id, role=pending.role)
-            .on_conflict_do_nothing(
-                index_elements=[TenantMembership.tenant_id, TenantMembership.user_id]
-            )
-            .returning(TenantMembership)
+            .order_by(PendingMembership.created_at, PendingMembership.tenant_id)
         )
-        result = await self.session.execute(membership_insert)
-        membership = result.scalar_one_or_none()
-        if membership is None:
-            membership = await self.get_active_membership(
-                user_id=user_id, tenant_id=tenant_id
+        return list(result.scalars())
+
+    async def activate_pending_memberships(
+        self, *, user_id: uuid.UUID, email: str, tenant_ids: Sequence[uuid.UUID]
+    ) -> list[TenantMembership]:
+        """Converts the Pending Membership at each `(tenant_id, email)` into
+        a TenantMembership with the stored Role, in one transaction — a
+        failure leaves none of them half-activated. The pending row is kept
+        and closed as 'accepted', not deleted.
+
+        Closing is a guarded UPDATE (`WHERE status = 'pending'`, inside the
+        TTL): it matches zero rows on a retry or when a concurrent sign-in
+        got there first, and a zero-row match is success, not an error. The
+        membership insert is ON CONFLICT DO NOTHING for the same reason."""
+        activated: list[TenantMembership] = []
+        for tenant_id in tenant_ids:
+            role = await self.session.scalar(
+                update(PendingMembership)
+                .where(
+                    PendingMembership.tenant_id == tenant_id,
+                    PendingMembership.email == email,
+                    PendingMembership.status == PendingMembershipStatus.PENDING,
+                    PendingMembership.created_at > func.now() - PENDING_MEMBERSHIP_TTL,
+                )
+                .values(
+                    status=PendingMembershipStatus.ACCEPTED,
+                    accepted_at=func.now(),
+                    accepted_by_user_id=user_id,
+                )
+                .returning(PendingMembership.role)
             )
-        await self.session.delete(pending)
+            if role is None:
+                continue
+
+            inserted = await self.session.execute(
+                insert(TenantMembership)
+                .values(tenant_id=tenant_id, user_id=user_id, role=role)
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        TenantMembership.tenant_id,
+                        TenantMembership.user_id,
+                    ]
+                )
+                .returning(TenantMembership)
+            )
+            membership = inserted.scalar_one_or_none()
+            if membership is None:
+                membership = await self.get_active_membership(
+                    user_id=user_id, tenant_id=tenant_id
+                )
+            if membership is not None:
+                activated.append(membership)
+
         await self.session.commit()
-        return membership
+        return activated
 
     async def provision_default_membership(
         self, *, user_id: uuid.UUID, email: str, first_name: str | None = None

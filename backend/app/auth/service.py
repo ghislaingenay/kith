@@ -19,6 +19,12 @@ from users.models import User
 from users.repository import UserRepository
 
 
+def _normalize_email(email: str) -> str:
+    """The one canonical form (trimmed, lowercased; `+tag` kept) that users
+    and Pending Memberships are stored and matched under (ADR-0008)."""
+    return email.strip().lower()
+
+
 def _token_key(email: str) -> str:
     return f"magic_link:token:{email.lower()}"
 
@@ -89,13 +95,14 @@ class MagicLinkVerificationService:
         """Returns the signed-in `User` and the raw session id to set as
         the session cookie. Raises `MagicLinkTokenInvalidError` if `token`
         is missing, expired, or already used."""
+        email = _normalize_email(email)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         consumed = await self._cache.delete_if_matches(_token_key(email), token_hash)
         if not consumed:
             raise MagicLinkTokenInvalidError()
 
-        user, is_created = await self._user_repository.get_or_create_user(email)
-        await self._tenants_service.activate_pending_membership(
+        user, _ = await self._user_repository.get_or_create_user(email)
+        await self._tenants_service.activate_pending_memberships(
             user_id=user.id, email=email
         )
         raw_session_id = await self._session_service.create_session(user.id)
