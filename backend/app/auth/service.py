@@ -14,6 +14,7 @@ from auth.session import SessionService
 from core.cache.provider import CacheProvider
 from core.mail.provider import Mailer
 from core.ratelimit.counter_limiter import CounterLimiter
+from tenants.service import TenantsService
 from users.models import User
 from users.repository import UserRepository
 
@@ -71,22 +72,18 @@ class MagicLinkService:
 
 
 class MagicLinkVerificationService:
-    """Orchestrates `GET /auth/magic-link/verify`: atomically consumes the
-    single-use token, creates or fetches the User (first sign-in is
-    signup — see `UserRepository.get_or_create_user`), and issues a
-    session. Kept separate from `MagicLinkService` (which only issues the
-    request-side token) so that class's tests don't need a
-    `UserRepository`/`SessionService`."""
 
     def __init__(
         self,
         cache: CacheProvider,
         user_repository: UserRepository,
         session_service: SessionService,
+        tenants_service: TenantsService,
     ) -> None:
         self._cache = cache
         self._user_repository = user_repository
         self._session_service = session_service
+        self._tenants_service = tenants_service
 
     async def verify(self, *, email: str, token: str) -> tuple[User, str]:
         """Returns the signed-in `User` and the raw session id to set as
@@ -97,6 +94,9 @@ class MagicLinkVerificationService:
         if not consumed:
             raise MagicLinkTokenInvalidError()
 
-        user = await self._user_repository.get_or_create_user(email)
+        user, is_created = await self._user_repository.get_or_create_user(email)
+        await self._tenants_service.activate_pending_membership(
+            user_id=user.id, email=email
+        )
         raw_session_id = await self._session_service.create_session(user.id)
         return user, raw_session_id

@@ -58,3 +58,13 @@ class TenantsService:
             )
             for membership, tenant_name, tenant_slug, role in rows
         ]
+
+    async def activate_pending_membership(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, email: str
+    ) -> None:
+        pending = await self.repository.get_pending_membership(tenant_id=tenant_id, email=email)
+        if pending is None:
+            return
+        await self.repository.activate_pending_membership(
+            user_id=user_id, tenant_id=pending.tenant_id, email=email
+        )

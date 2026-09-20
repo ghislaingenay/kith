@@ -120,21 +120,36 @@ class FakeUserRepository:
     def __init__(self) -> None:
         self.emails_seen: list[str] = []
 
-    async def get_or_create_user(self, email: str) -> User:
+    async def get_or_create_user(self, email: str) -> tuple[User, bool]:
         self.emails_seen.append(email)
-        return User(id=uuid.uuid4(), email=email, email_verified=False, is_active=True)
+        return User(id=uuid.uuid4(), email=email, email_verified=False, is_active=True), True
+
+
+class FakeTenantsService:
+    """Stands in for `TenantsService.activate_pending_membership` — records
+    calls so tests can assert *when* activation is attempted without a real
+    TenantsRepository/Postgres; the conversion behavior itself is exercised
+    in tests/tenants/test_repository.py."""
+
+    def __init__(self) -> None:
+        self.activation_calls: list[dict] = []
+
+    async def activate_pending_membership(self, *, user_id: uuid.UUID, email: str) -> None:
+        self.activation_calls.append({"user_id": user_id, "email": email})
 
 
 def _verification_service(
     cache: FakeCacheProvider,
-) -> tuple[MagicLinkVerificationService, FakeUserRepository]:
+) -> tuple[MagicLinkVerificationService, FakeUserRepository, FakeTenantsService]:
     user_repository = FakeUserRepository()
+    tenants_service = FakeTenantsService()
     service = MagicLinkVerificationService(
         cache=cache,
         user_repository=user_repository,
         session_service=SessionService(cache),
+        tenants_service=tenants_service,
     )
-    return service, user_repository
+    return service, user_repository, tenants_service
 
 
 def _seed_valid_token(cache: FakeCacheProvider, *, email: str, token: str) -> None:
@@ -145,7 +160,7 @@ def _seed_valid_token(cache: FakeCacheProvider, *, email: str, token: str) -> No
 class TestVerify:
     async def test_valid_token_creates_a_user_and_issues_a_session(self) -> None:
         cache = FakeCacheProvider()
-        service, user_repository = _verification_service(cache)
+        service, user_repository, _ = _verification_service(cache)
         _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
 
         user, raw_session_id = await service.verify(
@@ -159,7 +174,7 @@ class TestVerify:
 
     async def test_valid_token_is_consumed_and_cannot_be_reused(self) -> None:
         cache = FakeCacheProvider()
-        service, _ = _verification_service(cache)
+        service, _, _ = _verification_service(cache)
         _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
 
         await service.verify(email="jane@example.com", token="a-real-token")
@@ -169,7 +184,7 @@ class TestVerify:
 
     async def test_raises_when_no_token_was_ever_requested(self) -> None:
         cache = FakeCacheProvider()
-        service, user_repository = _verification_service(cache)
+        service, user_repository, _ = _verification_service(cache)
 
         with pytest.raises(MagicLinkTokenInvalidError):
             await service.verify(email="jane@example.com", token="whatever")
@@ -178,7 +193,7 @@ class TestVerify:
 
     async def test_raises_when_the_token_does_not_match_the_stored_hash(self) -> None:
         cache = FakeCacheProvider()
-        service, _ = _verification_service(cache)
+        service, _, _ = _verification_service(cache)
         _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
 
         with pytest.raises(MagicLinkTokenInvalidError):
@@ -186,9 +201,33 @@ class TestVerify:
 
     async def test_email_lookup_is_case_insensitive(self) -> None:
         cache = FakeCacheProvider()
-        service, user_repository = _verification_service(cache)
+        service, user_repository, _ = _verification_service(cache)
         _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
 
         await service.verify(email="Jane@Example.com", token="a-real-token")
 
         assert user_repository.emails_seen == ["Jane@Example.com"]
+
+    async def test_activates_a_pending_membership_for_the_signing_in_email(
+        self,
+    ) -> None:
+        cache = FakeCacheProvider()
+        service, _, tenants_service = _verification_service(cache)
+        _seed_valid_token(cache, email="jane@example.com", token="a-real-token")
+
+        user, _ = await service.verify(
+            email="jane@example.com", token="a-real-token"
+        )
+
+        assert tenants_service.activation_calls == [
+            {"user_id": user.id, "email": "jane@example.com"}
+        ]
+
+    async def test_does_not_activate_anything_for_an_invalid_token(self) -> None:
+        cache = FakeCacheProvider()
+        service, _, tenants_service = _verification_service(cache)
+
+        with pytest.raises(MagicLinkTokenInvalidError):
+            await service.verify(email="jane@example.com", token="whatever")
+
+        assert tenants_service.activation_calls == []

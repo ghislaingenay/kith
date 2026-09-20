@@ -43,25 +43,29 @@ class UserRepository:
         await self.session.refresh(user)
         return user
 
-    async def get_or_create_user(self, email: str) -> User:
+    async def get_or_create_user(self, email: str) -> tuple[User, bool]:
         """Fetch a user by email or create one: first sign-in is signup.
         Identity only — tenant/role assignment lives on TenantMembership,
         not User (see tenants/models.py)."""
         user = await self.get_by_email(email)
-        if user is None:
-            try:
-                user = User(email=email)
-                self.session.add(user)
-                await self.session.commit()
-                await self.session.refresh(user)
-            except IntegrityError:
-                # Concurrent insert/unique-constraint race: roll back and re-fetch the row that won.
-                await self.session.rollback()
-                user = await self.get_by_email(email)
+        if user is not None:
+            return user, False
+
+        is_created = False
+        try:
+            user = User(email=email)
+            self.session.add(user)
+            await self.session.commit()
+            await self.session.refresh(user)
+            is_created = True
+        except IntegrityError:
+            # Concurrent insert/unique-constraint race: roll back and re-fetch the row that won.
+            await self.session.rollback()
+            user = await self.get_by_email(email)
         if not user:
             logger.error(f"User {email} not found and could not be created.")
             raise UserNotFound()
-        return user
+        return user, is_created
 
     async def update_user(self, user: User) -> User:
         """Update an existing user in the database."""

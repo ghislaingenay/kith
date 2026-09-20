@@ -398,6 +398,14 @@ Avoid deeply nested conditionals.
 
 Handle unexpected errors centrally and never expose internal implementation details.
 
+Repository and service layers must handle database errors, not ignore them.
+For infrastructure-level failures (connection drops, constraint violations,
+timeouts), catch and raise SQLAlchemy's own exception types
+(`SQLAlchemyError`, `IntegrityError`, etc.) rather than inventing a custom
+exception for them — domain-specific exceptions are reserved for business-
+rule violations (not found, permission denied, invalid state), not
+infrastructure failures.
+
 ---
 
 ## 12. Core Technical Systems
@@ -558,6 +566,13 @@ deduplication.
 - Avoid generic `utils.py`, `helpers.py`, or `manager.py` unless genuinely cohesive.
 - Follow configured Ruff/formatter/type-checker rules.
 - Use RORO when it improves clarity.
+- Default to no comments. Only add one when the *why* is non-obvious — a
+  hidden constraint, a subtle invariant, a workaround for a specific bug,
+  behavior that would surprise a reader. If removing the comment wouldn't
+  confuse a future reader, don't write it.
+- Don't write comments that restate *what* the code does — descriptive
+  names already do that. Keep any comment you do write short: one line,
+  not a paragraph.
 
 The agent chooses functional vs class-based style based on the situation.
 

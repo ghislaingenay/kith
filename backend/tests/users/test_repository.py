@@ -73,9 +73,10 @@ async def test_get_or_create_user_returns_existing_user_without_creating() -> No
     session = FakeAsyncSession(execute_results=[FakeResult(scalar=user)])
     repository = UserRepository(session)
 
-    result = await repository.get_or_create_user("a@example.com")
+    user_result, is_created = await repository.get_or_create_user("a@example.com")
 
-    assert result is user
+    assert user_result is user
+    assert is_created is False
     assert session.added == []
     assert session.commit_count == 0
 
@@ -84,12 +85,13 @@ async def test_get_or_create_user_creates_when_absent() -> None:
     session = FakeAsyncSession(execute_results=[FakeResult(scalar=None)])
     repository = UserRepository(session)
 
-    result = await repository.get_or_create_user("b@example.com")
+    user_result, is_created = await repository.get_or_create_user("b@example.com")
 
-    assert result.email == "b@example.com"
-    assert session.added == [result]
+    assert user_result.email == "b@example.com"
+    assert is_created is True
+    assert session.added == [user_result]
     assert session.commit_count == 1
-    assert session.refreshed == [result]
+    assert session.refreshed == [user_result]
     assert session.rollback_count == 0
 
 
@@ -103,9 +105,10 @@ async def test_get_or_create_user_recovers_from_concurrent_insert_race() -> None
     )
     repository = UserRepository(session)
 
-    result = await repository.get_or_create_user("a@example.com")
+    user_result, is_created = await repository.get_or_create_user("a@example.com")
 
-    assert result is existing_user
+    assert user_result is existing_user
+    assert is_created is False
     assert session.rollback_count == 1
 
 

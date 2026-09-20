@@ -1,15 +1,20 @@
 """Persistence access for the tenants domain."""
 
+from datetime import timedelta, datetime
 import re
 import uuid
 from typing import NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tenants.models import Tenant, TenantMembership
+from core.logging import setup_logger
+from tenants.models import PendingMembership, Tenant, TenantMembership
 from tenants.permissions import Role
+
+logger = setup_logger(__name__)
 
 
 class MembershipDetails(NamedTuple):
@@ -90,8 +95,6 @@ class TenantsRepository:
     async def list_active_membership_details(
         self, user_id: uuid.UUID
     ) -> list[MembershipDetails]:
-        """The Role comes straight off the membership row, no Roles table
-        to join."""
         result = await self.session.execute(
             select(TenantMembership, Tenant.name, Tenant.slug)
             .join(Tenant, Tenant.id == TenantMembership.tenant_id)
@@ -99,11 +102,65 @@ class TenantsRepository:
                 TenantMembership.user_id == user_id,
                 TenantMembership.deactivated_at.is_(None),
             )
+            .order_by(TenantMembership.created_at, TenantMembership.tenant_id)
         )
         return [
             MembershipDetails(row[0], row[1], row[2], Role(row[0].role))
             for row in result.all()
         ]
+        
+    async def get_pending_membership(
+        self, *, tenant_id: uuid.UUID, email: str
+    ) -> PendingMembership | None:
+        try:
+            result = await self.session.execute(
+                select(PendingMembership)
+                .where(PendingMembership.tenant_id == tenant_id)
+                .where(PendingMembership.email == email)
+                .where(PendingMembership.status == 'pending')
+                .order_by(PendingMembership.created_at, PendingMembership.tenant_id)
+                .limit(1)
+            )
+            
+            membership = result.scalar_one_or_none()
+            if not membership:
+                return None
+            # expire membership if it is past its validity period
+            if membership.status != 'pending':
+                return None
+            if membership.created_at + timedelta(days=7) < datetime.utcnow():
+                membership.status = 'expired'
+                await self.session.commit()
+                return None
+            return membership
+        except SQLAlchemyError:
+            logger.error(f"Failed to fetch pending membership for tenant {tenant_id}")
+            raise
+
+    async def activate_pending_membership(
+        self, *, user_id: uuid.UUID, tenant_id: uuid.UUID, email: str
+    ) -> TenantMembership | None:
+        pending = await self.session.get(PendingMembership, (tenant_id, email))
+        if pending is None:
+            return None
+
+        membership_insert = (
+            insert(TenantMembership)
+            .values(tenant_id=tenant_id, user_id=user_id, role=pending.role)
+            .on_conflict_do_nothing(
+                index_elements=[TenantMembership.tenant_id, TenantMembership.user_id]
+            )
+            .returning(TenantMembership)
+        )
+        result = await self.session.execute(membership_insert)
+        membership = result.scalar_one_or_none()
+        if membership is None:
+            membership = await self.get_active_membership(
+                user_id=user_id, tenant_id=tenant_id
+            )
+        await self.session.delete(pending)
+        await self.session.commit()
+        return membership
 
     async def provision_default_membership(
         self, *, user_id: uuid.UUID, email: str, first_name: str | None = None
@@ -155,18 +212,6 @@ class TenantsRepository:
         return membership
 
     async def create_tenant(self, *, user_id: uuid.UUID, name: str) -> MembershipDetails:
-        """Explicit, user-initiated action: an already-authenticated
-        identity creates a new tenant and becomes its owner. Not idempotent
-        like provision_default_membership — each call makes a brand-new
-        Tenant even if `name` repeats (two tenants may share a display
-        name), safe because the slug embeds a random suffix rather than a
-        deterministic per-user hash, so there's nothing to retry into a
-        collision.
-
-        This method itself enforces no per-user limit — callers that need
-        "one active tenant per user" (currently TenantsService.create_tenant)
-        must check eligibility themselves, e.g. via
-        acquire_user_tenant_lock() + list_active_membership_details()."""
         slug = f"{_slugify(name)[:80]}-{uuid.uuid4().hex[:8]}"
 
         tenant = Tenant(

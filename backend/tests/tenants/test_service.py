@@ -3,9 +3,8 @@
 import uuid
 
 import pytest
-
 from tenants.exceptions import TenantAlreadyExistsError
-from tenants.models import TenantMembership
+from tenants.models import PendingMembership, TenantMembership
 from tenants.permissions import Role
 from tenants.service import TenantsService
 
@@ -18,6 +17,9 @@ class FakeTenantsRepository:
         self.provisioned: list[dict] = []
         self.created: list[dict] = []
         self.locks_acquired: list[uuid.UUID] = []
+        self.activation_calls: list[dict] = []
+        self.next_activated: TenantMembership | None = None
+        self.next_earliest_pending: PendingMembership | None = None
 
     async def acquire_user_tenant_lock(self, user_id):
         self.locks_acquired.append(user_id)
@@ -39,6 +41,12 @@ class FakeTenantsRepository:
 
     async def list_active_membership_details(self, user_id):
         return [row for row in self.membership_details if row[0].user_id == user_id]
+
+    async def activate_pending_membership(self, *, user_id, tenant_id, email):
+        self.activation_calls.append(
+            {"user_id": user_id, "tenant_id": tenant_id, "email": email}
+        )
+        return self.next_activated
 
 
 class TestListMyMemberships:
@@ -126,3 +134,4 @@ class TestProvisionDefaultMembership:
         assert repo.provisioned == [
             {"user_id": user_id, "email": "a@example.com", "first_name": "A"}
         ]
+

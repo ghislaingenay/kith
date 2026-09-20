@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     func,
@@ -100,4 +101,40 @@ class TenantMembership(Base):
     )
     deactivated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class PendingMembership(Base):
+    """A Tenant Membership an Admin created for an email that has not
+    signed in yet (ADR-0008, CONTEXT.md). There is no token and no expiry:
+    it sits here until that email's first sign-in activates it into a real
+    TenantMembership carrying this Role, at which point this row is
+    deleted (see auth/service.py:MagicLinkVerificationService).
+
+    Composite PK (tenant_id, email) mirrors TenantMembership's own
+    (tenant_id, user_id) — at most one pending invite per tenant per email."""
+
+    __tablename__ = "pending_memberships"
+    __table_args__ = (
+        CheckConstraint(
+            f"role IN ({_ROLE_VALUES})",
+            name="ck_pending_memberships_role",
+        ),
+        Index("idx_pending_memberships_email", "email"),
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    email: Mapped[str] = mapped_column(String(255), primary_key=True)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
