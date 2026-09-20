@@ -59,12 +59,19 @@ class TenantsService:
             for membership, tenant_name, tenant_slug, role in rows
         ]
 
-    async def activate_pending_membership(
-        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, email: str
+    async def activate_pending_memberships(
+        self, *, user_id: uuid.UUID, email: str
     ) -> None:
-        pending = await self.repository.get_pending_membership(tenant_id=tenant_id, email=email)
-        if pending is None:
+        """Converts every live Pending Membership held by `email` into a
+        real TenantMembership. No row is singled out: each is identified by
+        its own `tenant_id` and all are closed in one repository call, so it
+        doesn't matter how many a person holds or in what order they were
+        added."""
+        pending = await self.repository.list_pending_memberships(email)
+        if not pending:
             return
-        await self.repository.activate_pending_membership(
-            user_id=user_id, tenant_id=pending.tenant_id, email=email
+        await self.repository.activate_pending_memberships(
+            user_id=user_id,
+            email=email,
+            tenant_ids=[row.tenant_id for row in pending],
         )

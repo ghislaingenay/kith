@@ -6,9 +6,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from tenants.models import PendingMembership, Tenant, TenantMembership
+from tenants.models import (
+    PendingMembership,
+    PendingMembershipStatus,
+    Tenant,
+    TenantMembership,
+)
 from tenants.permissions import Role
 from tenants.repository import TenantsRepository
 from users.models import User
@@ -342,133 +347,350 @@ class TestSlugGeneration:
         # Slug should be truncated to prevent database issues
         assert len(tenant.slug) <= 89  # 80 chars + hyphen + 8-char suffix
 
-class TestActivatePendingMembership:
-    async def test_converts_the_pending_row_into_a_real_membership(
+def _pending(
+    tenant: Tenant,
+    email: str,
+    *,
+    role: Role = Role.MEMBER,
+    status: PendingMembershipStatus = PendingMembershipStatus.PENDING,
+    created_at: datetime | None = None,
+) -> PendingMembership:
+    row = PendingMembership(
+        tenant_id=tenant.id, email=email, role=role, status=status
+    )
+    if created_at is not None:
+        row.created_at = created_at
+    return row
+
+
+async def _reload(db_session: AsyncSession, tenant: Tenant, email: str):
+    """Every PendingMembership row for (tenant, email), freshly read — the
+    repository writes through raw UPDATEs, so identity-mapped rows would
+    otherwise be stale."""
+    result = await db_session.execute(
+        select(PendingMembership)
+        .where(
+            PendingMembership.tenant_id == tenant.id,
+            PendingMembership.email == email,
+        )
+        .execution_options(populate_existing=True)
+    )
+    return result.scalars().all()
+
+
+class TestPendingMembershipConstraints:
+    async def test_history_rows_can_sit_alongside_a_pending_row(
+        self, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        db_session.add_all(
+            [
+                _pending(tenant, "a@example.com", status=PendingMembershipStatus.ACCEPTED),
+                _pending(tenant, "a@example.com", status=PendingMembershipStatus.ACCEPTED),
+                _pending(tenant, "a@example.com", status=PendingMembershipStatus.EXPIRED),
+                _pending(tenant, "a@example.com", status=PendingMembershipStatus.REVOKED),
+                _pending(tenant, "a@example.com"),
+            ]
+        )
+
+        await db_session.commit()
+
+        assert len(await _reload(db_session, tenant, "a@example.com")) == 5
+
+    async def test_rejects_a_second_pending_row_for_the_same_tenant_and_email(
+        self, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        db_session.add_all(
+            [_pending(tenant, "b@example.com"), _pending(tenant, "b@example.com")]
+        )
+
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_the_same_email_can_be_pending_at_different_tenants(
+        self, db_session: AsyncSession
+    ) -> None:
+        first = await _make_tenant(db_session, name="First")
+        second = await _make_tenant(db_session, name="Second")
+        db_session.add_all(
+            [_pending(first, "c@example.com"), _pending(second, "c@example.com")]
+        )
+
+        await db_session.commit()
+
+    @pytest.mark.parametrize("email", ["Dana@Example.com", " dana@example.com"])
+    async def test_rejects_an_email_that_is_not_normalized(
+        self, db_session: AsyncSession, email: str
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        db_session.add(_pending(tenant, email))
+
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_rejects_a_status_outside_the_lifecycle(
+        self, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        row = _pending(tenant, "d@example.com")
+        row.status = "rejected"
+        db_session.add(row)
+
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+
+class TestListPendingMemberships:
+    async def test_returns_the_pending_rows_for_the_email_across_tenants(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        first = await _make_tenant(db_session, name="First")
+        second = await _make_tenant(db_session, name="Second")
+        elsewhere = await _make_tenant(db_session, name="Elsewhere")
+        db_session.add_all(
+            [
+                _pending(first, "dana@example.com"),
+                _pending(second, "dana@example.com"),
+                _pending(elsewhere, "someone-else@example.com"),
+            ]
+        )
+        await db_session.commit()
+
+        rows = await repository.list_pending_memberships("dana@example.com")
+
+        assert {row.tenant_id for row in rows} == {first.id, second.id}
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            PendingMembershipStatus.ACCEPTED,
+            PendingMembershipStatus.REVOKED,
+            PendingMembershipStatus.EXPIRED,
+        ],
+    )
+    async def test_ignores_rows_that_are_no_longer_pending(
+        self,
+        repository: TenantsRepository,
+        db_session: AsyncSession,
+        status: PendingMembershipStatus,
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        db_session.add(_pending(tenant, "eli@example.com", status=status))
+        await db_session.commit()
+
+        assert await repository.list_pending_memberships("eli@example.com") == []
+
+    async def test_expiry_is_applied_at_match_time_not_read_from_status(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        """A row still stored as 'pending' but older than the 7-day TTL must
+        not match — a lazily-stored 'expired' could be stale."""
+        stale = await _make_tenant(db_session, name="Stale")
+        fresh = await _make_tenant(db_session, name="Fresh")
+        now = datetime.now(UTC)
+        db_session.add_all(
+            [
+                _pending(stale, "fern@example.com", created_at=now - timedelta(days=8)),
+                _pending(fresh, "fern@example.com", created_at=now - timedelta(days=6)),
+            ]
+        )
+        await db_session.commit()
+
+        rows = await repository.list_pending_memberships("fern@example.com")
+
+        assert [row.tenant_id for row in rows] == [fresh.id]
+
+    async def test_orders_rows_deterministically(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        older = await _make_tenant(db_session, name="Older")
+        newer = await _make_tenant(db_session, name="Newer")
+        now = datetime.now(UTC)
+        db_session.add_all(
+            [
+                _pending(newer, "gia@example.com", created_at=now),
+                _pending(older, "gia@example.com", created_at=now - timedelta(days=1)),
+            ]
+        )
+        await db_session.commit()
+
+        rows = await repository.list_pending_memberships("gia@example.com")
+
+        assert [row.tenant_id for row in rows] == [older.id, newer.id]
+
+
+class TestActivatePendingMemberships:
+    async def test_creates_a_membership_carrying_the_stored_role(
         self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         tenant = await _make_tenant(db_session)
-        db_session.add(
-            PendingMembership(
-                tenant_id=tenant.id, email="dana@example.com", role=Role.ADMIN
-            )
-        )
+        db_session.add(_pending(tenant, "dana@example.com", role=Role.ADMIN))
         await db_session.commit()
         user = await _make_user(db_session, "dana@example.com")
 
-        membership = await repository.activate_pending_membership(
-            user_id=user.id, tenant_id=tenant.id, email="dana@example.com"
+        memberships = await repository.activate_pending_memberships(
+            user_id=user.id, email="dana@example.com", tenant_ids=[tenant.id]
         )
 
-        assert membership is not None
-        assert membership.tenant_id == tenant.id
-        assert membership.user_id == user.id
-        assert membership.role == Role.ADMIN
+        assert [(m.tenant_id, m.user_id, m.role) for m in memberships] == [
+            (tenant.id, user.id, Role.ADMIN)
+        ]
 
-    async def test_deletes_the_pending_row_after_activation(
+    async def test_deactivates_the_pending_row_instead_of_deleting_it(
         self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
         tenant = await _make_tenant(db_session)
-        db_session.add(
-            PendingMembership(
-                tenant_id=tenant.id, email="eli@example.com", role=Role.MEMBER
-            )
-        )
+        db_session.add(_pending(tenant, "eli@example.com"))
         await db_session.commit()
         user = await _make_user(db_session, "eli@example.com")
 
-        await repository.activate_pending_membership(
-            user_id=user.id, tenant_id=tenant.id, email="eli@example.com"
+        await repository.activate_pending_memberships(
+            user_id=user.id, email="eli@example.com", tenant_ids=[tenant.id]
         )
 
-        remaining = await db_session.scalar(
-            select(PendingMembership).where(
-                PendingMembership.tenant_id == tenant.id,
-                PendingMembership.email == "eli@example.com",
-            )
-        )
-        assert remaining is None
+        [row] = await _reload(db_session, tenant, "eli@example.com")
+        assert row.status == PendingMembershipStatus.ACCEPTED
+        assert row.accepted_at is not None
+        assert row.accepted_by_user_id == user.id
 
-    async def test_returns_none_when_there_is_no_pending_membership(
+    async def test_activates_every_given_tenant_in_one_call(
         self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
-        tenant = await _make_tenant(db_session)
-        user = await _make_user(db_session, "fern@example.com")
-
-        membership = await repository.activate_pending_membership(
-            user_id=user.id, tenant_id=tenant.id, email="fern@example.com"
-        )
-
-        assert membership is None
-
-    async def test_is_scoped_to_the_given_tenant_id_and_leaves_other_tenants_alone(
-        self, repository: TenantsRepository, db_session: AsyncSession
-    ) -> None:
-        """Even though the same email can have Pending Memberships at
-        several tenants, this method only ever acts on the exact
-        (tenant_id, email) key it's given — picking which one to activate
-        is TenantsService's job (see tests/tenants/test_service.py), not
-        this repository's."""
-        target_tenant = await _make_tenant(db_session, name="Target")
-        other_tenant = await _make_tenant(db_session, name="Other")
+        first = await _make_tenant(db_session, name="First")
+        second = await _make_tenant(db_session, name="Second")
         db_session.add_all(
             [
-                PendingMembership(
-                    tenant_id=target_tenant.id, email="gia@example.com", role=Role.VIEWER
-                ),
-                PendingMembership(
-                    tenant_id=other_tenant.id, email="gia@example.com", role=Role.MEMBER
-                ),
+                _pending(first, "fern@example.com", role=Role.VIEWER),
+                _pending(second, "fern@example.com", role=Role.MEMBER),
             ]
+        )
+        await db_session.commit()
+        user = await _make_user(db_session, "fern@example.com")
+
+        memberships = await repository.activate_pending_memberships(
+            user_id=user.id,
+            email="fern@example.com",
+            tenant_ids=[first.id, second.id],
+        )
+
+        assert {(m.tenant_id, m.role) for m in memberships} == {
+            (first.id, Role.VIEWER),
+            (second.id, Role.MEMBER),
+        }
+
+    async def test_only_touches_the_tenants_it_is_given(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        target = await _make_tenant(db_session, name="Target")
+        other = await _make_tenant(db_session, name="Other")
+        db_session.add_all(
+            [_pending(target, "gia@example.com"), _pending(other, "gia@example.com")]
         )
         await db_session.commit()
         user = await _make_user(db_session, "gia@example.com")
 
-        membership = await repository.activate_pending_membership(
-            user_id=user.id, tenant_id=target_tenant.id, email="gia@example.com"
+        await repository.activate_pending_memberships(
+            user_id=user.id, email="gia@example.com", tenant_ids=[target.id]
         )
 
-        assert membership is not None
-        assert membership.tenant_id == target_tenant.id
-        assert membership.role == Role.VIEWER
-
-        remaining = (
-            await db_session.scalars(
-                select(PendingMembership).where(
-                    PendingMembership.email == "gia@example.com"
-                )
+        [untouched] = await _reload(db_session, other, "gia@example.com")
+        assert untouched.status == PendingMembershipStatus.PENDING
+        assert (
+            await db_session.scalar(
+                select(TenantMembership).where(TenantMembership.tenant_id == other.id)
             )
-        ).all()
-        assert len(remaining) == 1
-        assert remaining[0].tenant_id == other_tenant.id
+            is None
+        )
 
-    async def test_is_idempotent_when_a_matching_membership_already_exists(
+    async def test_a_retry_is_a_no_op_not_an_error(
         self, repository: TenantsRepository, db_session: AsyncSession
     ) -> None:
-        """A retried verify call (e.g. a client re-requesting /me after a
-        flaky first response) shouldn't fail on the unique
-        (tenant_id, user_id) constraint if activation already ran once."""
         tenant = await _make_tenant(db_session)
+        db_session.add(_pending(tenant, "hugo@example.com"))
+        await db_session.commit()
         user = await _make_user(db_session, "hugo@example.com")
+        await repository.activate_pending_memberships(
+            user_id=user.id, email="hugo@example.com", tenant_ids=[tenant.id]
+        )
+
+        retried = await repository.activate_pending_memberships(
+            user_id=user.id, email="hugo@example.com", tenant_ids=[tenant.id]
+        )
+
+        assert retried == []
+        memberships = (
+            await db_session.scalars(
+                select(TenantMembership).where(TenantMembership.user_id == user.id)
+            )
+        ).all()
+        assert len(memberships) == 1
+
+    async def test_succeeds_when_the_user_is_already_a_member(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        user = await _make_user(db_session, "ivy@example.com")
         db_session.add(
             TenantMembership(tenant_id=tenant.id, user_id=user.id, role=Role.MEMBER)
         )
+        db_session.add(_pending(tenant, "ivy@example.com"))
+        await db_session.commit()
+
+        memberships = await repository.activate_pending_memberships(
+            user_id=user.id, email="ivy@example.com", tenant_ids=[tenant.id]
+        )
+
+        assert [m.tenant_id for m in memberships] == [tenant.id]
+        [row] = await _reload(db_session, tenant, "ivy@example.com")
+        assert row.status == PendingMembershipStatus.ACCEPTED
+
+    async def test_does_nothing_when_there_is_no_pending_row(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        user = await _make_user(db_session, "jon@example.com")
+
+        memberships = await repository.activate_pending_memberships(
+            user_id=user.id, email="jon@example.com", tenant_ids=[tenant.id]
+        )
+
+        assert memberships == []
+
+    async def test_skips_a_row_past_its_ttl_even_if_still_stored_as_pending(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
         db_session.add(
-            PendingMembership(
-                tenant_id=tenant.id, email="hugo@example.com", role=Role.MEMBER
+            _pending(
+                tenant,
+                "kai@example.com",
+                created_at=datetime.now(UTC) - timedelta(days=8),
             )
         )
         await db_session.commit()
+        user = await _make_user(db_session, "kai@example.com")
 
-        membership = await repository.activate_pending_membership(
-            user_id=user.id, tenant_id=tenant.id, email="hugo@example.com"
+        memberships = await repository.activate_pending_memberships(
+            user_id=user.id, email="kai@example.com", tenant_ids=[tenant.id]
         )
 
-        assert membership is not None
-        assert membership.tenant_id == tenant.id
-        remaining = await db_session.scalar(
-            select(PendingMembership).where(
-                PendingMembership.tenant_id == tenant.id,
-                PendingMembership.email == "hugo@example.com",
+        assert memberships == []
+
+    async def test_skips_a_revoked_row(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        db_session.add(
+            _pending(
+                tenant, "lee@example.com", status=PendingMembershipStatus.REVOKED
             )
         )
-        assert remaining is None
+        await db_session.commit()
+        user = await _make_user(db_session, "lee@example.com")
+
+        memberships = await repository.activate_pending_memberships(
+            user_id=user.id, email="lee@example.com", tenant_ids=[tenant.id]
+        )
+
+        assert memberships == []

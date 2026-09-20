@@ -28,7 +28,12 @@ from core.ratelimit.counter_limiter import CounterLimiter
 from core.security import dependencies as security_dependencies
 from main import app
 from tenants.dependencies import get_tenants_service
-from tenants.models import PendingMembership, Tenant, TenantMembership
+from tenants.models import (
+    PendingMembership,
+    PendingMembershipStatus,
+    Tenant,
+    TenantMembership,
+)
 from tenants.permissions import Role
 from tenants.repository import TenantsRepository
 from tenants.schemas import TenantMembershipSummary
@@ -188,7 +193,7 @@ def _seed_token(cache: FakeCacheProvider, *, email: str, token: str) -> None:
 
 
 class FakeActivationTenantsService:
-    """Stands in for `TenantsService.activate_pending_membership` — records
+    """Stands in for `TenantsService.activate_pending_memberships` — records
     calls; DB-backed activation itself is exercised by
     TestVerifyMagicLinkActivatesPendingMembership below and by
     tests/tenants/test_repository.py. (Named distinctly from the
@@ -198,7 +203,7 @@ class FakeActivationTenantsService:
     def __init__(self) -> None:
         self.activation_calls: list[dict] = []
 
-    async def activate_pending_membership(self, *, user_id, email) -> None:
+    async def activate_pending_memberships(self, *, user_id, email) -> None:
         self.activation_calls.append({"user_id": user_id, "email": email})
 
 
@@ -444,34 +449,6 @@ async def _make_tenant(db_session: AsyncSession, *, name: str = "Acme") -> Tenan
     return tenant
 
 
-class _EmailDrivenTenantsService:
-    """Test-only adapter for these DB-backed tests: MagicLinkVerificationService.verify()
-    calls activate_pending_membership(user_id=..., email=...) with no
-    tenant_id, but TenantsService.activate_pending_membership now requires
-    one explicitly. This resolves the earliest matching PendingMembership
-    by email itself, then delegates to the real
-    TenantsRepository.activate_pending_membership for the actual DB work,
-    so the insert/delete FK behavior under test still runs for real."""
-
-    def __init__(self, repository: TenantsRepository, session: AsyncSession) -> None:
-        self._repository = repository
-        self._session = session
-
-    async def activate_pending_membership(self, *, user_id: uuid.UUID, email: str) -> None:
-        result = await self._session.execute(
-            select(PendingMembership)
-            .where(PendingMembership.email == email)
-            .order_by(PendingMembership.created_at, PendingMembership.tenant_id)
-            .limit(1)
-        )
-        pending = result.scalar_one_or_none()
-        if pending is None:
-            return
-        await self._repository.activate_pending_membership(
-            user_id=user_id, tenant_id=pending.tenant_id, email=email
-        )
-
-
 def _override_verify_with_db(db_session: AsyncSession) -> FakeCacheProvider:
     cache = FakeCacheProvider()
     repository = TenantsRepository(db_session)
@@ -479,7 +456,7 @@ def _override_verify_with_db(db_session: AsyncSession) -> FakeCacheProvider:
         cache=cache,
         user_repository=UserRepository(db_session),
         session_service=SessionService(cache),
-        tenants_service=_EmailDrivenTenantsService(repository, db_session),
+        tenants_service=TenantsService(repository),
     )
     app.dependency_overrides[get_magic_link_verification_service] = lambda: service
     return cache
@@ -531,13 +508,16 @@ class TestVerifyMagicLinkActivatesPendingMembership:
         assert membership is not None
         assert membership.role == Role.ADMIN
 
-        remaining_pending = await db_session.scalar(
-            select(PendingMembership).where(
+        closed = await db_session.scalar(
+            select(PendingMembership)
+            .where(
                 PendingMembership.tenant_id == tenant.id,
                 PendingMembership.email == "dana@example.com",
             )
+            .execution_options(populate_existing=True)
         )
-        assert remaining_pending is None
+        assert closed is not None
+        assert closed.status == PendingMembershipStatus.ACCEPTED
 
     async def test_zero_pending_memberships_falls_through_with_no_membership_created(
         self, db_session: AsyncSession
@@ -565,33 +545,22 @@ class TestVerifyMagicLinkActivatesPendingMembership:
         )
         assert membership is None
 
-    async def test_only_one_pending_membership_is_activated_when_multiple_match(
+    async def test_every_matching_pending_membership_is_activated(
         self, db_session: AsyncSession
     ) -> None:
-        """This app enforces one active tenant per user and the switcher
-        is out of scope this pass (ADR-0008) — so if two Pending
-        Memberships match the same email, only one is converted; the other
-        stays pending for a future pass."""
-        earlier_tenant = await _make_tenant(db_session, name="Earlier")
-        later_tenant = await _make_tenant(db_session, name="Later")
-        # Explicit, distinct created_at values (rather than the server
-        # default, which would give both rows the same transaction
-        # timestamp) so this test actually exercises created_at ordering
-        # rather than the tenant_id tie-break.
-        now = datetime.now(UTC)
+        """Each Pending Membership is its own row with its own tenant_id, so
+        none is singled out; which Tenant the person lands in afterwards is
+        /me's stable (created_at, tenant_id) ordering, not an activation
+        decision."""
+        first_tenant = await _make_tenant(db_session, name="First")
+        second_tenant = await _make_tenant(db_session, name="Second")
         db_session.add_all(
             [
                 PendingMembership(
-                    tenant_id=later_tenant.id,
-                    email="fay@example.com",
-                    role=Role.MEMBER,
-                    created_at=now + timedelta(seconds=5),
+                    tenant_id=first_tenant.id, email="fay@example.com", role=Role.MEMBER
                 ),
                 PendingMembership(
-                    tenant_id=earlier_tenant.id,
-                    email="fay@example.com",
-                    role=Role.VIEWER,
-                    created_at=now,
+                    tenant_id=second_tenant.id, email="fay@example.com", role=Role.VIEWER
                 ),
             ]
         )
@@ -619,16 +588,84 @@ class TestVerifyMagicLinkActivatesPendingMembership:
                 select(TenantMembership).where(TenantMembership.user_id == user.id)
             )
         ).all()
-        assert len(memberships) == 1
-        assert memberships[0].tenant_id == earlier_tenant.id
-        assert memberships[0].role == Role.VIEWER
+        assert {(m.tenant_id, m.role) for m in memberships} == {
+            (first_tenant.id, Role.MEMBER),
+            (second_tenant.id, Role.VIEWER),
+        }
 
-        remaining_pending = (
+        statuses = (
             await db_session.scalars(
-                select(PendingMembership).where(
-                    PendingMembership.email == "fay@example.com"
-                )
+                select(PendingMembership.status)
+                .where(PendingMembership.email == "fay@example.com")
+                .execution_options(populate_existing=True)
             )
         ).all()
-        assert len(remaining_pending) == 1
-        assert remaining_pending[0].tenant_id == later_tenant.id
+        assert list(statuses) == [PendingMembershipStatus.ACCEPTED] * 2
+
+    async def test_a_differently_cased_sign_in_email_still_matches_the_pending_row(
+        self, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        db_session.add(
+            PendingMembership(
+                tenant_id=tenant.id, email="gus@example.com", role=Role.MEMBER
+            )
+        )
+        await db_session.commit()
+        cache = _override_verify_with_db(db_session)
+        _seed_token(cache, email="gus@example.com", token="a-real-token")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/v1/auth/magic-link/verify",
+                params={"token": "a-real-token", "email": "Gus@Example.COM"},
+            )
+
+        assert response.status_code == 200
+        user = await db_session.scalar(
+            select(User).where(User.email == "gus@example.com")
+        )
+        assert user is not None
+        membership = await db_session.scalar(
+            select(TenantMembership).where(TenantMembership.user_id == user.id)
+        )
+        assert membership is not None
+        assert membership.tenant_id == tenant.id
+
+    async def test_a_pending_membership_past_its_ttl_is_not_activated(
+        self, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        db_session.add(
+            PendingMembership(
+                tenant_id=tenant.id,
+                email="hana@example.com",
+                role=Role.MEMBER,
+                created_at=datetime.now(UTC) - timedelta(days=8),
+            )
+        )
+        await db_session.commit()
+        cache = _override_verify_with_db(db_session)
+        _seed_token(cache, email="hana@example.com", token="a-real-token")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/v1/auth/magic-link/verify",
+                params={"token": "a-real-token", "email": "hana@example.com"},
+            )
+
+        assert response.status_code == 200
+        user = await db_session.scalar(
+            select(User).where(User.email == "hana@example.com")
+        )
+        assert user is not None
+        assert (
+            await db_session.scalar(
+                select(TenantMembership).where(TenantMembership.user_id == user.id)
+            )
+            is None
+        )

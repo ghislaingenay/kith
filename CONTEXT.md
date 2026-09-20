@@ -43,7 +43,7 @@ The 14 days between an Owner deleting a Tenant and its data being purged. During
 _Avoid_: Retention window, soft-delete window
 
 **Pending Membership**:
-A Tenant Membership an Admin created for an email that has not signed in yet. It becomes active on that email's first sign-in. There is no token and no expiry.
+A Tenant Membership an Admin created for an email that has not signed in yet. It becomes active on that email's first sign-in, and is kept as history once accepted. There is no token; it can be activated for 7 days after it is created.
 _Avoid_: Invitation, invite, allowlist, whitelist
 
 ### Authentication
