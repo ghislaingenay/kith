@@ -34,9 +34,9 @@ async def update_my_profile(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[ProfileService, Depends(get_profile_service)],
 ) -> ProfileResponse:
-    """Creates the Profile on first use, so a User who has never set anything
-    can still save a name."""
-    return await service.update_name(user, data.name)
+    """Updates the caller's profile name.
+
+    Every User should already have a Profile created at signup; if the Profile row is missing, the service raises `ProfileNotFound` (HTTP 500)."""
 
 
 @router.put(
