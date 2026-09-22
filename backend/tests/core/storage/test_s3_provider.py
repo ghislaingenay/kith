@@ -49,6 +49,26 @@ async def test_upload_returns_key_by_default(s3_provider: S3StorageProvider) -> 
     assert returned == _KEY
 
 
+async def test_upload_with_content_type_sets_the_objects_content_type(
+    s3_provider: S3StorageProvider,
+) -> None:
+    await s3_provider.upload(_KEY, b"hello world", content_type="image/png")
+
+    metadata = await s3_provider.head(_KEY)
+
+    assert metadata.content_type == "image/png"
+
+
+async def test_upload_without_content_type_leaves_it_unset(
+    s3_provider: S3StorageProvider,
+) -> None:
+    await s3_provider.upload(_KEY, b"hello world")
+
+    metadata = await s3_provider.head(_KEY)
+
+    assert metadata.content_type in (None, "binary/octet-stream")
+
+
 async def test_upload_public_returns_virtual_hosted_url_without_custom_endpoint(
     s3_provider: S3StorageProvider,
 ) -> None:

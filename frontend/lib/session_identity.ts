@@ -9,7 +9,12 @@ export const SESSION_COOKIE_NAME = "kith_session";
 
 export const sessionIdentitySchema = z.object({
   user: z.object({ email: z.string().email() }),
-  memberships: z.array(z.object({ tenant_slug: z.string() })),
+  profile: z.object({
+    email: z.string().email(),
+    name: z.string().nullable(),
+    avatar_url: z.string().nullable(),
+  }),
+  memberships: z.array(z.object({ tenant_slug: z.string(), tenant_name: z.string() })),
 });
 
 export type SessionIdentity = Readonly<z.infer<typeof sessionIdentitySchema>>;

@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,8 +55,14 @@ class UserRepository:
 
         is_created = False
         try:
-            user = User(email=email)
+            user_id = uuid.uuid4()
+            user = User(id=user_id, email=email)
             self.session.add(user)
+            # Every User gets a Profile at signup (mvp-design.md: "First
+            # sign-in is signup; it creates the User and Profile"), inserted
+            # in the same transaction so the invariant holds even if the
+            # process dies mid-way.
+            self.session.add(Profile(user_id=user_id))
             await self.session.commit()
             await self.session.refresh(user)
             is_created = True

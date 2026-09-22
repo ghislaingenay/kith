@@ -60,11 +60,14 @@ class S3StorageProvider(StorageProvider):
         metadata: dict[str, str] | None = None,
         *,
         public: bool = False,
+        content_type: str | None = None,
     ) -> str:
         body = await self._materialize(stream)
         extra_args: dict = {"Metadata": metadata} if metadata else {}
         if public:
             extra_args["ACL"] = "public-read"
+        if content_type:
+            extra_args["ContentType"] = content_type
         try:
             await asyncio.to_thread(
                 self._client.upload_fileobj,

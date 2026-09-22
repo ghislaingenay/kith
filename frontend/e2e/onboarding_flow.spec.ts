@@ -25,5 +25,5 @@ test("sign-in -> onboarding -> landing for a brand-new user", async ({ page }) =
   await page.getByRole("button", { name: /create workspace/i }).click();
 
   await expect(page).toHaveURL(/\/w\/[^/]+$/);
-  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Welcome to / })).toBeVisible();
 });

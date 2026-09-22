@@ -15,7 +15,8 @@ export class ApiError extends Error {
 type ApiFetchInit = Omit<RequestInit, "body"> & { body?: unknown };
 
 /** Thin fetch wrapper for the FastAPI backend: resolves the path against
- * `NEXT_PUBLIC_API_URL`, JSON-encodes `body`, and turns a non-2xx response
+ * `NEXT_PUBLIC_API_URL`, JSON-encodes `body` (a `FormData` is sent as-is so
+ * the browser sets the multipart boundary), and turns a non-2xx response
  * into an `ApiError`. Works from both Server Components/Route Handlers
  * (pass a `cookie` header explicitly, per coding-standards §4.2) and Client
  * Components (pass `credentials: "include"`). */
@@ -23,13 +24,14 @@ export async function apiFetch<T = unknown>(
   path: string,
   { body, headers, ...init }: ApiFetchInit = {},
 ): Promise<T> {
+  const isFormData = body instanceof FormData;
   const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}`, {
     ...init,
     headers: {
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(body !== undefined && !isFormData ? { "Content-Type": "application/json" } : {}),
       ...headers,
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body === undefined || isFormData ? body : JSON.stringify(body),
   });
 
   if (!response.ok) {

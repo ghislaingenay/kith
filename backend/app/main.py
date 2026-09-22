@@ -10,6 +10,7 @@ from core.container import container
 from core.exceptions import register_exception_handlers
 from templates.router import router as templates_router
 from tenants.router import router as tenants_router
+from users.router import router as users_router
 
 
 @asynccontextmanager
@@ -49,6 +50,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix=set_api_version())
 app.include_router(me_router, prefix=set_api_version())
 app.include_router(tenants_router, prefix=set_api_version())
+app.include_router(users_router, prefix=set_api_version())
 app.include_router(templates_router, prefix=set_api_version())
 
 
