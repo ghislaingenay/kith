@@ -1,5 +1,6 @@
-import Link from "next/link";
+"use client";
 
+import Link from "next/link";
 import { displayName, UserAvatar, type Profile } from "@/features/profile";
 
 import { SignOutButton } from "./sign_out_button";
