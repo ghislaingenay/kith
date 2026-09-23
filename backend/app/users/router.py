@@ -37,6 +37,7 @@ async def update_my_profile(
     """Updates the caller's profile name.
 
     Every User should already have a Profile created at signup; if the Profile row is missing, the service raises `ProfileNotFound` (HTTP 500)."""
+    return await service.update_name(user, data.name)
 
 
 @router.put(
