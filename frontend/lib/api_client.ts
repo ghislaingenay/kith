@@ -12,6 +12,8 @@ export class ApiError extends Error {
   }
 }
 
+const isClientSide = () => typeof window !== "undefined";
+
 type ApiFetchInit = Omit<RequestInit, "body"> & { body?: unknown };
 
 /** Thin fetch wrapper for the FastAPI backend: resolves the path against
@@ -25,14 +27,31 @@ export async function apiFetch<T = unknown>(
   { body, headers, ...init }: ApiFetchInit = {},
 ): Promise<T> {
   const isFormData = body instanceof FormData;
-  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}`, {
+  const base = isClientSide() ? env.NEXT_PUBLIC_API_URL : env.BACKEND_URL;
+  const url = `${base}${path}`;
+  console.log("api request URL:", url);
+
+  const initOptions = {
     ...init,
     headers: {
-      ...(body !== undefined && !isFormData ? { "Content-Type": "application/json" } : {}),
+      ...(body !== undefined && !isFormData
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...headers,
     },
     body: body === undefined || isFormData ? body : JSON.stringify(body),
-  });
+  };
+  console.log("api request options:", initOptions);
+  let response: Response;
+  try {
+    response = await fetch(url, initOptions);
+  } catch (err) {
+    if (err instanceof TypeError) {
+      console.error("api fetch error:", err);
+    }
+    throw err;
+  }
+  console.log("api response:", response);
 
   if (!response.ok) {
     throw new ApiError(response.status, await extractErrorMessage(response));

@@ -14,7 +14,9 @@ export const sessionIdentitySchema = z.object({
     name: z.string().nullable(),
     avatar_url: z.string().nullable(),
   }),
-  memberships: z.array(z.object({ tenant_slug: z.string(), tenant_name: z.string() })),
+  memberships: z.array(
+    z.object({ tenant_slug: z.string(), tenant_name: z.string() }),
+  ),
 });
 
 export type SessionIdentity = Readonly<z.infer<typeof sessionIdentitySchema>>;
@@ -35,11 +37,12 @@ export async function getSessionIdentity(
 ): Promise<SessionIdentity | null> {
   let data: unknown;
   try {
-    data = await apiFetch("/me", {
+    data = await apiFetch("/api/v1/me", {
       headers: { cookie: cookieHeader },
       cache: "no-store",
     });
   } catch (err) {
+    console.log("err", err);
     if (err instanceof ApiError && err.status === 401) {
       return null;
     }

@@ -2,6 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { workspacePath } from "@/lib/session_identity";
@@ -16,6 +17,12 @@ export function OnboardingForm({
 }) {
   const router = useRouter();
   const { mutate, isPending, error } = useCreateTenant();
+  // `isPending` flips back to false as soon as the mutation resolves, right
+  // when `onSuccess` fires — this covers the gap between then and the
+  // workspace page actually rendering, so the button doesn't flash back to
+  // "Create workspace" while the router navigates.
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const isBusy = isPending || isRedirecting;
 
   const {
     register,
@@ -28,7 +35,10 @@ export function OnboardingForm({
 
   const onSubmit = handleSubmit(({ name }) => {
     mutate(name, {
-      onSuccess: (tenant) => router.push(workspacePath(tenant.tenant_slug)),
+      onSuccess: (tenant) => {
+        setIsRedirecting(true);
+        router.push(workspacePath(tenant.tenant_slug));
+      },
     });
   });
 
@@ -65,10 +75,10 @@ export function OnboardingForm({
 
       <button
         type="submit"
-        disabled={isPending}
+        disabled={isBusy}
         className="rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
       >
-        {isPending ? "Creating…" : "Create workspace"}
+        {isBusy ? "Creating…" : "Create workspace"}
       </button>
     </form>
   );

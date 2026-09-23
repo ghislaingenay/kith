@@ -2,15 +2,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-fast_os}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fast_os}
-      POSTGRES_DB: ${POSTGRES_DB:-fast_os}
+      POSTGRES_USER: ${POSTGRES_USER:-kith}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kithpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-kith}
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fast_os}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kith}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -34,6 +34,19 @@ services:
       timeout: 30s
       retries: 5
       start_period: 30s
+
+  # MinIO doesn't provision buckets on startup — this one-shot job creates
+  # the bucket `app` uploads/reads from (S3_BUCKET below) and exits.
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} &&
+      mc mb --ignore-existing local/${S3_BUCKET:-kith-dev}
+      "
 
   redis:
     image: redis:7-alpine
@@ -65,10 +78,15 @@ services:
       - "8000:8000"
     environment:
       PYTHONPATH: /app/app
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fast_os}:${POSTGRES_PASSWORD:-fast_os}@postgres:5432/${POSTGRES_DB:-fast_os}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kith}:${POSTGRES_PASSWORD:-kithpassword}@postgres:5432/${POSTGRES_DB:-kith}
       STORAGE_PROVIDER: minio
       S3_REGION: us-east-1
       S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-kith-dev}
+      # boto3's standard credential chain (core/storage/s3_provider.py) —
+      # these are the vars it reads, matching the minio service's root user.
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       REDIS_URL: redis://redis:6379/0
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       SMTP_HOST: mailpit
@@ -93,6 +111,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       mailpit:
@@ -112,14 +132,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Provided by the user via a root .env — never hardcoded here.
-      VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+      BACKEND_URL: http://app:8000
       # Host-reachable on purpose — this runs in the browser, not inside
       # the compose network, so it can't resolve "app" as a hostname.
-      VITE_API_BASE_URL: http://localhost:8000
-      # Next.js only exposes NEXT_PUBLIC_*-prefixed vars to the browser
-      # (the VITE_ vars above predate ADR-0006's move off Vite).
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_API_URL: http://localhost:8000
     volumes:
       - ../frontend:/app
       - /app/node_modules

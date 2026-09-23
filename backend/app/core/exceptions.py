@@ -10,15 +10,18 @@ registration into one call for `main.py`.
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import TimeoutError
+from sqlalchemy.exc import OperationalError, TimeoutError
 
 from auth.exceptions import AuthenticationError, MagicLinkTokenInvalidError
+from core.logging import setup_logger
 from core.mail.exceptions import MailError
 from core.ratelimit.exception_handlers import register_ratelimit_exception_handlers
 from core.security.exception_handlers import register_security_exception_handlers
 from core.storage.exceptions import StorageError
 from tenants.exception_handlers import register_tenant_exception_handlers
 from users.exception_handlers import register_user_exception_handlers
+
+logger = setup_logger(__name__)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -34,6 +37,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(StorageError, _handle_storage_error)  # type: ignore[arg-type]
     app.add_exception_handler(MailError, _handle_mail_error)  # type: ignore[arg-type]
     app.add_exception_handler(TimeoutError, _handle_db_timeout_error)  # type: ignore[arg-type]
+    # Connection/auth failures (e.g. asyncpg's InvalidPasswordError).
+    app.add_exception_handler(OperationalError, _handle_db_operational_error)  # type: ignore[arg-type]
 
 
 async def _handle_authentication_error(
@@ -77,11 +82,25 @@ async def _handle_mail_error(_: Request, __: MailError) -> JSONResponse:
     )
 
 
-async def _handle_db_timeout_error(_: Request, __: Exception) -> JSONResponse:
+async def _handle_db_timeout_error(_: Request, exc: Exception) -> JSONResponse:
+    logger.error(str(exc))
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={
             "error": "db_timeout",
+            "message": "Database is temporarily unavailable",
+        },
+    )
+
+
+async def _handle_db_operational_error(
+    _: Request, exc: OperationalError
+) -> JSONResponse:
+    logger.error(f"Database operational issue: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "error": "db_unavailable",
             "message": "Database is temporarily unavailable",
         },
     )

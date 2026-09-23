@@ -1,14 +1,21 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { useRequestMagicLink } from "../api/use-request-magic-link";
 import { signInEmailSchema, type SignInEmailInput } from "../types";
 
-export function SignInForm() {
+export function SignInForm({
+  initialError = null,
+}: {
+  initialError?: string | null;
+}) {
+  const router = useRouter();
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState(initialError);
   const { mutate, isPending, error } = useRequestMagicLink();
 
   const {
@@ -22,6 +29,31 @@ export function SignInForm() {
   const onSubmit = handleSubmit(({ email }) => {
     mutate(email, { onSuccess: () => setSubmittedEmail(email) });
   });
+
+  const backToLogin = () => {
+    setLinkError(null);
+    router.replace("/sign-in");
+  };
+
+  if (linkError) {
+    return (
+      <div role="alert" className="text-center">
+        <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+          {linkError}
+        </h2>
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+          Request a new link to sign in.
+        </p>
+        <button
+          type="button"
+          onClick={backToLogin}
+          className="mt-4 w-full rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+        >
+          Back to login
+        </button>
+      </div>
+    );
+  }
 
   if (submittedEmail) {
     return (
