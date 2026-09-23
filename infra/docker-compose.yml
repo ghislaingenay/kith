@@ -71,25 +71,11 @@ services:
       S3_ENDPOINT: http://minio:9000
       REDIS_URL: redis://redis:6379/0
       CORS_ALLOWED_ORIGINS: http://localhost:3000
-      # Magic-link email (ADR-0006) — Mailpit locally, no auth/TLS needed.
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       MAIL_FROM_ADDRESS: noreply@kith.dev
-      # Points at the frontend's verify route (not the API directly): it
-      # does the server-side GET /auth/magic-link/verify + GET /me call,
-      # forwarding cookies, then redirects (see frontend/app/verify/route.ts).
       MAGIC_LINK_VERIFY_URL: http://localhost:3000/verify
-      # Local dev serves plain HTTP, so the session cookie's Secure flag
-      # must be off here (ADR-0006) — prod overrides this to true (the
-      # default) via real environment.
       SESSION_COOKIE_SECURE: "false"
-      # Clerk credentials — set these in a root .env (docker compose loads
-      # it automatically); never hardcode real secrets here.
-      AUTH_PROVIDER: ${AUTH_PROVIDER:-clerk}
-      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY}
-      AUTH_JWT_KEY: ${AUTH_JWT_KEY:-}
-      AUTH_AUTHORIZED_PARTIES: ${AUTH_AUTHORIZED_PARTIES:-http://localhost:3000}
-      AUTH_WEBHOOK_SIGNING_SECRET: ${AUTH_WEBHOOK_SIGNING_SECRET}
     healthcheck:
       test:
         [
