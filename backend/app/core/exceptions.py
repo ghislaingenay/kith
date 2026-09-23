@@ -18,10 +18,12 @@ from core.ratelimit.exception_handlers import register_ratelimit_exception_handl
 from core.security.exception_handlers import register_security_exception_handlers
 from core.storage.exceptions import StorageError
 from tenants.exception_handlers import register_tenant_exception_handlers
+from users.exception_handlers import register_user_exception_handlers
 
 
 def register_exception_handlers(app: FastAPI) -> None:
     register_tenant_exception_handlers(app)
+    register_user_exception_handlers(app)
     register_ratelimit_exception_handlers(app)
     register_security_exception_handlers(app)
     app.add_exception_handler(AuthenticationError, _handle_authentication_error)  # type: ignore[arg-type]

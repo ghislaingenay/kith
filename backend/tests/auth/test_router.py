@@ -40,8 +40,14 @@ from tenants.schemas import TenantMembershipSummary
 from tenants.service import TenantsService
 from tests.support.fake_cache import FakeCacheProvider
 from tests.support.fake_mailer import FakeMailer
-from users.models import User
-from users.repository import UserRepository
+from tests.support.fake_storage import FakeStorageProvider, RaisingStorageProvider
+from users.dependencies import (
+    get_db_session as users_get_db_session,
+)
+from users.dependencies import get_profile_service, get_user_repository
+from users.models import Profile, User
+from users.repository import ProfileRepository, UserRepository
+from users.service import ProfileService
 
 _VERIFY_URL = "http://localhost:8000/api/v1/auth/magic-link/verify"
 
@@ -340,6 +346,13 @@ class FakeTenantsService:
         return self.memberships
 
 
+class FakeProfilelessUserRepository:
+    """Returns a stored user that has no Profile row."""
+
+    async def get_by_user_id(self, user_id, *, with_profile=False):
+        return SimpleNamespace(profile=None)
+
+
 _ME_USER = AuthenticatedUser(
     id=uuid.uuid4(), email="jane@example.com", email_verified=True, is_active=True
 )
@@ -360,6 +373,12 @@ class TestGetMe:
         ]
         app.dependency_overrides[get_current_user] = lambda: _ME_USER
         app.dependency_overrides[get_tenants_service] = lambda: service
+        app.dependency_overrides[get_user_repository] = (
+            lambda: FakeProfilelessUserRepository()
+        )
+        app.dependency_overrides[get_profile_service] = lambda: ProfileService(
+            None, FakeStorageProvider()  # type: ignore[arg-type]
+        )
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -371,6 +390,7 @@ class TestGetMe:
         assert body["user"]["email"] == "jane@example.com"
         assert len(body["memberships"]) == 1
         assert body["memberships"][0]["tenant_slug"] == "acme"
+        assert body["profile"]["email"] == "jane@example.com"
 
     async def test_returns_401_when_unauthenticated(self) -> None:
         from auth.exceptions import AuthenticationError
@@ -387,6 +407,134 @@ class TestGetMe:
             response = await client.get("/api/v1/me")
 
         assert response.status_code == 401
+
+
+class TestGetMeProfile:
+    """Real Postgres (`db_session`): `/me` loads the Profile together with the
+    User (one `selectinload`), which fakes can't prove works against the
+    `users`/`profiles` mapping."""
+
+    async def _get_me(
+        self,
+        db_session: AsyncSession,
+        user: User,
+        storage: FakeStorageProvider | None = None,
+    ) -> dict:
+        auth_user = AuthenticatedUser(
+            id=user.id, email=user.email, email_verified=True, is_active=True
+        )
+        app.dependency_overrides[get_current_user] = lambda: auth_user
+        app.dependency_overrides[get_tenants_service] = lambda: FakeTenantsService()
+        app.dependency_overrides[get_user_repository] = lambda: UserRepository(
+            db_session
+        )
+        app.dependency_overrides[get_profile_service] = lambda: ProfileService(
+            ProfileRepository(db_session), storage or FakeStorageProvider()
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/v1/me")
+
+        assert response.status_code == 200
+        return response.json()
+
+    async def test_returns_email_only_profile_when_the_user_has_no_profile(
+        self, db_session: AsyncSession
+    ) -> None:
+        user = User(email="pia@example.com")
+        db_session.add(user)
+        await db_session.commit()
+
+        body = await self._get_me(db_session, user)
+
+        assert body["profile"] == {
+            "email": "pia@example.com",
+            "name": None,
+            "avatar_url": None,
+        }
+
+    async def test_returns_name_and_presigned_avatar_url_from_the_profile(
+        self, db_session: AsyncSession
+    ) -> None:
+        user = User(email="quinn@example.com")
+        db_session.add(user)
+        await db_session.commit()
+        key = f"user/{user.id}/avatar/avatar.png"
+        db_session.add(Profile(user_id=user.id, first_name="Quinn", avatar_url=key))
+        await db_session.commit()
+
+        body = await self._get_me(db_session, user)
+
+        assert body["profile"] == {
+            "email": "quinn@example.com",
+            "name": "Quinn",
+            "avatar_url": f"https://cdn.example.com/{key}?signature=fake&method=GET",
+        }
+
+    async def test_signing_in_still_succeeds_when_avatar_presigning_fails(
+        self, db_session: AsyncSession
+    ) -> None:
+        """`/me` sits on the sign-in redirect path (see
+        verify-and-redirect.ts) — a storage outage must not block sign-in."""
+        user = User(email="uma@example.com")
+        db_session.add(user)
+        await db_session.commit()
+        key = f"user/{user.id}/avatar/avatar.png"
+        db_session.add(Profile(user_id=user.id, first_name="Uma", avatar_url=key))
+        await db_session.commit()
+
+        body = await self._get_me(db_session, user, RaisingStorageProvider())
+
+        assert body["profile"] == {
+            "email": "uma@example.com",
+            "name": "Uma",
+            "avatar_url": None,
+        }
+
+
+class TestGetMeProfileThroughRealSession:
+    """`get_current_user` and `/me` share one request-scoped session, so `/me`
+    re-queries a User that is already in the identity map without its Profile
+    — the case a test that overrides `get_current_user` never reaches."""
+
+    async def test_loads_the_profile_of_a_user_the_session_dependency_already_loaded(
+        self, db_session: AsyncSession
+    ) -> None:
+        user = User(email="rae@example.com")
+        db_session.add(user)
+        await db_session.commit()
+        key = f"user/{user.id}/avatar/avatar.png"
+        db_session.add(Profile(user_id=user.id, first_name="Rae", avatar_url=key))
+        await db_session.commit()
+        db_session.expunge_all()
+
+        cache = FakeCacheProvider()
+        session_service = SessionService(cache)
+        raw_session_id = await session_service.create_session(user.id)
+        app.dependency_overrides[get_session_service] = lambda: session_service
+        app.dependency_overrides[users_get_db_session] = lambda: db_session
+        app.dependency_overrides[get_tenants_service] = lambda: FakeTenantsService()
+        app.dependency_overrides[get_profile_service] = lambda: ProfileService(
+            ProfileRepository(db_session), FakeStorageProvider()
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={SESSION_COOKIE_NAME: raw_session_id},
+        ) as client:
+            response = await client.get("/api/v1/me")
+
+        assert response.status_code == 200
+        assert response.json()["profile"] == {
+            "email": "rae@example.com",
+            "name": "Rae",
+            "avatar_url": f"https://cdn.example.com/{key}?signature=fake&method=GET",
+        }
+        stored = await db_session.scalar(select(Profile).where(Profile.user_id == user.id))
+        assert stored is not None and stored.avatar_url == key
 
 
 def _mock_container_allowing(allowed_origins: list[str]) -> MagicMock:

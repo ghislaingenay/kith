@@ -46,8 +46,13 @@ class StorageProvider(ABC):
         metadata: dict[str, str] | None = None,
         *,
         public: bool = False,
+        content_type: str | None = None,
     ) -> str:
         """Upload an object.
+
+        `content_type` sets the object's actual `Content-Type` (what the
+        provider serves it as); `metadata` is separate provider-side
+        user metadata, not a MIME type.
 
         Returns the storage key, or — when `public=True` — a stable,
         non-expiring public URL for the object. Never a presigned/signed

@@ -27,6 +27,9 @@ from auth.session import SessionService
 from core.security.dependencies import require_allowed_origin
 from tenants.dependencies import get_tenants_service
 from tenants.service import TenantsService
+from users.dependencies import get_profile_service, get_user_repository
+from users.repository import UserRepository
+from users.service import ProfileService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 me_router = APIRouter(tags=["me"])
@@ -117,10 +120,17 @@ async def logout(
 @me_router.get("/me", response_model=MeResponse)
 async def get_me(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    service: Annotated[TenantsService, Depends(get_tenants_service)],
+    tenants_service: Annotated[TenantsService, Depends(get_tenants_service)],
+    user_repository: Annotated[UserRepository, Depends(get_user_repository)],
+    profile_service: Annotated[ProfileService, Depends(get_profile_service)],
 ) -> MeResponse:
     """No `X-Tenant-ID` required — the frontend calls this right after
     verifying a Magic Link, before it has a tenant to pick (its membership
-    count decides where to redirect)."""
-    memberships = await service.list_my_memberships(user.id)
-    return MeResponse(user=user, memberships=memberships)
+    count decides where to redirect). The Profile is loaded with the User
+    (`with_profile`) rather than by a second lookup."""
+    memberships = await tenants_service.list_my_memberships(user.id)
+    record = await user_repository.get_by_user_id(str(user.id), with_profile=True)
+    profile = await profile_service.to_response(
+        user, record.profile if record else None
+    )
+    return MeResponse(user=user, profile=profile, memberships=memberships)

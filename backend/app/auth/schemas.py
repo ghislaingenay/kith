@@ -6,6 +6,7 @@ from pydantic import BaseModel, EmailStr
 
 from tenants.permissions import Role
 from tenants.schemas import TenantMembershipSummary
+from users.schemas import ProfileResponse
 
 
 class AuthenticatedUser(BaseModel):
@@ -37,10 +38,11 @@ class LogoutResponse(BaseModel):
 
 
 class MeResponse(BaseModel):
-    """GET /me: the caller's identity plus every active Tenant Membership —
-    reuses GET /tenants' schema so the frontend redirect logic (zero
-    memberships -> onboarding, one -> that tenant) has everything it needs
-    in a single call."""
+    """GET /me: the caller's identity, their Profile and every active Tenant
+    Membership — reuses GET /tenants' schema so the frontend redirect logic
+    (zero memberships -> onboarding, one -> that tenant) and the app shell
+    (name, avatar, Tenant name) have everything they need in a single call."""
 
     user: AuthenticatedUser
+    profile: ProfileResponse
     memberships: list[TenantMembershipSummary]

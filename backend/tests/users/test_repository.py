@@ -89,10 +89,25 @@ async def test_get_or_create_user_creates_when_absent() -> None:
 
     assert user_result.email == "b@example.com"
     assert is_created is True
-    assert session.added == [user_result]
     assert session.commit_count == 1
     assert session.refreshed == [user_result]
     assert session.rollback_count == 0
+
+
+async def test_get_or_create_user_also_creates_the_profile() -> None:
+    """Every User gets a Profile at signup (mvp-design.md: "First sign-in is
+    signup; it creates the User and Profile") — a User must never exist
+    without one."""
+    session = FakeAsyncSession(execute_results=[FakeResult(scalar=None)])
+    repository = UserRepository(session)
+
+    user_result, _ = await repository.get_or_create_user("b@example.com")
+
+    assert len(session.added) == 2
+    added_user, added_profile = session.added
+    assert added_user is user_result
+    assert isinstance(added_profile, Profile)
+    assert added_profile.user_id == user_result.id
 
 
 async def test_get_or_create_user_recovers_from_concurrent_insert_race() -> None:

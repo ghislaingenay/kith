@@ -84,6 +84,8 @@ class Profile(Base):
     )
     first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Holds the storage object key, not a URL: the object is private and the
+    # API answers with a presigned URL in its place (see users/service.py).
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_data: Mapped[dict | None] = mapped_column(
         "metadata", JSONB, nullable=True, server_default=text("'{}'::jsonb")
