@@ -54,6 +54,8 @@ export function AvatarEditor({ profile }: { readonly profile: Profile }) {
       onOpenChange={() => {
         reset();
         setFileError(null);
+        setImageFailed(false);
+        setDragging(false);
       }}
     >
       <DialogTrigger asChild>
