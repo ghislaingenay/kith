@@ -167,6 +167,15 @@ async def test_generate_presigned_url_put(s3_provider: S3StorageProvider) -> Non
     assert _BUCKET in url
 
 
+@pytest.fixture()
+def aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Presigning is local but still needs credentials to sign with; don't
+    rely on the machine running the tests having any."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+
+
+@pytest.mark.usefixtures("aws_credentials")
 async def test_presigned_url_is_signed_for_the_presign_endpoint() -> None:
     """The browser can't reach the in-network host the API uploads through,
     and SigV4 signs the host — so the URL must carry the public one."""
@@ -183,6 +192,7 @@ async def test_presigned_url_is_signed_for_the_presign_endpoint() -> None:
     assert "minio" not in url
 
 
+@pytest.mark.usefixtures("aws_credentials")
 async def test_presigned_url_falls_back_to_the_endpoint() -> None:
     provider = S3StorageProvider(
         bucket=_BUCKET, region=_REGION, endpoint_url="http://localhost:9000"
