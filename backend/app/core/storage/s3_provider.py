@@ -3,6 +3,7 @@
 import asyncio
 import io
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Literal
 
 import boto3
@@ -66,7 +67,11 @@ class S3StorageProvider(StorageProvider):
             "s3",
             region_name=self._region,
             endpoint_url=endpoint_url,
-            config=BotoConfig(signature_version="s3v4"),
+            config=BotoConfig(
+                signature_version="s3v4",
+                # Default CRC32 would be signed into presigned URLs; browsers can't send it.
+                request_checksum_calculation="when_required",
+            ),
         )
 
     async def upload(
@@ -95,6 +100,40 @@ class S3StorageProvider(StorageProvider):
         except ClientError as exc:
             raise self._translate_error(key, exc) from exc
         return self._public_url(key) if public else key
+
+    async def upload_file(
+        self,
+        key: str,
+        path: Path,
+        metadata: dict[str, str] | None = None,
+        *,
+        content_type: str | None = None,
+    ) -> str:
+        extra_args: dict = {"Metadata": metadata} if metadata else {}
+        if content_type:
+            extra_args["ContentType"] = content_type
+        try:
+            await asyncio.to_thread(
+                self._client.upload_file,
+                str(path),
+                self._bucket,
+                key,
+                ExtraArgs=extra_args,
+            )
+        except ClientError as exc:
+            raise self._translate_error(key, exc) from exc
+        return key
+
+    async def copy(self, source_key: str, dest_key: str) -> None:
+        try:
+            await asyncio.to_thread(
+                self._client.copy_object,
+                Bucket=self._bucket,
+                Key=dest_key,
+                CopySource={"Bucket": self._bucket, "Key": source_key},
+            )
+        except ClientError as exc:
+            raise self._translate_error(source_key, exc) from exc
 
     def public_url(self, key: str) -> str:
         return self._public_url(key)
@@ -158,6 +197,33 @@ class S3StorageProvider(StorageProvider):
                 self._presign_client.generate_presigned_url,
                 ClientMethod=client_method,
                 Params={"Bucket": self._bucket, "Key": key},
+                ExpiresIn=ttl,
+            )
+        except ClientError as exc:
+            raise self._translate_error(key, exc) from exc
+
+    async def generate_presigned_put(
+        self,
+        key: str,
+        ttl: int,
+        *,
+        content_type: str,
+        content_length: int,
+        checksum_sha256: str | None = None,
+    ) -> str:
+        params: dict = {
+            "Bucket": self._bucket,
+            "Key": key,
+            "ContentType": content_type,
+            "ContentLength": content_length,
+        }
+        if checksum_sha256:
+            params["ChecksumSHA256"] = checksum_sha256
+        try:
+            return await asyncio.to_thread(
+                self._presign_client.generate_presigned_url,
+                ClientMethod="put_object",
+                Params=params,
                 ExpiresIn=ttl,
             )
         except ClientError as exc:

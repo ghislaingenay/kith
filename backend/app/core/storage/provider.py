@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 
@@ -59,6 +60,25 @@ class StorageProvider(ABC):
         URL with an expiry."""
 
     @abstractmethod
+    async def upload_file(
+        self,
+        key: str,
+        path: Path,
+        metadata: dict[str, str] | None = None,
+        *,
+        content_type: str | None = None,
+    ) -> str:
+        """Upload the file at `path` without reading it fully into memory
+        (large files are sent in parts). Same `content_type` / `metadata`
+        semantics as `upload`. Returns the storage key."""
+
+    @abstractmethod
+    async def copy(self, source_key: str, dest_key: str) -> None:
+        """Copy an object to another key inside the store, keeping the
+        source. Raises `StorageObjectNotFoundError` if `source_key` does
+        not exist."""
+
+    @abstractmethod
     def public_url(self, key: str) -> str:
         """The stable, non-expiring public URL an object at `key` has (or
         would have) when stored with `public=True` — the same value
@@ -86,6 +106,25 @@ class StorageProvider(ABC):
         self, key: str, method: Literal["GET", "PUT"], ttl: int
     ) -> str:
         """Generate a time-limited presigned URL for direct client access."""
+
+    @abstractmethod
+    async def generate_presigned_put(
+        self,
+        key: str,
+        ttl: int,
+        *,
+        content_type: str,
+        content_length: int,
+        checksum_sha256: str | None = None,
+    ) -> str:
+        """Generate a presigned PUT whose signature covers the exact
+        `content_type` and `content_length`: the store rejects an upload
+        that differs, and the client must send the same headers.
+
+        `checksum_sha256` (base64 of the raw digest, the S3 wire format) is
+        signed as the `x-amz-checksum-sha256` header when given, so the
+        client must send that header with the same value. Treat it as an
+        early reject only — not every S3-compatible store enforces it."""
 
     @abstractmethod
     async def create_multipart_upload(self, key: str) -> str:
