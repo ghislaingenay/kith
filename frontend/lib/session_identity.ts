@@ -42,7 +42,6 @@ export async function getSessionIdentity(
       cache: "no-store",
     });
   } catch (err) {
-    console.log("err", err);
     if (err instanceof ApiError && err.status === 401) {
       return null;
     }

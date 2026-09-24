@@ -18,13 +18,11 @@ export const profileQueryKey = (email: string) => ["profile", email] as const;
  * needs no request; saves write straight into it (see `useSaveProfile`,
  * `useUploadAvatar`), so the sidebar and the settings page never disagree. */
 export function useProfile(initialProfile: Profile): Profile {
-  console.log("initial profile: ", initialProfile);
   const { data } = useQuery({
     queryKey: profileQueryKey(initialProfile.email),
     queryFn: fetchProfile,
     initialData: initialProfile,
     staleTime: PROFILE_STALE_MS,
   });
-  console.log("queried profile: ", data);
   return data;
 }

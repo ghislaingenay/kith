@@ -29,7 +29,6 @@ export async function apiFetch<T = unknown>(
   const isFormData = body instanceof FormData;
   const base = isClientSide() ? env.NEXT_PUBLIC_API_URL : env.BACKEND_URL;
   const url = `${base}${path}`;
-  console.log("api request URL:", url);
 
   const initOptions = {
     ...init,
@@ -41,7 +40,6 @@ export async function apiFetch<T = unknown>(
     },
     body: body === undefined || isFormData ? body : JSON.stringify(body),
   };
-  console.log("api request options:", initOptions);
   let response: Response;
   try {
     response = await fetch(url, initOptions);
@@ -51,7 +49,6 @@ export async function apiFetch<T = unknown>(
     }
     throw err;
   }
-  console.log("api response:", response);
 
   if (!response.ok) {
     throw new ApiError(response.status, await extractErrorMessage(response));
