@@ -82,6 +82,9 @@ services:
       STORAGE_PROVIDER: minio
       S3_REGION: us-east-1
       S3_ENDPOINT: http://minio:9000
+      # Presigned avatar URLs are opened by the browser, which can't resolve
+      # the in-network `minio` host — sign them for the published port.
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
       S3_BUCKET: ${S3_BUCKET:-kith-dev}
       # boto3's standard credential chain (core/storage/s3_provider.py) —
       # these are the vars it reads, matching the minio service's root user.

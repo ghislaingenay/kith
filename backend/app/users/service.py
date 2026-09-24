@@ -26,10 +26,6 @@ class ProfileService:
         self.profile_repository = profile_repository
         self.storage = storage
 
-    async def get_profile(self, user: AuthenticatedUser) -> ProfileResponse:
-        profile = await self.profile_repository.get_by_user_id(str(user.id))
-        return await self.to_response(user, profile)
-
     async def update_name(
         self, user: AuthenticatedUser, name: str | None
     ) -> ProfileResponse:

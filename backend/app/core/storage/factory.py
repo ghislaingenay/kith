@@ -23,6 +23,7 @@ class StorageProviderFactory:
                 bucket=settings.s3_bucket,
                 region=settings.s3_region,
                 endpoint_url=settings.s3_endpoint,
+                presign_endpoint_url=settings.s3_public_endpoint,
                 public_base_url=settings.public_base_url,
             )
 

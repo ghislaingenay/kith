@@ -19,6 +19,12 @@ class StorageSettings(BaseSettings):
     s3_bucket: str | None = Field(default=None, validation_alias="S3_BUCKET")
     s3_region: str | None = Field(default=None, validation_alias="S3_REGION")
     s3_endpoint: str | None = Field(default=None, validation_alias="S3_ENDPOINT")
+    s3_public_endpoint: str | None = Field(
+        default=None, validation_alias="S3_PUBLIC_ENDPOINT"
+    )
+    """Host to sign presigned URLs for when the browser reaches storage at a
+    different address than the API does (e.g. `http://localhost:9000` vs the
+    in-network `http://minio:9000`). Falls back to `S3_ENDPOINT` when unset."""
     public_base_url: str | None = Field(
         default=None, validation_alias="STORAGE_PUBLIC_BASE_URL"
     )

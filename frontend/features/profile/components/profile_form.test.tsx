@@ -1,25 +1,18 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "@/lib/api_client";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/render_with_providers";
 
 import { uploadAvatar } from "../api/upload_avatar";
-
+import { useProfile } from "../api/use_profile";
 import type { Profile } from "../types";
 import { ProfileForm } from "./profile_form";
 
-const refresh = vi.fn();
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh }),
-}));
-
-// jsdom's FormData/File can't be sent through Node's fetch, so the upload
-// call is mocked here; its real multipart request is covered by
-// api/upload_avatar.test.ts, which runs in the node environment.
+// jsdom's FormData/File can't go through Node's fetch; the real multipart
+// request is covered by api/upload_avatar.test.ts.
 vi.mock("../api/upload_avatar", () => ({ uploadAvatar: vi.fn() }));
 
 const API_URL = "http://localhost:8000/api/v1";
@@ -47,10 +40,10 @@ describe("ProfileForm display", () => {
     expect(screen.getByRole("heading", { name: EMAIL })).toBeInTheDocument();
   });
 
-  it("shows the current avatar image", () => {
+  it("shows the current avatar image", async () => {
     renderForm({ name: "Jane Doe", avatar_url: AVATAR_URL });
 
-    expect(screen.getByRole("img", { name: "Jane Doe" })).toHaveAttribute(
+    expect(await screen.findByRole("img", { name: "Jane Doe" })).toHaveAttribute(
       "src",
       AVATAR_URL,
     );
@@ -79,7 +72,7 @@ function mockProfileUpdate() {
 }
 
 describe("ProfileForm saving the name", () => {
-  it("saves the trimmed name, confirms it, and refreshes the shell", async () => {
+  it("saves the trimmed name and confirms it", async () => {
     const bodies = mockProfileUpdate();
     const user = userEvent.setup();
     renderForm({ name: "Jane" });
@@ -91,8 +84,30 @@ describe("ProfileForm saving the name", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("Profile saved");
     expect(bodies).toEqual([{ name: "Janet Doe" }]);
-    expect(screen.getByRole("heading", { name: "Janet Doe" })).toBeInTheDocument();
-    expect(refresh).toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "Janet Doe" })).toBeInTheDocument();
+  });
+
+  it("writes the saved profile into the shared cache other components read", async () => {
+    mockProfileUpdate();
+    const user = userEvent.setup();
+    const profile: Profile = { email: EMAIL, name: "Jane", avatar_url: null };
+    function Sidebar() {
+      return <p data-testid="sidebar">{useProfile(profile).name}</p>;
+    }
+    renderWithProviders(
+      <>
+        <Sidebar />
+        <ProfileForm profile={profile} />
+      </>,
+    );
+
+    const nameInput = screen.getByLabelText("Name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Janet");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByRole("status");
+    expect(screen.getByTestId("sidebar")).toHaveTextContent("Janet");
   });
 
   it("clears the name when the field is emptied, falling back to the email", async () => {
@@ -105,7 +120,7 @@ describe("ProfileForm saving the name", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("Profile saved");
     expect(bodies).toEqual([{ name: null }]);
-    expect(screen.getByRole("heading", { name: EMAIL })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: EMAIL })).toBeInTheDocument();
   });
 
   it("shows a saving state while the request is in flight", async () => {
@@ -163,116 +178,38 @@ describe("ProfileForm saving the name", () => {
   });
 });
 
-const NEW_AVATAR_URL = "https://cdn.example.com/user/u1/avatar/avatar.png?signature=new";
-const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
-
-function pngFile(name = "me.png", size = 1024) {
-  return new File([new Uint8Array(size)], name, { type: "image/png" });
-}
-
-/** Logs the avatar upload and the name save in one sequence, so a test can
- * assert the upload happens before the name is saved. */
-function mockAvatarSave() {
-  const calls: string[] = [];
-  vi.mocked(uploadAvatar).mockImplementation(async () => {
-    calls.push("avatar");
-    return { email: EMAIL, name: null, avatar_url: NEW_AVATAR_URL };
-  });
-  server.use(
-    http.patch(`${API_URL}/users/me/profile`, async ({ request }) => {
-      const body = (await request.json()) as { name: string | null };
-      calls.push("profile");
-      return HttpResponse.json({
-        email: EMAIL,
-        name: body.name,
-        avatar_url: NEW_AVATAR_URL,
-      });
-    }),
-  );
-  return calls;
-}
-
 describe("ProfileForm avatar", () => {
-  afterEach(() => {
-    vi.mocked(uploadAvatar).mockReset();
-  });
-
-  it("keeps showing the current avatar while a new file is picked, before saving", async () => {
+  it("shows a newly uploaded avatar in the form and in the shared cache", async () => {
+    const newUrl = "https://cdn.example.com/user/u1/avatar/avatar.png?signature=new";
+    vi.mocked(uploadAvatar).mockResolvedValue({
+      email: EMAIL,
+      name: "Jane",
+      avatar_url: newUrl,
+    });
     const user = userEvent.setup();
-    renderForm({ name: "Jane", avatar_url: AVATAR_URL });
-
-    await user.upload(screen.getByLabelText("Avatar"), pngFile());
-
-    expect(screen.getByRole("img", { name: "Jane" })).toHaveAttribute("src", AVATAR_URL);
-  });
-
-  it("uploads the chosen image, then saves the name, and shows the new avatar", async () => {
-    const calls = mockAvatarSave();
-    const user = userEvent.setup();
-    renderForm({ name: "Jane" });
-
-    await user.upload(screen.getByLabelText("Avatar"), pngFile());
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(await screen.findByRole("status")).toHaveTextContent("Profile saved");
-    expect(calls).toEqual(["avatar", "profile"]);
-    expect(vi.mocked(uploadAvatar).mock.calls[0][0].name).toBe("me.png");
-    expect(screen.getByRole("img", { name: "Jane" })).toHaveAttribute(
-      "src",
-      NEW_AVATAR_URL,
+    const profile: Profile = { email: EMAIL, name: "Jane", avatar_url: AVATAR_URL };
+    function Sidebar() {
+      return <p data-testid="sidebar">{useProfile(profile).avatar_url}</p>;
+    }
+    renderWithProviders(
+      <>
+        <Sidebar />
+        <ProfileForm profile={profile} />
+      </>,
     );
-  });
+    expect(await screen.findByRole("img", { name: "Jane" })).toHaveAttribute("src", AVATAR_URL);
 
-  it("rejects a file that is not a JPEG or PNG without calling the API", async () => {
-    const calls = mockAvatarSave();
-    const user = userEvent.setup({ applyAccept: false });
-    renderForm({ name: "Jane" });
-
-    const gif = new File(["GIF89a"], "me.gif", { type: "image/gif" });
-    await user.upload(screen.getByLabelText("Avatar"), gif);
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Avatar must be a JPEG or PNG image.",
-    );
-    expect(calls).toEqual([]);
-  });
-
-  it("rejects an image over 2 MB without calling the API", async () => {
-    const calls = mockAvatarSave();
-    const user = userEvent.setup();
-    renderForm({ name: "Jane" });
-
+    await user.click(screen.getByRole("button", { name: "Change profile photo" }));
+    const dialog = await screen.findByRole("dialog");
     await user.upload(
-      screen.getByLabelText("Avatar"),
-      pngFile("big.png", MAX_AVATAR_BYTES + 1),
+      within(dialog).getByLabelText("Profile photo file"),
+      new File([new Uint8Array(10)], "me.png", { type: "image/png" }),
     );
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await within(dialog).findByRole("status");
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Avatar image must be 2 MB or smaller.",
-    );
-    expect(calls).toEqual([]);
-  });
-
-  it("shows the server's message and does not save the name when the upload fails", async () => {
-    const calls: string[] = [];
-    vi.mocked(uploadAvatar).mockRejectedValue(
-      new ApiError(422, "Avatar image is empty."),
-    );
-    server.use(
-      http.patch(`${API_URL}/users/me/profile`, () => {
-        calls.push("profile");
-        return HttpResponse.json({ email: EMAIL, name: "Jane", avatar_url: null });
-      }),
-    );
-    const user = userEvent.setup();
-    renderForm({ name: "Jane" });
-
-    await user.upload(screen.getByLabelText("Avatar"), pngFile());
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Avatar image is empty.");
-    expect(calls).toEqual([]);
+    // The thumbnail in the form, not just the dialog, and the sidebar's cache.
+    expect(await screen.findByRole("img", { name: "Jane" })).toHaveAttribute("src", newUrl);
+    expect(screen.getByTestId("sidebar")).toHaveTextContent(newUrl);
   });
 });

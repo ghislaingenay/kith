@@ -1,23 +1,24 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 
+import { useProfile } from "../api/use_profile";
 import { useSaveProfile } from "../api/use_save_profile";
-import { profileFormSchema, type Profile, type ProfileFormInput } from "../types";
+import {
+  profileFormSchema,
+  type Profile,
+  type ProfileFormInput,
+} from "../types";
 import { displayName } from "../utils/display_name";
-import { AVATAR_CONTENT_TYPES, validateAvatarFile } from "../utils/validate_avatar_file";
-import { UserAvatar } from "./user_avatar";
+import { AvatarEditor } from "./avatar_editor";
 
 export function ProfileForm({ profile: initialProfile }: { readonly profile: Profile }) {
-  const router = useRouter();
-  const [profile, setProfile] = useState(initialProfile);
+  // The shared cache entry, so a save here (or an avatar change) shows up in
+  // the workspace sidebar too. The prop only seeds it: it is a server-render
+  // snapshot and never changes after a save.
+  const profile = useProfile(initialProfile);
   const { mutate, isPending, isSuccess, error, reset } = useSaveProfile();
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
-  const [avatarError, setAvatarError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const {
     register,
@@ -28,67 +29,17 @@ export function ProfileForm({ profile: initialProfile }: { readonly profile: Pro
     defaultValues: { name: profile.name ?? "" },
   });
 
-  const onAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
-    setAvatarFile(file);
-    setAvatarError(file ? validateAvatarFile(file) : null);
-    reset();
-  };
-
-  const onSubmit = handleSubmit(({ name }) => {
-    if (avatarError) return;
-    mutate(
-      { name, avatar: avatarFile },
-      {
-        onSuccess: (saved) => {
-          setProfile(saved);
-          setAvatarFile(null);
-          if (fileInputRef.current) fileInputRef.current.value = "";
-          // The shell is a layout, which doesn't re-render on its own.
-          router.refresh();
-        },
-      },
-    );
-  });
+  const onSubmit = handleSubmit(({ name }) => mutate({ name }));
 
   const shownName = displayName(profile);
 
   return (
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-6" noValidate>
       <div className="flex items-center gap-3">
-        {/* Never a local preview: the picked file isn't confirmed saved
-            until the server returns the new avatar_url. */}
-        <UserAvatar displayName={shownName} avatarUrl={profile.avatar_url} sizePx={56} />
+        <AvatarEditor profile={profile} />
         <h2 className="text-base font-medium text-zinc-950 dark:text-zinc-50">
           {shownName}
         </h2>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="avatar"
-          className="text-sm font-medium text-zinc-950 dark:text-zinc-50"
-        >
-          Avatar
-        </label>
-        <input
-          id="avatar"
-          ref={fileInputRef}
-          type="file"
-          accept={AVATAR_CONTENT_TYPES.join(",")}
-          aria-invalid={avatarError ? "true" : "false"}
-          aria-describedby={avatarError ? "avatar-error" : "avatar-hint"}
-          onChange={onAvatarChange}
-          className="text-sm text-zinc-600 dark:text-zinc-400"
-        />
-        <p id="avatar-hint" className="text-xs text-zinc-500">
-          JPEG or PNG, up to 2 MB.
-        </p>
-        {avatarError && (
-          <p id="avatar-error" role="alert" className="text-sm text-red-600">
-            {avatarError}
-          </p>
-        )}
       </div>
 
       <div className="flex flex-col gap-1.5">

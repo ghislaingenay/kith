@@ -6,11 +6,14 @@ export class MagicLinkRateLimitError extends Error {}
  * (ADR-0006's enumeration guard) — the only distinguishable outcome here is
  * a 429 from the per-email rate limit. */
 export async function requestMagicLink(email: string): Promise<void> {
-  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}/auth/magic-link`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
+  const response = await fetch(
+    `${env.NEXT_PUBLIC_API_URL}/api/v1/auth/magic-link`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    },
+  );
 
   if (response.status === 429) {
     throw new MagicLinkRateLimitError(
@@ -18,6 +21,8 @@ export async function requestMagicLink(email: string): Promise<void> {
     );
   }
   if (!response.ok) {
-    throw new Error("Something went wrong sending the magic link. Please try again.");
+    throw new Error(
+      "Something went wrong sending the magic link. Please try again.",
+    );
   }
 }

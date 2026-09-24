@@ -14,7 +14,7 @@ from main import app
 from users.dependencies import get_profile_repository
 from users.models import Profile
 
-from tests.support.fake_storage import FakeStorageProvider, RaisingStorageProvider
+from tests.support.fake_storage import FakeStorageProvider
 
 _USER = AuthenticatedUser(
     id=uuid.uuid4(),
@@ -64,72 +64,6 @@ def _client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
-class TestGetMyProfile:
-    async def test_returns_email_with_no_name_or_avatar_when_no_profile_exists(
-        self,
-    ) -> None:
-        _override(FakeProfileRepository())
-
-        async with _client() as client:
-            response = await client.get("/api/v1/users/me/profile")
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "email": "jane@example.com",
-            "name": None,
-            "avatar_url": None,
-        }
-
-    async def test_returns_stored_name_and_avatar(self) -> None:
-        key = f"user/{_USER.id}/avatar/avatar.png"
-        profile = Profile(user_id=_USER.id, first_name="Jane", avatar_url=key)
-        _override(FakeProfileRepository(profile))
-
-        async with _client() as client:
-            response = await client.get("/api/v1/users/me/profile")
-
-        assert profile.avatar_url == key, (
-            "the stored object key must not be overwritten"
-        )
-        assert response.json() == {
-            "email": "jane@example.com",
-            "name": "Jane",
-            "avatar_url": f"https://cdn.example.com/{key}?signature=fake&method=GET",
-        }
-
-    async def test_returns_401_when_unauthenticated(self) -> None:
-        async def _raise_unauthenticated():
-            raise AuthenticationError("unauthorized")
-
-        _override(FakeProfileRepository())
-        app.dependency_overrides[get_current_user] = _raise_unauthenticated
-
-        async with _client() as client:
-            response = await client.get("/api/v1/users/me/profile")
-
-        assert response.status_code == 401
-
-    async def test_still_returns_the_profile_when_presigning_the_avatar_fails(
-        self,
-    ) -> None:
-        """A storage outage degrades the avatar to `None` instead of
-        failing the whole read — this is also what `/me` relies on to keep
-        working on the sign-in path (see tests/auth/test_router.py)."""
-        key = f"user/{_USER.id}/avatar/avatar.png"
-        profile = Profile(user_id=_USER.id, first_name="Jane", avatar_url=key)
-        _override(FakeProfileRepository(profile), RaisingStorageProvider())
-
-        async with _client() as client:
-            response = await client.get("/api/v1/users/me/profile")
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "email": "jane@example.com",
-            "name": "Jane",
-            "avatar_url": None,
-        }
-
-
 def _signed_up_profile() -> Profile:
     """The empty Profile a User has right after signup (see
     UserRepository.get_or_create_user) — every fixture that saves through
@@ -140,13 +74,13 @@ def _signed_up_profile() -> Profile:
 
 class TestUpdateMyProfile:
     async def test_sets_the_name_on_the_signup_created_profile(self) -> None:
-        _override(FakeProfileRepository(_signed_up_profile()))
+        repository = FakeProfileRepository(_signed_up_profile())
+        _override(repository)
 
         async with _client() as client:
             response = await client.patch(
                 "/api/v1/users/me/profile", json={"name": "Jane Doe"}
             )
-            read_back = await client.get("/api/v1/users/me/profile")
 
         assert response.status_code == 200
         assert response.json() == {
@@ -154,7 +88,8 @@ class TestUpdateMyProfile:
             "name": "Jane Doe",
             "avatar_url": None,
         }
-        assert read_back.json()["name"] == "Jane Doe"
+        assert repository.profile is not None
+        assert repository.profile.first_name == "Jane Doe"
 
     async def test_changes_an_existing_name_and_keeps_the_avatar(self) -> None:
         key = f"user/{_USER.id}/avatar/avatar.png"
@@ -263,16 +198,16 @@ class TestUploadMyAvatar:
             {"key": _AVATAR_PNG_KEY, "public": False, "content_type": "image/png"}
         ]
 
-    async def test_the_new_avatar_is_what_a_later_read_returns(self) -> None:
-        _override(FakeProfileRepository(_signed_up_profile()))
+    async def test_records_the_stored_key_on_the_profile(self) -> None:
+        """The row keeps the object key; only the response carries a URL."""
+        repository = FakeProfileRepository(_signed_up_profile())
+        _override(repository)
 
         async with _client() as client:
             await _put_avatar(client, b"fake-png-bytes", "image/png")
-            read_back = await client.get("/api/v1/users/me/profile")
 
-        assert read_back.json()["avatar_url"] == (
-            f"https://cdn.example.com/{_AVATAR_PNG_KEY}?signature=fake&method=GET"
-        )
+        assert repository.profile is not None
+        assert repository.profile.avatar_url == _AVATAR_PNG_KEY
 
     async def test_keeps_the_existing_name(self) -> None:
         profile = Profile(user_id=_USER.id, first_name="Jane")

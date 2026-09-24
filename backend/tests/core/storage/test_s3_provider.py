@@ -167,6 +167,32 @@ async def test_generate_presigned_url_put(s3_provider: S3StorageProvider) -> Non
     assert _BUCKET in url
 
 
+async def test_presigned_url_is_signed_for_the_presign_endpoint() -> None:
+    """The browser can't reach the in-network host the API uploads through,
+    and SigV4 signs the host — so the URL must carry the public one."""
+    provider = S3StorageProvider(
+        bucket=_BUCKET,
+        region=_REGION,
+        endpoint_url="http://minio:9000",
+        presign_endpoint_url="http://localhost:9000",
+    )
+
+    url = await provider.generate_presigned_url(_KEY, "GET", ttl=60)
+
+    assert url.startswith(f"http://localhost:9000/{_BUCKET}/{_KEY}")
+    assert "minio" not in url
+
+
+async def test_presigned_url_falls_back_to_the_endpoint() -> None:
+    provider = S3StorageProvider(
+        bucket=_BUCKET, region=_REGION, endpoint_url="http://localhost:9000"
+    )
+
+    url = await provider.generate_presigned_url(_KEY, "GET", ttl=60)
+
+    assert url.startswith(f"http://localhost:9000/{_BUCKET}/{_KEY}")
+
+
 async def test_upload_wraps_permission_denied(s3_provider: S3StorageProvider) -> None:
     with (
         patch.object(
