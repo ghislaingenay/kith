@@ -12,7 +12,6 @@ export default async function Home() {
   } catch {
     cookie = undefined;
   }
-  const cookieHeader = cookie;
   const identity = await getSessionIdentity(cookie ?? "");
 
   if (!identity) {
