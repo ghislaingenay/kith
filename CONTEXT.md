@@ -60,7 +60,11 @@ _Avoid_: Invite link (unrelated to Pending Membership), token
 
 **Document**:
 A file uploaded into a Tenant by a User, who becomes its Uploader. PDF only in the first version.
-_Avoid_: File, upload, attachment
+_Avoid_: File, attachment
+
+**Upload**:
+One attempt by a User to move a PDF's bytes into a Tenant. A completed Upload produces exactly one Document; a rejected or abandoned Upload produces none. Not the same thing as the Document it may create.
+_Avoid_: Document, file, transfer
 
 **Uploader**:
 The User who uploaded a Document. The Uploader, an Admin, or the Owner may delete it.
@@ -76,7 +80,11 @@ _Avoid_: Processing, indexing (indexing is one step of Ingestion)
 
 **Ingestion Status**:
 Where a Document is in Ingestion: `uploaded`, `processing`, `partial` (some Chunks embedded, some failed), `ready`, `failed`, or `deleted`. Derived from the Chunks' embedding statuses once chunking is done.
-_Avoid_: State, stage
+_Avoid_: State
+
+**Ingestion Stage**:
+The step of Ingestion a `processing` Document is currently in: `extracting`, `chunking`, `embedding`, or `indexing`. Shown as the sub-label under the Ingestion Status. Separate from Ingestion Status, which stays a coarse outcome.
+_Avoid_: Step, phase, progress (progress is pages extracted out of page count, not a Stage)
 
 **Chunk**:
 A passage of a Document's text, stored with its vector embedding, that search retrieves and answers cite. A Chunk knows which Document and which location in it (for PDF, the page) it came from.
