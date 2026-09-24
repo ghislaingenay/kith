@@ -18,6 +18,7 @@ def _settings(**overrides: Any) -> SimpleNamespace:
         "s3_bucket": _BUCKET,
         "s3_region": _REGION,
         "s3_endpoint": None,
+        "s3_public_endpoint": None,
         "public_base_url": None,
     }
     return SimpleNamespace(**{**defaults, **overrides})
@@ -38,6 +39,19 @@ def test_create_passes_custom_endpoint_through() -> None:
     )
 
     assert provider._client.meta.endpoint_url == _ENDPOINT
+
+
+def test_create_signs_presigned_urls_for_the_public_endpoint() -> None:
+    provider = StorageProviderFactory.create(
+        _settings(
+            provider="minio",
+            s3_endpoint="http://minio:9000",
+            s3_public_endpoint=_ENDPOINT,
+        )
+    )
+
+    assert provider._client.meta.endpoint_url == "http://minio:9000"
+    assert provider._presign_client.meta.endpoint_url == _ENDPOINT
 
 
 def test_create_raises_when_s3_bucket_missing() -> None:

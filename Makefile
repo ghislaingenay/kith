@@ -1,5 +1,7 @@
 COMPOSE = docker compose -f infra/docker-compose.yml
-ALEMBIC = cd backend && alembic
+
+# --rm to create a temporary container for running alembic commands
+ALEMBIC = $(COMPOSE) run --rm app alembic
 
 .PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current
 
@@ -8,6 +10,11 @@ up:
 
 down:
 	$(COMPOSE) down
+
+# usage: make service-refresh service=frontend
+service-refresh:
+	@if [ -z "$(service)" ]; then echo "usage: make service-refresh service=<name>"; exit 1; fi
+	$(COMPOSE) up -d --build --force-recreate $(service)
 
 # ── database ────────────────────────────────────────────────────────────────
 

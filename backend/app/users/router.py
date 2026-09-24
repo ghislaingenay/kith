@@ -14,16 +14,6 @@ from users.service import ProfileService
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("/me/profile", response_model=ProfileResponse)
-async def get_my_profile(
-    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    service: Annotated[ProfileService, Depends(get_profile_service)],
-) -> ProfileResponse:
-    """No `X-Tenant-ID` required — a Profile belongs to the User, not to a
-    Tenant."""
-    return await service.get_profile(user)
-
-
 @router.patch(
     "/me/profile",
     response_model=ProfileResponse,

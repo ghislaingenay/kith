@@ -33,6 +33,11 @@ class S3StorageProvider(StorageProvider):
     Credentials are resolved via boto3's standard credential chain (env vars,
     IAM role, core config file) — never passed or hardcoded here. `endpoint_url`
     lets this same implementation target MinIO (local dev) or R2 instead of AWS.
+
+    `presign_endpoint_url` is the host baked into presigned URLs when it
+    differs from `endpoint_url` — e.g. MinIO reached as `minio:9000` inside
+    Docker but as `localhost:9000` from a browser. SigV4 signs the host, so
+    the URL must be signed for the host the client will actually request.
     """
 
     def __init__(
@@ -41,14 +46,25 @@ class S3StorageProvider(StorageProvider):
         region: str,
         endpoint_url: str | None = None,
         public_base_url: str | None = None,
+        presign_endpoint_url: str | None = None,
     ) -> None:
         self._bucket = bucket
         self._region = region
         self._endpoint_url = endpoint_url
         self._public_base_url = public_base_url
-        self._client = boto3.client(
+        self._client = self._build_client(endpoint_url)
+        # Presigning is local signing (no network call), so a second client
+        # for the browser-facing host costs nothing at runtime.
+        self._presign_client = (
+            self._build_client(presign_endpoint_url)
+            if presign_endpoint_url
+            else self._client
+        )
+
+    def _build_client(self, endpoint_url: str | None):
+        return boto3.client(
             "s3",
-            region_name=region,
+            region_name=self._region,
             endpoint_url=endpoint_url,
             config=BotoConfig(signature_version="s3v4"),
         )
@@ -139,7 +155,7 @@ class S3StorageProvider(StorageProvider):
         client_method = "get_object" if method == "GET" else "put_object"
         try:
             return await asyncio.to_thread(
-                self._client.generate_presigned_url,
+                self._presign_client.generate_presigned_url,
                 ClientMethod=client_method,
                 Params={"Bucket": self._bucket, "Key": key},
                 ExpiresIn=ttl,
@@ -161,7 +177,7 @@ class S3StorageProvider(StorageProvider):
     ) -> str:
         try:
             return await asyncio.to_thread(
-                self._client.generate_presigned_url,
+                self._presign_client.generate_presigned_url,
                 ClientMethod="upload_part",
                 Params={
                     "Bucket": self._bucket,

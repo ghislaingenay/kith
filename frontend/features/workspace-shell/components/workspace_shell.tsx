@@ -1,14 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { displayName, UserAvatar, type Profile } from "@/features/profile";
+import { displayName, useProfile, UserAvatar, type Profile } from "@/features/profile";
+import { Settings } from "lucide-react";
+
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 
 import { SignOutButton } from "./sign_out_button";
 
 export function WorkspaceShell({
   tenantName,
   tenantSlug,
-  profile,
+  profile: initialProfile,
   children,
 }: {
   readonly tenantName: string;
@@ -16,35 +31,45 @@ export function WorkspaceShell({
   readonly profile: Profile;
   readonly children: React.ReactNode;
 }) {
+  const profile = useProfile(initialProfile);
   const shownName = displayName(profile);
 
   return (
-    <div className="flex flex-1 bg-zinc-50 dark:bg-black">
-      <aside className="flex w-60 shrink-0 flex-col justify-between border-r border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex flex-col gap-4">
-          <p className="px-3 text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+    <SidebarProvider className="flex-1">
+      <Sidebar>
+        <SidebarHeader>
+          <p className="px-2 text-sm font-semibold text-sidebar-foreground">
             {tenantName}
           </p>
-          <nav aria-label="Workspace">
-            <Link
-              href={`/w/${tenantSlug}/settings`}
-              className="block rounded-md px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            >
-              Settings
-            </Link>
-          </nav>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 px-3">
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <Link href={`/w/${tenantSlug}/settings`}>
+                    <Settings /> Settings
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarFooter>
+          <div className="flex items-center gap-2 px-2 py-1">
             <UserAvatar displayName={shownName} avatarUrl={profile.avatar_url} sizePx={32} />
-            <p className="truncate text-sm text-zinc-950 dark:text-zinc-50">{shownName}</p>
+            <p className="truncate text-sm text-sidebar-foreground">{shownName}</p>
           </div>
           <SignOutButton />
-        </div>
-      </aside>
+        </SidebarFooter>
+      </Sidebar>
 
-      <main className="flex flex-1 flex-col">{children}</main>
-    </div>
+      <SidebarInset>
+        <header className="flex h-12 shrink-0 items-center border-b border-zinc-200 px-4 dark:border-zinc-800">
+          <SidebarTrigger />
+        </header>
+        <div className="flex flex-1 flex-col">{children}</div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
