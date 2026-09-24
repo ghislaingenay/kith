@@ -6,6 +6,9 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      // Mirror tsconfig.json's `paths`.
+      "@config": path.resolve(__dirname, "config"),
+      "@lib": path.resolve(__dirname, "lib"),
       "@": path.resolve(__dirname, "."),
     },
   },
