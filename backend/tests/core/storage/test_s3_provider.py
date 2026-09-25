@@ -1,5 +1,7 @@
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import boto3
 import pytest
@@ -22,6 +24,8 @@ def _client_error(code: str) -> ClientError:
 _BUCKET = "test-bucket"
 _REGION = "us-east-1"
 _KEY = "originals/test.txt"
+_COPY_DEST_KEY = "tenants/t1/doc.pdf"
+_PDF_TYPE = "application/pdf"
 
 
 @pytest.fixture()
@@ -369,3 +373,148 @@ async def test_create_multipart_upload_wraps_client_error(
         await s3_provider.create_multipart_upload(_KEY)
 
     assert not isinstance(exc_info.value, StoragePermissionError)
+
+
+async def test_copy_duplicates_the_object_and_keeps_the_source(
+    s3_provider: S3StorageProvider,
+) -> None:
+    await s3_provider.upload(_KEY, b"hello world", content_type=_PDF_TYPE)
+
+    await s3_provider.copy(_KEY, _COPY_DEST_KEY)
+
+    assert await _read_all(s3_provider.download(_COPY_DEST_KEY)) == b"hello world"
+    assert await _read_all(s3_provider.download(_KEY)) == b"hello world"
+    assert (await s3_provider.head(_COPY_DEST_KEY)).content_type == (_PDF_TYPE)
+
+
+async def test_copy_missing_source_raises_not_found(
+    s3_provider: S3StorageProvider,
+) -> None:
+    with pytest.raises(StorageObjectNotFoundError) as exc_info:
+        await s3_provider.copy("does-not-exist", _COPY_DEST_KEY)
+
+    assert exc_info.value.key == "does-not-exist"
+
+
+async def test_copy_wraps_permission_denied(s3_provider: S3StorageProvider) -> None:
+    with (
+        patch.object(
+            s3_provider._client,
+            "copy_object",
+            side_effect=_client_error("AccessDenied"),
+        ),
+        pytest.raises(StoragePermissionError),
+    ):
+        await s3_provider.copy(_KEY, _COPY_DEST_KEY)
+
+
+@pytest.mark.usefixtures("aws_credentials")
+async def test_generate_presigned_put_signs_content_type_and_length(
+    s3_provider: S3StorageProvider,
+) -> None:
+    url = await s3_provider.generate_presigned_put(
+        _KEY, ttl=60, content_type=_PDF_TYPE, content_length=1234
+    )
+
+    query = parse_qs(urlparse(url).query)
+    signed_headers = query["X-Amz-SignedHeaders"][0].split(";")
+    assert "content-type" in signed_headers
+    assert "content-length" in signed_headers
+    assert "x-amz-checksum-sha256" not in signed_headers
+
+
+@pytest.mark.usefixtures("aws_credentials")
+async def test_generate_presigned_put_signs_the_checksum_when_given(
+    s3_provider: S3StorageProvider,
+) -> None:
+    url = await s3_provider.generate_presigned_put(
+        _KEY,
+        ttl=60,
+        content_type=_PDF_TYPE,
+        content_length=1234,
+        checksum_sha256="47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+    )
+
+    query = parse_qs(urlparse(url).query)
+    assert "x-amz-checksum-sha256" in query["X-Amz-SignedHeaders"][0].split(";")
+
+
+@pytest.mark.usefixtures("aws_credentials")
+def test_clients_only_add_sdk_checksums_when_required() -> None:
+    """Recent SDKs add a CRC32 to every request by default; a browser PUT
+    can't send the matching header, so presigned URLs must not sign it."""
+    provider = S3StorageProvider(
+        bucket=_BUCKET,
+        region=_REGION,
+        endpoint_url="http://minio:9000",
+        presign_endpoint_url="http://localhost:9000",
+    )
+
+    for client in (provider._client, provider._presign_client):
+        assert client.meta.config.request_checksum_calculation == "when_required"
+
+
+async def test_generate_presigned_put_wraps_client_error(
+    s3_provider: S3StorageProvider,
+) -> None:
+    with (
+        patch.object(
+            s3_provider._presign_client,
+            "generate_presigned_url",
+            side_effect=_client_error("InternalError"),
+        ),
+        pytest.raises(StorageError),
+    ):
+        await s3_provider.generate_presigned_put(
+            _KEY, ttl=60, content_type=_PDF_TYPE, content_length=1
+        )
+
+
+async def test_upload_file_stores_the_file_contents(
+    s3_provider: S3StorageProvider, tmp_path: Path
+) -> None:
+    source = tmp_path / "doc.pdf"
+    source.write_bytes(b"%PDF-1.7 hello")
+
+    returned = await s3_provider.upload_file(
+        _KEY, source, metadata={"origin": "test"}, content_type=_PDF_TYPE
+    )
+
+    assert returned == _KEY
+    assert await _read_all(s3_provider.download(_KEY)) == b"%PDF-1.7 hello"
+    head = await s3_provider.head(_KEY)
+    assert head.content_type == _PDF_TYPE
+
+
+async def test_upload_file_does_not_read_the_file_into_memory(
+    s3_provider: S3StorageProvider, tmp_path: Path
+) -> None:
+    source = tmp_path / "doc.pdf"
+    source.write_bytes(b"data")
+
+    with (
+        patch.object(s3_provider._client, "upload_file") as upload_file,
+        patch.object(s3_provider._client, "upload_fileobj") as upload_fileobj,
+    ):
+        await s3_provider.upload_file(_KEY, source)
+
+    upload_file.assert_called_once()
+    assert upload_file.call_args.args[0] == str(source)
+    upload_fileobj.assert_not_called()
+
+
+async def test_upload_file_wraps_client_error(
+    s3_provider: S3StorageProvider, tmp_path: Path
+) -> None:
+    source = tmp_path / "doc.pdf"
+    source.write_bytes(b"data")
+
+    with (
+        patch.object(
+            s3_provider._client,
+            "upload_file",
+            side_effect=_client_error("AccessDenied"),
+        ),
+        pytest.raises(StoragePermissionError),
+    ):
+        await s3_provider.upload_file(_KEY, source)
