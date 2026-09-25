@@ -18,15 +18,14 @@ from documents.models import Document, IngestionStatus, Upload
 from main import app
 from tests.documents.conftest import (
     Caller,
+    finalize_upload,
+    init_upload,
     make_pdf,
     make_tenant,
     make_user,
-    sha256_hex,
 )
 from tests.support.fake_storage import FakeStorageProvider
 
-_INIT_URL = "/api/v1/uploads/init"
-_PDF_CONTENT_TYPE = "application/pdf"
 _MB = 1024 * 1024
 _UNCAPPED_PENDING = 99
 
@@ -35,27 +34,11 @@ def _limits(**env: int) -> None:
     app.dependency_overrides[get_upload_settings] = lambda: UploadSettings(**env)
 
 
-async def _init(client: AsyncClient, data: bytes, filename: str = "report.pdf"):
-    return await client.post(
-        _INIT_URL,
-        json={
-            "filename": filename,
-            "size": len(data),
-            "content_type": _PDF_CONTENT_TYPE,
-            "sha256": sha256_hex(data),
-        },
-    )
-
-
-async def _finalize(client: AsyncClient, upload_id: str):
-    return await client.post(f"/api/v1/uploads/{upload_id}/finalize")
-
-
 async def _start_and_send(
     client: AsyncClient, storage: FakeStorageProvider, caller: Caller, data: bytes
 ) -> str:
     """An Upload that passed start and whose bytes reached storage."""
-    response = await _init(client, data)
+    response = await init_upload(client, data)
     assert response.status_code == 201, response.text
     upload_id = response.json()["upload_id"]
     storage.put_object(f"pending/{caller.tenant_id}/{upload_id}", data)
@@ -68,9 +51,9 @@ async def _add_document(
     """Uploads a PDF of `pages` blank pages; each page count is distinct
     content, so none is a duplicate of another."""
     data = make_pdf(pages=pages)
-    upload_id = (await _init(client, data)).json()["upload_id"]
+    upload_id = (await init_upload(client, data)).json()["upload_id"]
     storage.put_object(f"pending/{caller.tenant_id}/{upload_id}", data)
-    response = await _finalize(client, upload_id)
+    response = await finalize_upload(client, upload_id)
     assert response.status_code == 200, response.text
 
 
@@ -104,7 +87,7 @@ async def test_start_is_refused_at_the_documents_limit(
     await _add_document(client, storage, caller, pages=1)
     await _add_document(client, storage, caller, pages=2)
 
-    response = await _init(client, make_pdf(pages=3))
+    response = await init_upload(client, make_pdf(pages=3))
 
     assert response.status_code == 409
     assert response.json()["message"] == (
@@ -120,7 +103,7 @@ async def test_start_is_refused_when_the_file_would_pass_the_storage_limit(
     await _seed_document(db_session, caller, size_bytes=99 * _MB)
     over = b"x" * (_MB + 1)
 
-    response = await _init(client, over)
+    response = await init_upload(client, over)
 
     assert response.status_code == 409
     assert response.json()["message"] == (
@@ -134,7 +117,7 @@ async def test_a_file_that_exactly_fills_the_storage_limit_is_accepted(
 ) -> None:
     await _seed_document(db_session, caller, size_bytes=99 * _MB)
 
-    response = await _init(client, b"x" * _MB)
+    response = await init_upload(client, b"x" * _MB)
 
     assert response.status_code == 201
 
@@ -147,7 +130,7 @@ async def test_deleted_documents_count_toward_neither_limit(
         db_session, caller, size_bytes=100 * _MB, status=IngestionStatus.DELETED
     )
 
-    response = await _init(client, make_pdf(pages=1))
+    response = await init_upload(client, make_pdf(pages=1))
 
     assert response.status_code == 201
 
@@ -156,9 +139,9 @@ async def test_a_pending_upload_reserves_nothing(
     client: AsyncClient, db_session: AsyncSession, caller: Caller
 ) -> None:
     _limits(UPLOAD_MAX_DOCUMENTS=1)
-    assert (await _init(client, make_pdf(pages=1))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=1))).status_code == 201
 
-    response = await _init(client, make_pdf(pages=2))
+    response = await init_upload(client, make_pdf(pages=2))
 
     assert response.status_code == 201
 
@@ -172,9 +155,9 @@ async def test_finalize_refuses_the_upload_that_no_longer_fits_the_documents_lim
     _limits(UPLOAD_MAX_DOCUMENTS=1)
     first = await _start_and_send(client, storage, caller, make_pdf(pages=1))
     second = await _start_and_send(client, storage, caller, make_pdf(pages=2))
-    await _finalize(client, first)
+    await finalize_upload(client, first)
 
-    refused = await _finalize(client, second)
+    refused = await finalize_upload(client, second)
 
     assert refused.status_code == 409
     assert "limit of 1 document" in refused.json()["message"]
@@ -190,9 +173,9 @@ async def test_finalize_refuses_the_upload_that_no_longer_fits_the_storage_limit
     _limits(UPLOAD_MAX_STORAGE_BYTES=len(one) + len(two) - 1)
     first = await _start_and_send(client, storage, caller, one)
     second = await _start_and_send(client, storage, caller, two)
-    await _finalize(client, first)
+    await finalize_upload(client, first)
 
-    refused = await _finalize(client, second)
+    refused = await finalize_upload(client, second)
 
     assert refused.status_code == 409
     assert "storage limit" in refused.json()["message"]
@@ -204,10 +187,10 @@ async def test_finalizing_an_upload_refused_for_a_limit_again_repeats_the_confli
     _limits(UPLOAD_MAX_DOCUMENTS=1)
     first = await _start_and_send(client, storage, caller, make_pdf(pages=1))
     second = await _start_and_send(client, storage, caller, make_pdf(pages=2))
-    await _finalize(client, first)
-    refused = await _finalize(client, second)
+    await finalize_upload(client, first)
+    refused = await finalize_upload(client, second)
 
-    again = await _finalize(client, second)
+    again = await finalize_upload(client, second)
 
     assert again.status_code == 409
     assert again.json()["message"] == refused.json()["message"]
@@ -252,7 +235,9 @@ async def test_two_parallel_uploads_that_both_passed_start_but_fit_only_once(
 
     app.dependency_overrides[get_db_session] = _session_per_request
 
-    responses = await asyncio.gather(_finalize(client, first), _finalize(client, second))
+    responses = await asyncio.gather(
+        finalize_upload(client, first), finalize_upload(client, second)
+    )
 
     assert sorted(response.status_code for response in responses) == [200, 409]
     documents = await db_session.scalar(select(func.count()).select_from(Document))
@@ -264,9 +249,7 @@ async def test_two_parallel_uploads_that_both_passed_start_but_fit_only_once(
 
 
 async def _backdate_uploads(db_session: AsyncSession, age: timedelta) -> None:
-    await db_session.execute(
-        update(Upload).values(created_at=datetime.now(UTC) - age)
-    )
+    await db_session.execute(update(Upload).values(created_at=datetime.now(UTC) - age))
     await db_session.commit()
 
 
@@ -274,9 +257,9 @@ async def test_a_sixth_concurrent_pending_upload_is_refused(
     client: AsyncClient,
 ) -> None:
     for pages in range(1, 6):
-        assert (await _init(client, make_pdf(pages=pages))).status_code == 201
+        assert (await init_upload(client, make_pdf(pages=pages))).status_code == 201
 
-    response = await _init(client, make_pdf(pages=6))
+    response = await init_upload(client, make_pdf(pages=6))
 
     assert response.status_code == 429
     assert response.json()["message"] == (
@@ -291,47 +274,47 @@ async def test_completing_a_pending_upload_frees_a_slot(
     _limits(UPLOAD_MAX_PENDING_PER_USER=2)
     first = await _start_and_send(client, storage, caller, make_pdf(pages=1))
     await _start_and_send(client, storage, caller, make_pdf(pages=2))
-    assert (await _init(client, make_pdf(pages=3))).status_code == 429
+    assert (await init_upload(client, make_pdf(pages=3))).status_code == 429
 
-    await _finalize(client, first)
+    await finalize_upload(client, first)
 
-    assert (await _init(client, make_pdf(pages=3))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=3))).status_code == 201
 
 
 async def test_an_expired_upload_frees_a_slot(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     _limits(UPLOAD_MAX_PENDING_PER_USER=1)
-    assert (await _init(client, make_pdf(pages=1))).status_code == 201
-    assert (await _init(client, make_pdf(pages=2))).status_code == 429
+    assert (await init_upload(client, make_pdf(pages=1))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=2))).status_code == 429
 
     await db_session.execute(update(Upload).values(status="expired"))
     await db_session.commit()
 
-    assert (await _init(client, make_pdf(pages=2))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=2))).status_code == 201
 
 
 async def test_an_abandoned_upload_stops_counting_once_it_is_past_its_expiry(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     _limits(UPLOAD_MAX_PENDING_PER_USER=1, UPLOAD_PENDING_EXPIRY_SECONDS=1800)
-    assert (await _init(client, make_pdf(pages=1))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=1))).status_code == 201
 
     await _backdate_uploads(db_session, timedelta(minutes=31))
 
-    assert (await _init(client, make_pdf(pages=2))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=2))).status_code == 201
 
 
 async def test_the_pending_cap_is_per_user(
     client: AsyncClient, db_session: AsyncSession, caller: Caller
 ) -> None:
     _limits(UPLOAD_MAX_PENDING_PER_USER=1)
-    assert (await _init(client, make_pdf(pages=1))).status_code == 201
-    assert (await _init(client, make_pdf(pages=2))).status_code == 429
+    assert (await init_upload(client, make_pdf(pages=1))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=2))).status_code == 429
 
     caller.user_id = await make_user(db_session)
 
-    assert (await _init(client, make_pdf(pages=2))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=2))).status_code == 201
 
 
 async def test_the_start_after_the_hourly_allowance_is_refused_with_a_retry_hint(
@@ -339,16 +322,18 @@ async def test_the_start_after_the_hourly_allowance_is_refused_with_a_retry_hint
 ) -> None:
     _limits(UPLOAD_MAX_STARTS_PER_HOUR=3, UPLOAD_MAX_PENDING_PER_USER=_UNCAPPED_PENDING)
     for pages in range(1, 4):
-        assert (await _init(client, make_pdf(pages=pages))).status_code == 201
+        assert (await init_upload(client, make_pdf(pages=pages))).status_code == 201
     # The oldest start happened 58 minutes ago, so a slot frees in 2 minutes.
     await db_session.execute(
         update(Upload)
-        .where(Upload.created_at == select(func.min(Upload.created_at)).scalar_subquery())
+        .where(
+            Upload.created_at == select(func.min(Upload.created_at)).scalar_subquery()
+        )
         .values(created_at=datetime.now(UTC) - timedelta(minutes=58))
     )
     await db_session.commit()
 
-    response = await _init(client, make_pdf(pages=4))
+    response = await init_upload(client, make_pdf(pages=4))
 
     assert response.status_code == 429
     assert response.json()["message"] == (
@@ -362,23 +347,23 @@ async def test_starts_older_than_an_hour_no_longer_count(
 ) -> None:
     _limits(UPLOAD_MAX_STARTS_PER_HOUR=2, UPLOAD_MAX_PENDING_PER_USER=_UNCAPPED_PENDING)
     for pages in range(1, 3):
-        assert (await _init(client, make_pdf(pages=pages))).status_code == 201
+        assert (await init_upload(client, make_pdf(pages=pages))).status_code == 201
 
     await _backdate_uploads(db_session, timedelta(minutes=61))
 
-    assert (await _init(client, make_pdf(pages=3))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=3))).status_code == 201
 
 
 async def test_the_hourly_allowance_is_per_user(
     client: AsyncClient, db_session: AsyncSession, caller: Caller
 ) -> None:
     _limits(UPLOAD_MAX_STARTS_PER_HOUR=1, UPLOAD_MAX_PENDING_PER_USER=_UNCAPPED_PENDING)
-    assert (await _init(client, make_pdf(pages=1))).status_code == 201
-    assert (await _init(client, make_pdf(pages=2))).status_code == 429
+    assert (await init_upload(client, make_pdf(pages=1))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=2))).status_code == 429
 
     caller.user_id = await make_user(db_session)
 
-    assert (await _init(client, make_pdf(pages=2))).status_code == 201
+    assert (await init_upload(client, make_pdf(pages=2))).status_code == 201
 
 
 async def test_another_tenants_documents_do_not_count_toward_this_tenants_limits(
@@ -388,7 +373,7 @@ async def test_another_tenants_documents_do_not_count_toward_this_tenants_limits
     await _seed_document(db_session, caller, size_bytes=100 * _MB)
     caller.tenant_id = await make_tenant(db_session)
 
-    response = await _init(client, make_pdf(pages=1))
+    response = await init_upload(client, make_pdf(pages=1))
 
     assert response.status_code == 201
 
@@ -400,9 +385,9 @@ async def test_finalize_reports_a_duplicate_before_a_limit(
     same = make_pdf(pages=1)
     first = await _start_and_send(client, storage, caller, same)
     second = await _start_and_send(client, storage, caller, same)
-    await _finalize(client, first)
+    await finalize_upload(client, first)
 
-    refused = await _finalize(client, second)
+    refused = await finalize_upload(client, second)
 
     assert refused.status_code == 409
     assert refused.json()["error"] == "Duplicate document"

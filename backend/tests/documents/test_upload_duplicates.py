@@ -13,35 +13,23 @@ from core.database import create_session_factory
 from documents.dependencies import get_db_session
 from documents.models import Document, IngestionStatus, Upload
 from main import app
-from tests.documents.conftest import Caller, make_pdf, make_tenant, sha256_hex
+from tests.documents.conftest import (
+    Caller,
+    finalize_upload,
+    init_upload,
+    make_pdf,
+    make_tenant,
+)
 from tests.support.fake_storage import FakeStorageProvider
 from users.models import Profile
 
-_INIT_URL = "/api/v1/uploads/init"
-_PDF_CONTENT_TYPE = "application/pdf"
 _PDF = make_pdf(pages=2)
-
-
-async def _init(client: AsyncClient, data: bytes, filename: str):
-    return await client.post(
-        _INIT_URL,
-        json={
-            "filename": filename,
-            "size": len(data),
-            "content_type": _PDF_CONTENT_TYPE,
-            "sha256": sha256_hex(data),
-        },
-    )
 
 
 def _send_from_browser(
     storage: FakeStorageProvider, caller: Caller, upload_id: str, data: bytes
 ) -> None:
     storage.put_object(f"pending/{caller.tenant_id}/{upload_id}", data)
-
-
-async def _finalize(client: AsyncClient, upload_id: str):
-    return await client.post(f"/api/v1/uploads/{upload_id}/finalize")
 
 
 async def _upload_document(
@@ -51,9 +39,9 @@ async def _upload_document(
     filename: str,
     data: bytes = _PDF,
 ) -> dict:
-    upload_id = (await _init(client, data, filename)).json()["upload_id"]
+    upload_id = (await init_upload(client, data, filename)).json()["upload_id"]
     _send_from_browser(storage, caller, upload_id, data)
-    return (await _finalize(client, upload_id)).json()
+    return (await finalize_upload(client, upload_id)).json()
 
 
 async def _count(db_session: AsyncSession, model: type) -> int:
@@ -71,7 +59,7 @@ async def test_identical_content_under_another_filename_is_refused_at_start(
     await _upload_document(client, storage, caller, "budget.pdf")
     uploads_before = await _count(db_session, Upload)
 
-    response = await _init(client, _PDF, "budget copy (1).pdf")
+    response = await init_upload(client, _PDF, "budget copy (1).pdf")
 
     assert response.status_code == 409
     message = response.json()["message"]
@@ -110,7 +98,7 @@ async def test_the_same_content_in_another_tenant_is_not_a_duplicate(
     await _upload_document(client, storage, caller, "budget.pdf")
     caller.tenant_id = await make_tenant(db_session)
 
-    response = await _init(client, _PDF, "budget.pdf")
+    response = await init_upload(client, _PDF, "budget.pdf")
 
     assert response.status_code == 201
 
@@ -123,7 +111,7 @@ async def test_a_duplicate_names_the_uploader_by_email_when_they_have_no_profile
 ) -> None:
     await _upload_document(client, storage, caller, "budget.pdf")
 
-    response = await _init(client, _PDF, "budget again.pdf")
+    response = await init_upload(client, _PDF, "budget again.pdf")
 
     assert response.status_code == 409
     assert "@example.com" in response.json()["message"]
@@ -143,14 +131,14 @@ async def test_two_concurrent_finalizes_of_identical_content_make_one_document(
         async with session_factory() as session:
             yield session
 
-    first_id = (await _init(client, _PDF, "one.pdf")).json()["upload_id"]
-    second_id = (await _init(client, _PDF, "two.pdf")).json()["upload_id"]
+    first_id = (await init_upload(client, _PDF, "one.pdf")).json()["upload_id"]
+    second_id = (await init_upload(client, _PDF, "two.pdf")).json()["upload_id"]
     _send_from_browser(storage, caller, first_id, _PDF)
     _send_from_browser(storage, caller, second_id, _PDF)
     app.dependency_overrides[get_db_session] = _session_per_request
 
     responses = await asyncio.gather(
-        _finalize(client, first_id), _finalize(client, second_id)
+        finalize_upload(client, first_id), finalize_upload(client, second_id)
     )
 
     assert sorted(response.status_code for response in responses) == [200, 409]
@@ -169,14 +157,14 @@ async def test_finalizing_an_upload_refused_as_a_duplicate_again_repeats_the_con
     storage: FakeStorageProvider,
     caller: Caller,
 ) -> None:
-    first_id = (await _init(client, _PDF, "one.pdf")).json()["upload_id"]
-    second_id = (await _init(client, _PDF, "two.pdf")).json()["upload_id"]
+    first_id = (await init_upload(client, _PDF, "one.pdf")).json()["upload_id"]
+    second_id = (await init_upload(client, _PDF, "two.pdf")).json()["upload_id"]
     _send_from_browser(storage, caller, first_id, _PDF)
     _send_from_browser(storage, caller, second_id, _PDF)
-    await _finalize(client, first_id)
-    refused = await _finalize(client, second_id)
+    await finalize_upload(client, first_id)
+    refused = await finalize_upload(client, second_id)
 
-    again = await _finalize(client, second_id)
+    again = await finalize_upload(client, second_id)
 
     assert refused.status_code == 409
     assert again.status_code == 409

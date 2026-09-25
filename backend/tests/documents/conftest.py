@@ -118,3 +118,23 @@ def make_encrypted_pdf() -> bytes:
     buffer = io.BytesIO()
     writer.write(buffer)
     return buffer.getvalue()
+
+
+INIT_URL = "/api/v1/uploads/init"
+PDF_CONTENT_TYPE = "application/pdf"
+
+
+async def init_upload(client: AsyncClient, data: bytes, filename: str = "report.pdf"):
+    return await client.post(
+        INIT_URL,
+        json={
+            "filename": filename,
+            "size": len(data),
+            "content_type": PDF_CONTENT_TYPE,
+            "sha256": sha256_hex(data),
+        },
+    )
+
+
+async def finalize_upload(client: AsyncClient, upload_id: str):
+    return await client.post(f"/api/v1/uploads/{upload_id}/finalize")

@@ -293,9 +293,8 @@ def _rejection_kind_of(refusal: RefusedUploadError) -> RejectionKind:
 def _refusal_of(upload: Upload) -> RefusedUploadError:
     """The refusal a rejected Upload was given, so finalizing it again
     answers as the first finalize did."""
-    refusal_type = _REFUSAL_BY_KIND.get(
-        RejectionKind(upload.rejection_kind), RefusedUploadError
-    )
+    # Uploads rejected before kinds were stored have none: a plain refusal.
+    refusal_type = _REFUSAL_BY_KIND.get(upload.rejection_kind, RefusedUploadError)
     return refusal_type(upload.rejection_reason)
 
 

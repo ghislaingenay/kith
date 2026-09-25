@@ -46,7 +46,9 @@ def register_document_exception_handlers(app: FastAPI) -> None:
             "Too many uploads",
             headers=lambda exc: {
                 "Retry-After": str(
-                    math.ceil(cast(UploadRateExceededError, exc).retry_after.total_seconds())
+                    math.ceil(
+                        cast(UploadRateExceededError, exc).retry_after.total_seconds()
+                    )
                 )
             },
         ),
