@@ -30,4 +30,3 @@ class UploadSettings(BaseSettings):
     pending_expiry_seconds: int = Field(
         default=30 * 60, validation_alias="UPLOAD_PENDING_EXPIRY_SECONDS"
     )
-    """How long a pending Upload holds one of its User's slots."""

@@ -28,6 +28,7 @@ from tests.support.fake_storage import FakeStorageProvider
 _INIT_URL = "/api/v1/uploads/init"
 _PDF_CONTENT_TYPE = "application/pdf"
 _MB = 1024 * 1024
+_UNCAPPED_PENDING = 99
 
 
 def _limits(**env: int) -> None:
@@ -336,7 +337,7 @@ async def test_the_pending_cap_is_per_user(
 async def test_the_start_after_the_hourly_allowance_is_refused_with_a_retry_hint(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    _limits(UPLOAD_MAX_STARTS_PER_HOUR=3, UPLOAD_MAX_PENDING_PER_USER=99)
+    _limits(UPLOAD_MAX_STARTS_PER_HOUR=3, UPLOAD_MAX_PENDING_PER_USER=_UNCAPPED_PENDING)
     for pages in range(1, 4):
         assert (await _init(client, make_pdf(pages=pages))).status_code == 201
     # The oldest start happened 58 minutes ago, so a slot frees in 2 minutes.
@@ -359,7 +360,7 @@ async def test_the_start_after_the_hourly_allowance_is_refused_with_a_retry_hint
 async def test_starts_older_than_an_hour_no_longer_count(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    _limits(UPLOAD_MAX_STARTS_PER_HOUR=2, UPLOAD_MAX_PENDING_PER_USER=99)
+    _limits(UPLOAD_MAX_STARTS_PER_HOUR=2, UPLOAD_MAX_PENDING_PER_USER=_UNCAPPED_PENDING)
     for pages in range(1, 3):
         assert (await _init(client, make_pdf(pages=pages))).status_code == 201
 
@@ -371,7 +372,7 @@ async def test_starts_older_than_an_hour_no_longer_count(
 async def test_the_hourly_allowance_is_per_user(
     client: AsyncClient, db_session: AsyncSession, caller: Caller
 ) -> None:
-    _limits(UPLOAD_MAX_STARTS_PER_HOUR=1, UPLOAD_MAX_PENDING_PER_USER=99)
+    _limits(UPLOAD_MAX_STARTS_PER_HOUR=1, UPLOAD_MAX_PENDING_PER_USER=_UNCAPPED_PENDING)
     assert (await _init(client, make_pdf(pages=1))).status_code == 201
     assert (await _init(client, make_pdf(pages=2))).status_code == 429
 

@@ -107,8 +107,7 @@ class DocumentsRepository:
     async def count_pending_uploads_since(
         self, *, user_id: uuid.UUID, since: datetime
     ) -> int:
-        """The User's Uploads still pending that started at or after
-        `since`, in any Tenant."""
+        """The User's pending Uploads, in any Tenant, started at or after `since`."""
         result = await self.session.execute(
             select(func.count()).where(
                 Upload.user_id == user_id,
@@ -131,9 +130,7 @@ class DocumentsRepository:
         return list(result.scalars())
 
     async def lock_tenant(self, *, tenant_id: uuid.UUID) -> None:
-        """Serialise finalizes within a Tenant until the transaction ends, so
-        the Limits are checked against Documents no other finalize is about
-        to add."""
+        """Holds until the transaction ends, so finalizes in a Tenant queue up."""
         await self.session.execute(
             select(Tenant.id).where(Tenant.id == tenant_id).with_for_update()
         )

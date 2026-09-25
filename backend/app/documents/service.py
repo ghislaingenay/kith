@@ -132,16 +132,14 @@ class DocumentUploadService:
         starts = await self.repository.upload_start_times_since(
             user_id=user_id, since=now - _RATE_WINDOW
         )
-        over_by = len(starts) - self.settings.max_starts_per_hour
-        if over_by >= 0:
-            # A slot frees when the start that is `over_by` places from the
-            # oldest leaves the window.
-            retry_after = starts[over_by] + _RATE_WINDOW - now
+        starts_past_allowance = len(starts) - self.settings.max_starts_per_hour
+        if starts_past_allowance >= 0:
+            # A slot frees when this many of the oldest starts have left the window.
+            retry_after = starts[starts_past_allowance] + _RATE_WINDOW - now
             minutes = max(1, math.ceil(retry_after.total_seconds() / 60))
-            unit = "minute" if minutes == 1 else "minutes"
             raise UploadRateExceededError(
                 "You have started too many uploads this hour. "
-                f"Try again in {minutes} {unit}.",
+                f"Try again in {_counted(minutes, 'minute')}.",
                 retry_after,
             )
 
@@ -151,9 +149,8 @@ class DocumentUploadService:
         )
         cap = self.settings.max_pending_per_user
         if pending >= cap:
-            noun = "upload" if cap == 1 else "uploads"
             raise TooManyPendingUploadsError(
-                f"You already have {cap} {noun} in progress. "
+                f"You already have {_counted(cap, 'upload')} in progress. "
                 "Wait for one to finish, then try again."
             )
 
@@ -161,9 +158,8 @@ class DocumentUploadService:
         usage = await self.repository.live_document_usage(tenant_id=tenant_id)
         limit = self.settings.max_documents
         if usage.count >= limit:
-            noun = "document" if limit == 1 else "documents"
             raise LimitReachedError(
-                f"Your workspace has reached its limit of {limit} {noun}. "
+                f"Your workspace has reached its limit of {_counted(limit, 'document')}. "
                 "Delete a document to upload another."
             )
         if usage.size_bytes + size > self.settings.max_storage_bytes:
@@ -290,6 +286,10 @@ def _refusal_of(upload: Upload) -> RefusedUploadError:
     if upload.rejection_kind == RejectionKind.LIMIT_REACHED:
         return LimitReachedError(reason)
     return RefusedUploadError(reason)
+
+
+def _counted(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def _human_size(size: int) -> str:
