@@ -9,10 +9,12 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -71,6 +73,13 @@ class Document(Base):
         CheckConstraint(
             f"ingestion_stage IN ({_INGESTION_STAGE_VALUES})",
             name="ck_documents_ingestion_stage",
+        ),
+        Index(
+            "uq_documents_tenant_content_hash_active",
+            "tenant_id",
+            "content_hash",
+            unique=True,
+            postgresql_where=text(f"ingestion_status <> '{IngestionStatus.DELETED}'"),
         ),
     )
 
@@ -143,6 +152,7 @@ class Upload(Base):
     )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     declared_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    declared_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     document_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("documents.id", ondelete="SET NULL"),

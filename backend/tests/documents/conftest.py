@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 import pypdfium2
 import pytest
+from pypdf import PdfWriter
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,4 +108,13 @@ def make_pdf(pages: int = 1) -> bytes:
         pdf.new_page(200, 200)
     buffer = io.BytesIO()
     pdf.save(buffer)
+    return buffer.getvalue()
+
+
+def make_encrypted_pdf() -> bytes:
+    writer = PdfWriter()
+    writer.add_blank_page(200, 200)
+    writer.encrypt("secret", algorithm="RC4-128")
+    buffer = io.BytesIO()
+    writer.write(buffer)
     return buffer.getvalue()

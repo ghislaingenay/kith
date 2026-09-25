@@ -70,6 +70,7 @@ exclude_lines = [
 dev = [
     "moto>=5.2.2",
     "pre-commit>=4.6.2",
+    "pypdf>=6.19.0",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "testcontainers[minio,postgres]>=4.15.0",

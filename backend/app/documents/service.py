@@ -7,6 +7,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
+
 from core.jobs.provider import JobQueue
 from core.logging import setup_logger
 from core.storage.exceptions import StorageError, StorageObjectNotFoundError
@@ -14,7 +16,11 @@ from core.storage.provider import StorageObjectMetadata, StorageProvider
 from documents.config import UploadSettings
 from documents.display_name import sanitize_display_name
 from documents.exceptions import (
+    DuplicateDocumentError,
+    ContentHashMismatchError,
     InvalidUploadRequestError,
+    RefusedUploadError,
+    TooManyPagesError,
     UploadNotFoundError,
     UploadObjectMissingError,
     UploadSizeMismatchError,
@@ -22,7 +28,7 @@ from documents.exceptions import (
 from documents.keys import document_key, pending_upload_key
 from documents.models import Document, Upload, UploadStatus
 from documents.pdf import count_pdf_pages
-from documents.repository import DocumentsRepository
+from documents.repository import DocumentsRepository, ExistingDocument
 from documents.schemas import DocumentResponse, InitUploadRequest, InitUploadResponse
 
 logger = setup_logger(__name__)
@@ -60,11 +66,19 @@ class DocumentUploadService:
         if request.content_type.lower() != _PDF_CONTENT_TYPE:
             raise InvalidUploadRequestError("Only PDF files can be uploaded.")
 
+        declared_sha256 = request.sha256.lower()
+        existing = await self.repository.find_live_document_by_hash(
+            tenant_id=tenant_id, content_hash=declared_sha256
+        )
+        if existing:
+            raise _duplicate_of(existing)
+
         upload = await self.repository.create_pending_upload(
             tenant_id=tenant_id,
             user_id=user_id,
             filename=sanitize_display_name(request.filename),
             declared_size=request.size,
+            declared_sha256=declared_sha256,
         )
         checksum = base64.b64encode(bytes.fromhex(request.sha256)).decode()
         url = await self.storage.generate_presigned_put(
@@ -93,6 +107,8 @@ class DocumentUploadService:
         if upload is None:
             raise UploadNotFoundError(upload_id)
 
+        if upload.status == UploadStatus.REJECTED:
+            raise RefusedUploadError(upload.rejection_reason)
         if upload.status == UploadStatus.COMPLETED and upload.document_id:
             document = await self.repository.get_document(upload.document_id)
         else:
@@ -104,10 +120,18 @@ class DocumentUploadService:
             {"document_id": str(document.id), "tenant_id": str(tenant_id)},
             job_id=str(document.id),
         )
-        await self._delete_temporary_object(pending_upload_key(tenant_id, upload.id))
+        await self._delete_object(pending_upload_key(tenant_id, upload.id))
         return DocumentResponse.model_validate(document)
 
     async def _accept(self, upload: Upload) -> Document:
+        try:
+            return await self._validate_and_promote(upload)
+        except RefusedUploadError as exc:
+            await self.repository.reject_upload(upload, str(exc))
+            await self._delete_object(pending_upload_key(upload.tenant_id, upload.id))
+            raise
+
+    async def _validate_and_promote(self, upload: Upload) -> Document:
         temporary_key = pending_upload_key(upload.tenant_id, upload.id)
         stored = await self._head_temporary_object(temporary_key)
         if stored.size != upload.declared_size:
@@ -126,7 +150,17 @@ class DocumentUploadService:
                 raise UploadSizeMismatchError(
                     "The file that arrived is not the size that was announced."
                 )
+            if content_hash != upload.declared_sha256:
+                raise ContentHashMismatchError(
+                    "The file arrived corrupt. Please try uploading it again."
+                )
             page_count = await asyncio.to_thread(count_pdf_pages, path)
+            if page_count > self.settings.max_pages:
+                raise TooManyPagesError(
+                    f"The PDF has {page_count} pages; the limit is "
+                    f"{self.settings.max_pages} pages per file. Split it and "
+                    "upload the parts."
+                )
 
         document_id = uuid.uuid4()
         permanent_key = document_key(upload.tenant_id, document_id)
@@ -141,7 +175,17 @@ class DocumentUploadService:
             content_hash=content_hash,
             storage_key=permanent_key,
         )
-        await self.repository.complete_upload(upload, document)
+        try:
+            await self.repository.complete_upload(upload, document)
+        except IntegrityError:
+            # Another finalize of the same content committed first.
+            existing = await self.repository.find_live_document_by_hash(
+                tenant_id=upload.tenant_id, content_hash=content_hash
+            )
+            if existing is None:
+                raise
+            await self._delete_object(permanent_key)
+            raise _duplicate_of(existing) from None
         return document
 
     async def _head_temporary_object(self, key: str) -> StorageObjectMetadata:
@@ -165,10 +209,16 @@ class DocumentUploadService:
             await asyncio.to_thread(file.close)
         return digest.hexdigest(), size
 
-    async def _delete_temporary_object(self, key: str) -> None:
+    async def _delete_object(self, key: str) -> None:
         try:
             await self.storage.delete(key)
         except StorageError:
-            # The Document is already committed; the cleanup sweep and the
-            # bucket's lifecycle rule remove what this leaves behind.
-            logger.warning("Could not delete temporary upload object", key=key)
+            # Best effort: the cleanup sweep and the bucket's lifecycle rule
+            # remove what this leaves behind.
+            logger.warning("Could not delete upload object", key=key)
+
+
+def _duplicate_of(existing: ExistingDocument) -> DuplicateDocumentError:
+    return DuplicateDocumentError(
+        f'"{existing.name}" was already uploaded by {existing.uploader_label}.'
+    )
