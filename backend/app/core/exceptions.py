@@ -18,6 +18,7 @@ from core.mail.exceptions import MailError
 from core.ratelimit.exception_handlers import register_ratelimit_exception_handlers
 from core.security.exception_handlers import register_security_exception_handlers
 from core.storage.exceptions import StorageError
+from documents.exception_handlers import register_document_exception_handlers
 from tenants.exception_handlers import register_tenant_exception_handlers
 from users.exception_handlers import register_user_exception_handlers
 
@@ -26,6 +27,7 @@ logger = setup_logger(__name__)
 
 def register_exception_handlers(app: FastAPI) -> None:
     register_tenant_exception_handlers(app)
+    register_document_exception_handlers(app)
     register_user_exception_handlers(app)
     register_ratelimit_exception_handlers(app)
     register_security_exception_handlers(app)

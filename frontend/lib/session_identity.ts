@@ -15,7 +15,11 @@ export const sessionIdentitySchema = z.object({
     avatar_url: z.string().nullable(),
   }),
   memberships: z.array(
-    z.object({ tenant_slug: z.string(), tenant_name: z.string() }),
+    z.object({
+      tenant_id: z.uuid(),
+      tenant_slug: z.string(),
+      tenant_name: z.string(),
+    }),
   ),
 });
 

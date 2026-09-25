@@ -32,6 +32,15 @@ describe("WorkspaceShell", () => {
     expect(screen.queryByRole("link", { name: "Acme" })).not.toBeInTheDocument();
   });
 
+  it("links to Uploads within the workspace", () => {
+    renderShell({ name: "Jane", avatar_url: null });
+
+    expect(screen.getByRole("link", { name: "Uploads" })).toHaveAttribute(
+      "href",
+      "/w/acme/uploads",
+    );
+  });
+
   it("links to Settings within the workspace", () => {
     renderShell({ name: "Jane", avatar_url: null });
 

@@ -34,6 +34,7 @@ export const resolveWorkspace = cache(async (slug: string) => {
   }
 
   return {
+    tenantId: membership.tenant_id,
     tenantName: membership.tenant_name,
     tenantSlug: membership.tenant_slug,
     profile: identity.profile,

@@ -6,6 +6,7 @@ from core.cache.config import CacheSettings
 from core.cache.factory import CacheProviderFactory
 from core.cors import CorsSettings
 from core.database import DatabaseSettings, create_engine, create_session_factory
+from core.jobs.factory import JobQueueFactory
 from core.logging.config import LoggingSettings, configure_logging
 from core.mail.config import MailSettings
 from core.mail.factory import MailerFactory
@@ -14,6 +15,7 @@ from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
+from documents.config import UploadSettings
 
 
 def _configure_logging_once(settings: LoggingSettings) -> bool:
@@ -63,6 +65,13 @@ class Container(containers.DeclarativeContainer):
         RateLimiterFactory.create,
         settings=cache_settings,
     )
+
+    # Same eager-init note as storage_provider/cache_provider: call
+    # `container.job_queue()` during startup/lifespan. The Redis pool itself
+    # opens on the first enqueue.
+    job_queue = providers.Singleton(JobQueueFactory.create, settings=cache_settings)
+
+    upload_settings = providers.Singleton(UploadSettings)
 
     database_settings = providers.Singleton(DatabaseSettings)
 

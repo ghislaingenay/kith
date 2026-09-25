@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { displayName, useProfile, UserAvatar, type Profile } from "@/features/profile";
-import { Settings } from "lucide-react";
+import { Settings, Upload } from "lucide-react";
 
 import {
   Sidebar,
@@ -45,6 +45,13 @@ export function WorkspaceShell({
         <SidebarContent>
           <SidebarGroup>
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <Link href={`/w/${tenantSlug}/uploads`}>
+                    <Upload /> Uploads
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
                   <Link href={`/w/${tenantSlug}/settings`}>
