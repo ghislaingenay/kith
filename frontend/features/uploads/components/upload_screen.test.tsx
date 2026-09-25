@@ -187,6 +187,39 @@ describe("UploadScreen", () => {
         error: "Upload refused",
         message: "The file arrived corrupt. Please try uploading it again.",
       },
+      {
+        stage: "start",
+        status: 409,
+        error: "Limit reached",
+        message:
+          "Your workspace has reached its limit of 20 documents. Delete a document to upload another.",
+      },
+      {
+        stage: "start",
+        status: 409,
+        error: "Limit reached",
+        message:
+          "This file would take your workspace over its storage limit of 100 MB. Delete a document to make room.",
+      },
+      {
+        stage: "finalize",
+        status: 409,
+        error: "Limit reached",
+        message:
+          "Your workspace has reached its limit of 20 documents. Delete a document to upload another.",
+      },
+      {
+        stage: "start",
+        status: 429,
+        error: "Too many uploads",
+        message: "You already have 5 uploads in progress. Wait for one to finish, then try again.",
+      },
+      {
+        stage: "start",
+        status: 429,
+        error: "Too many uploads",
+        message: "You have started too many uploads this hour. Try again in 12 minutes.",
+      },
     ] as const;
 
     it.each(refusals)(

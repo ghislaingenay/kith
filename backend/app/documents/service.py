@@ -4,7 +4,9 @@ import asyncio
 import base64
 import hashlib
 import tempfile
+import math
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
@@ -19,10 +21,13 @@ from documents.exceptions import (
     DuplicateDocumentError,
     ContentHashMismatchError,
     InvalidUploadRequestError,
+    LimitReachedError,
     RefusedUploadError,
     TooManyPagesError,
+    TooManyPendingUploadsError,
     UploadNotFoundError,
     UploadObjectMissingError,
+    UploadRateExceededError,
     UploadSizeMismatchError,
 )
 from documents.keys import document_key, pending_upload_key
@@ -36,6 +41,7 @@ logger = setup_logger(__name__)
 _PDF_CONTENT_TYPE = "application/pdf"
 _INGEST_QUEUE = "ingest"
 _INGEST_FUNCTION = "ingest_document"
+_RATE_WINDOW = timedelta(hours=1)
 
 
 class DocumentUploadService:
@@ -55,16 +61,12 @@ class DocumentUploadService:
         self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, request: InitUploadRequest
     ) -> InitUploadResponse:
         if request.size > self.settings.max_file_bytes:
-            cap = self.settings.max_file_bytes
-            if cap < 1024:
-                human = f"{cap} bytes"
-            elif cap < 1024 * 1024:
-                human = f"{(cap + 1023) // 1024} KB"
-            else:
-                human = f"{(cap + (1024 * 1024 - 1)) // (1024 * 1024)} MB"
+            human = _human_size(self.settings.max_file_bytes)
             raise InvalidUploadRequestError(f"File must be {human} or smaller.")
         if request.content_type.lower() != _PDF_CONTENT_TYPE:
             raise InvalidUploadRequestError("Only PDF files can be uploaded.")
+
+        await self._check_user_may_start(user_id)
 
         declared_sha256 = request.sha256.lower()
         existing = await self.repository.find_live_document_by_hash(
@@ -72,6 +74,8 @@ class DocumentUploadService:
         )
         if existing:
             raise _duplicate_of(existing)
+
+        await self._check_limits(tenant_id, request.size)
 
         upload = await self.repository.create_pending_upload(
             tenant_id=tenant_id,
@@ -108,9 +112,7 @@ class DocumentUploadService:
             raise UploadNotFoundError(upload_id)
 
         if upload.status == UploadStatus.REJECTED:
-            if upload.rejection_kind == RejectionKind.DUPLICATE:
-                raise DuplicateDocumentError(upload.rejection_reason)
-            raise RefusedUploadError(upload.rejection_reason)
+            raise _refusal_of(upload)
         if upload.status == UploadStatus.COMPLETED and upload.document_id:
             document = await self.repository.get_document(upload.document_id)
         else:
@@ -125,16 +127,59 @@ class DocumentUploadService:
         await self._delete_object(pending_upload_key(tenant_id, upload.id))
         return DocumentResponse.model_validate(document)
 
+    async def _check_user_may_start(self, user_id: uuid.UUID) -> None:
+        now = datetime.now(UTC)
+        starts = await self.repository.upload_start_times_since(
+            user_id=user_id, since=now - _RATE_WINDOW
+        )
+        over_by = len(starts) - self.settings.max_starts_per_hour
+        if over_by >= 0:
+            # A slot frees when the start that is `over_by` places from the
+            # oldest leaves the window.
+            retry_after = starts[over_by] + _RATE_WINDOW - now
+            minutes = max(1, math.ceil(retry_after.total_seconds() / 60))
+            unit = "minute" if minutes == 1 else "minutes"
+            raise UploadRateExceededError(
+                "You have started too many uploads this hour. "
+                f"Try again in {minutes} {unit}.",
+                retry_after,
+            )
+
+        pending = await self.repository.count_pending_uploads_since(
+            user_id=user_id,
+            since=now - timedelta(seconds=self.settings.pending_expiry_seconds),
+        )
+        cap = self.settings.max_pending_per_user
+        if pending >= cap:
+            noun = "upload" if cap == 1 else "uploads"
+            raise TooManyPendingUploadsError(
+                f"You already have {cap} {noun} in progress. "
+                "Wait for one to finish, then try again."
+            )
+
+    async def _check_limits(self, tenant_id: uuid.UUID, size: int) -> None:
+        usage = await self.repository.live_document_usage(tenant_id=tenant_id)
+        limit = self.settings.max_documents
+        if usage.count >= limit:
+            noun = "document" if limit == 1 else "documents"
+            raise LimitReachedError(
+                f"Your workspace has reached its limit of {limit} {noun}. "
+                "Delete a document to upload another."
+            )
+        if usage.size_bytes + size > self.settings.max_storage_bytes:
+            raise LimitReachedError(
+                "This file would take your workspace over its storage limit of "
+                f"{_human_size(self.settings.max_storage_bytes)}. "
+                "Delete a document to make room."
+            )
+
     async def _accept(self, upload: Upload) -> Document:
         try:
             return await self._validate_and_promote(upload)
         except RefusedUploadError as exc:
-            kind = (
-                RejectionKind.DUPLICATE
-                if isinstance(exc, DuplicateDocumentError)
-                else RejectionKind.INVALID_FILE
+            await self.repository.reject_upload(
+                upload, reason=str(exc), kind=_rejection_kind_of(exc)
             )
-            await self.repository.reject_upload(upload, reason=str(exc), kind=kind)
             await self._delete_object(pending_upload_key(upload.tenant_id, upload.id))
             raise
 
@@ -168,6 +213,9 @@ class DocumentUploadService:
                     f"{self.settings.max_pages} pages per file. Split it and "
                     "upload the parts."
                 )
+
+        await self.repository.lock_tenant(tenant_id=upload.tenant_id)
+        await self._check_limits(upload.tenant_id, downloaded_size)
 
         document_id = uuid.uuid4()
         permanent_key = document_key(upload.tenant_id, document_id)
@@ -223,6 +271,33 @@ class DocumentUploadService:
             # Best effort: the cleanup sweep and the bucket's lifecycle rule
             # remove what this leaves behind.
             logger.warning("Could not delete upload object", key=key)
+
+
+def _rejection_kind_of(refusal: RefusedUploadError) -> RejectionKind:
+    if isinstance(refusal, DuplicateDocumentError):
+        return RejectionKind.DUPLICATE
+    if isinstance(refusal, LimitReachedError):
+        return RejectionKind.LIMIT_REACHED
+    return RejectionKind.INVALID_FILE
+
+
+def _refusal_of(upload: Upload) -> RefusedUploadError:
+    """The refusal a rejected Upload was given, so finalizing it again
+    answers as the first finalize did."""
+    reason = upload.rejection_reason
+    if upload.rejection_kind == RejectionKind.DUPLICATE:
+        return DuplicateDocumentError(reason)
+    if upload.rejection_kind == RejectionKind.LIMIT_REACHED:
+        return LimitReachedError(reason)
+    return RefusedUploadError(reason)
+
+
+def _human_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} bytes"
+    if size < 1024 * 1024:
+        return f"{(size + 1023) // 1024} KB"
+    return f"{(size + (1024 * 1024 - 1)) // (1024 * 1024)} MB"
 
 
 def _duplicate_of(existing: ExistingDocument) -> DuplicateDocumentError:

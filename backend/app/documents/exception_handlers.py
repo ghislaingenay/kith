@@ -1,3 +1,4 @@
+import math
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, status
@@ -6,9 +7,12 @@ from fastapi.responses import JSONResponse
 from documents.exceptions import (
     DuplicateDocumentError,
     InvalidUploadRequestError,
+    LimitReachedError,
     RefusedUploadError,
+    TooManyPendingUploadsError,
     UploadNotFoundError,
     UploadObjectMissingError,
+    UploadRateExceededError,
 )
 
 
@@ -27,12 +31,30 @@ def register_document_exception_handlers(app: FastAPI) -> None:
         _problem_handler(status.HTTP_409_CONFLICT, "Duplicate document"),
     )
     app.add_exception_handler(
+        LimitReachedError,
+        _problem_handler(status.HTTP_409_CONFLICT, "Limit reached"),
+    )
+    app.add_exception_handler(
+        TooManyPendingUploadsError,
+        _problem_handler(status.HTTP_429_TOO_MANY_REQUESTS, "Too many uploads"),
+    )
+    app.add_exception_handler(UploadRateExceededError, _rate_exceeded_handler)
+    app.add_exception_handler(
         UploadObjectMissingError,
         _problem_handler(status.HTTP_409_CONFLICT, "Upload not received"),
     )
     app.add_exception_handler(
         UploadNotFoundError,
         _problem_handler(status.HTTP_404_NOT_FOUND, "Upload not found"),
+    )
+
+
+async def _rate_exceeded_handler(_: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, UploadRateExceededError)
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"error": "Too many uploads", "message": str(exc)},
+        headers={"Retry-After": str(math.ceil(exc.retry_after.total_seconds()))},
     )
 
 
