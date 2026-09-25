@@ -16,7 +16,7 @@ export const sessionIdentitySchema = z.object({
   }),
   memberships: z.array(
     z.object({
-      tenant_id: z.string(),
+      tenant_id: z.uuid(),
       tenant_slug: z.string(),
       tenant_name: z.string(),
     }),

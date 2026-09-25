@@ -14,7 +14,7 @@ from core.storage.dependencies import get_storage_provider
 from core.storage.provider import StorageProvider
 from documents.config import UploadSettings
 from documents.repository import DocumentsRepository
-from documents.service import UploadService
+from documents.service import DocumentUploadService
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -37,5 +37,5 @@ def get_upload_service(
     storage: Annotated[StorageProvider, Depends(get_storage_provider)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
     settings: Annotated[UploadSettings, Depends(get_upload_settings)],
-) -> UploadService:
-    return UploadService(repository, storage, job_queue, settings)
+) -> DocumentUploadService:
+    return DocumentUploadService(repository, storage, job_queue, settings)

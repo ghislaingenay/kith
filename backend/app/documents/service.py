@@ -32,7 +32,7 @@ _INGEST_QUEUE = "ingest"
 _INGEST_FUNCTION = "ingest_document"
 
 
-class UploadService:
+class DocumentUploadService:
     def __init__(
         self,
         repository: DocumentsRepository,
@@ -45,7 +45,7 @@ class UploadService:
         self.job_queue = job_queue
         self.settings = settings
 
-    async def start(
+    async def init_upload(
         self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, request: InitUploadRequest
     ) -> InitUploadResponse:
         if request.size > self.settings.max_file_bytes:
@@ -79,7 +79,7 @@ class UploadService:
             expires_in=self.settings.presigned_url_ttl_seconds,
         )
 
-    async def finalize(
+    async def finalize_upload(
         self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, upload_id: uuid.UUID
     ) -> DocumentResponse:
         upload = await self.repository.get_upload_for_update(
