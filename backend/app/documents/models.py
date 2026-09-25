@@ -47,6 +47,10 @@ class UploadStatus(StrEnum):
     EXPIRED = "expired"
     REJECTED = "rejected"
 
+class DocumentSource(StrEnum):
+    PDF = "pdf"
+
+_DOCUMENT_SOURCE_VALUES = ", ".join(f"'{source.value}'" for source in DocumentSource)
 
 _INGESTION_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in IngestionStatus)
 _INGESTION_STAGE_VALUES = ", ".join(f"'{stage.value}'" for stage in IngestionStage)
@@ -88,10 +92,15 @@ class Document(Base):
     page_count: Mapped[int] = mapped_column(Integer, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     storage_key: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(
+        String, nullable=False, default=DocumentSource.PDF
+    )
     ingestion_status: Mapped[str] = mapped_column(
         String, nullable=False, default=IngestionStatus.UPLOADED
     )
-    ingestion_stage: Mapped[str | None] = mapped_column(String, nullable=True)
+    ingestion_stage: Mapped[str | None] = mapped_column(
+        String, nullable=True, default=None
+    )
     pages_extracted: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
