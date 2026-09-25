@@ -133,7 +133,10 @@ class S3StorageProvider(StorageProvider):
                 CopySource={"Bucket": self._bucket, "Key": source_key},
             )
         except ClientError as exc:
-            raise self._translate_error(source_key, exc) from exc
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in _NOT_FOUND_CODES:
+                raise StorageObjectNotFoundError(source_key) from exc
+            raise self._translate_error(dest_key, exc) from exc
 
     def public_url(self, key: str) -> str:
         return self._public_url(key)
