@@ -4,11 +4,11 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from documents.exceptions import (
+    DuplicateDocumentError,
     InvalidUploadRequestError,
-    UnreadablePdfError,
+    RefusedUploadError,
     UploadNotFoundError,
     UploadObjectMissingError,
-    UploadSizeMismatchError,
 )
 
 
@@ -19,12 +19,12 @@ def register_document_exception_handlers(app: FastAPI) -> None:
         _problem_handler(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid upload"),
     )
     app.add_exception_handler(
-        UnreadablePdfError,
-        _problem_handler(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unreadable PDF"),
+        RefusedUploadError,
+        _problem_handler(status.HTTP_422_UNPROCESSABLE_CONTENT, "Upload refused"),
     )
     app.add_exception_handler(
-        UploadSizeMismatchError,
-        _problem_handler(status.HTTP_422_UNPROCESSABLE_CONTENT, "Upload size mismatch"),
+        DuplicateDocumentError,
+        _problem_handler(status.HTTP_409_CONFLICT, "Duplicate document"),
     )
     app.add_exception_handler(
         UploadObjectMissingError,

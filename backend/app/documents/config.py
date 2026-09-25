@@ -15,3 +15,4 @@ class UploadSettings(BaseSettings):
     presigned_url_ttl_seconds: int = Field(
         default=10 * 60, validation_alias="UPLOAD_PRESIGNED_URL_TTL_SECONDS"
     )
+    max_pages: int = Field(default=100, validation_alias="UPLOAD_MAX_PAGES")

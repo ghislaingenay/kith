@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
@@ -152,5 +152,61 @@ describe("UploadScreen", () => {
     await choose(pdfFile("big.pdf", MAX_BYTES + 1));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("File must be 20 MB or smaller.");
+  });
+
+  describe("a file the API refuses", () => {
+    const refusals = [
+      {
+        stage: "start",
+        status: 409,
+        error: "Duplicate document",
+        message: '"budget.pdf" was already uploaded by Jane Doe.',
+      },
+      {
+        stage: "finalize",
+        status: 422,
+        error: "Upload refused",
+        message: "The PDF is password-protected. Remove the password and try again.",
+      },
+      {
+        stage: "finalize",
+        status: 422,
+        error: "Upload refused",
+        message: "The PDF could not be read. It may be damaged.",
+      },
+      {
+        stage: "finalize",
+        status: 422,
+        error: "Upload refused",
+        message:
+          "The PDF has 101 pages; the limit is 100 pages per file. Split it and upload the parts.",
+      },
+      {
+        stage: "finalize",
+        status: 422,
+        error: "Upload refused",
+        message: "The file arrived corrupt. Please try uploading it again.",
+      },
+    ] as const;
+
+    it.each(refusals)(
+      "shows the reason on that file: $message",
+      async ({ stage, status, error, message }) => {
+        mockUploadApi();
+        const refusal = () => HttpResponse.json({ error, message }, { status });
+        server.use(
+          stage === "start"
+            ? http.post(`${API_URL}/uploads/init`, refusal)
+            : http.post(`${API_URL}/uploads/${UPLOAD_ID}/finalize`, refusal),
+        );
+
+        await choose(pdfFile("report.pdf"));
+
+        const row = (await screen.findByText("report.pdf")).closest("li");
+        expect(row).not.toBeNull();
+        expect(await within(row as HTMLElement).findByRole("alert")).toHaveTextContent(message);
+        expect(screen.queryByText("Accepted")).not.toBeInTheDocument();
+      },
+    );
   });
 });

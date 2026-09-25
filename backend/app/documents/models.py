@@ -9,10 +9,12 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -47,14 +49,25 @@ class UploadStatus(StrEnum):
     EXPIRED = "expired"
     REJECTED = "rejected"
 
+
+class RejectionKind(StrEnum):
+    """Why an Upload was rejected, so a repeated finalize can answer the way
+    the first one did."""
+
+    DUPLICATE = "duplicate"
+    INVALID_FILE = "invalid_file"
+
+
 class DocumentSource(StrEnum):
     PDF = "pdf"
+
 
 _DOCUMENT_SOURCE_VALUES = ", ".join(f"'{source.value}'" for source in DocumentSource)
 
 _INGESTION_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in IngestionStatus)
 _INGESTION_STAGE_VALUES = ", ".join(f"'{stage.value}'" for stage in IngestionStage)
 _UPLOAD_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in UploadStatus)
+_REJECTION_KIND_VALUES = ", ".join(f"'{kind.value}'" for kind in RejectionKind)
 
 
 class Document(Base):
@@ -71,6 +84,13 @@ class Document(Base):
         CheckConstraint(
             f"ingestion_stage IN ({_INGESTION_STAGE_VALUES})",
             name="ck_documents_ingestion_stage",
+        ),
+        Index(
+            "uq_documents_tenant_content_hash_active",
+            "tenant_id",
+            "content_hash",
+            unique=True,
+            postgresql_where=text(f"ingestion_status <> '{IngestionStatus.DELETED}'"),
         ),
     )
 
@@ -123,6 +143,10 @@ class Upload(Base):
             f"status IN ({_UPLOAD_STATUS_VALUES})",
             name="ck_uploads_status",
         ),
+        CheckConstraint(
+            f"rejection_kind IN ({_REJECTION_KIND_VALUES})",
+            name="ck_uploads_rejection_kind",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -143,12 +167,14 @@ class Upload(Base):
     )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     declared_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    declared_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     document_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("documents.id", ondelete="SET NULL"),
         nullable=True,
     )
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_kind: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

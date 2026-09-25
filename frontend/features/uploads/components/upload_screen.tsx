@@ -64,22 +64,23 @@ export function UploadScreen({ tenantId }: { readonly tenantId: string }) {
 
         {chosen && (
           <ul className="mt-4 divide-y rounded-lg border text-sm">
-            <li className="flex items-center justify-between gap-4 px-4 py-3">
-              <span className="truncate">{chosen.name}</span>
-              {isPending && <span role="status">Uploading…</span>}
-              {isSuccess && (
-                <span role="status" className="text-green-700 dark:text-green-500">
-                  Accepted
-                </span>
+            <li className="flex flex-col gap-1 px-4 py-3">
+              <div className="flex items-center justify-between gap-4">
+                <span className="truncate">{chosen.name}</span>
+                {isPending && <span role="status">Uploading…</span>}
+                {isSuccess && (
+                  <span role="status" className="text-green-700 dark:text-green-500">
+                    Accepted
+                  </span>
+                )}
+              </div>
+              {errorMessage && (
+                <p role="alert" className="text-destructive">
+                  {errorMessage}
+                </p>
               )}
             </li>
           </ul>
-        )}
-
-        {errorMessage && (
-          <p role="alert" className="mt-2 text-sm text-destructive">
-            {errorMessage}
-          </p>
         )}
       </div>
     </div>

@@ -13,10 +13,16 @@ from auth.exceptions import AuthenticationError
 from core.jobs.dependencies import get_job_queue
 from core.storage.dependencies import get_storage_provider
 from core.storage.exceptions import StorageError
-from documents.models import Document
+from documents.models import Document, Upload
 from main import app
 from tenants.permissions import Role
-from tests.documents.conftest import Caller, make_pdf, make_tenant, sha256_hex
+from tests.documents.conftest import (
+    Caller,
+    make_encrypted_pdf,
+    make_pdf,
+    make_tenant,
+    sha256_hex,
+)
 from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_storage import FakeStorageProvider
 
@@ -28,7 +34,11 @@ _THREE_PAGE_PDF = make_pdf(pages=3)
 
 
 async def _start_upload(
-    client: AsyncClient, data: bytes, *, filename: str = _DEFAULT_FILENAME
+    client: AsyncClient,
+    data: bytes,
+    *,
+    filename: str = _DEFAULT_FILENAME,
+    declared_sha256: str | None = None,
 ) -> str:
     response = await client.post(
         _INIT_URL,
@@ -36,7 +46,7 @@ async def _start_upload(
             "filename": filename,
             "size": len(data),
             "content_type": _PDF_CONTENT_TYPE,
-            "sha256": sha256_hex(data),
+            "sha256": declared_sha256 or sha256_hex(data),
         },
     )
     return response.json()["upload_id"]
@@ -54,6 +64,19 @@ async def _document_count(db_session: AsyncSession) -> int:
 
 async def _finalize(client: AsyncClient, upload_id: str):
     return await client.post(f"/api/v1/uploads/{upload_id}/finalize")
+
+
+async def _upload_outcome(
+    db_session: AsyncSession, upload_id: str
+) -> tuple[str, str | None]:
+    row = (
+        await db_session.execute(
+            select(Upload.status, Upload.rejection_reason).where(
+                Upload.id == uuid.UUID(upload_id)
+            )
+        )
+    ).one()
+    return row.status, row.rejection_reason
 
 
 async def test_a_valid_pdf_becomes_an_uploaded_document(
@@ -295,5 +318,99 @@ async def test_a_file_that_is_not_a_readable_pdf_is_refused(
     response = await _finalize(client, upload_id)
 
     assert response.status_code == 422
+    assert "could not be read" in response.json()["message"]
     assert await _document_count(db_session) == 0
     assert storage.copied == []
+    assert f"pending/{caller.tenant_id}/{upload_id}" not in storage.keys
+    assert (await _upload_outcome(db_session, upload_id))[0] == "rejected"
+
+
+async def test_a_body_that_does_not_match_the_declared_hash_is_refused_as_corrupt(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    db_session: AsyncSession,
+    caller: Caller,
+) -> None:
+    damaged = _TWO_PAGE_PDF[:-1] + b"X"
+    upload_id = await _start_upload(
+        client, _TWO_PAGE_PDF, declared_sha256=sha256_hex(_TWO_PAGE_PDF)
+    )
+    _send_from_browser(storage, caller, upload_id, damaged)
+
+    response = await _finalize(client, upload_id)
+
+    assert response.status_code == 422
+    assert "corrupt" in response.json()["message"].lower()
+    assert await _document_count(db_session) == 0
+    assert f"pending/{caller.tenant_id}/{upload_id}" not in storage.keys
+    status, reason = await _upload_outcome(db_session, upload_id)
+    assert status == "rejected"
+    assert reason == response.json()["message"]
+
+
+async def test_a_password_protected_pdf_is_refused_with_that_reason(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    db_session: AsyncSession,
+    caller: Caller,
+) -> None:
+    encrypted = make_encrypted_pdf()
+    upload_id = await _start_upload(client, encrypted)
+    _send_from_browser(storage, caller, upload_id, encrypted)
+
+    response = await _finalize(client, upload_id)
+
+    assert response.status_code == 422
+    assert "password-protected" in response.json()["message"]
+    assert await _document_count(db_session) == 0
+    assert f"pending/{caller.tenant_id}/{upload_id}" not in storage.keys
+    assert (await _upload_outcome(db_session, upload_id))[0] == "rejected"
+
+
+async def test_a_pdf_over_the_page_cap_is_refused_with_the_cap_in_the_message(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    db_session: AsyncSession,
+    caller: Caller,
+) -> None:
+    too_long = make_pdf(pages=101)
+    upload_id = await _start_upload(client, too_long)
+    _send_from_browser(storage, caller, upload_id, too_long)
+
+    response = await _finalize(client, upload_id)
+
+    assert response.status_code == 422
+    assert "100 pages" in response.json()["message"]
+    assert await _document_count(db_session) == 0
+    assert f"pending/{caller.tenant_id}/{upload_id}" not in storage.keys
+    assert (await _upload_outcome(db_session, upload_id))[0] == "rejected"
+
+
+async def test_a_pdf_of_exactly_the_page_cap_is_accepted(
+    client: AsyncClient, storage: FakeStorageProvider, caller: Caller
+) -> None:
+    at_the_cap = make_pdf(pages=100)
+    upload_id = await _start_upload(client, at_the_cap)
+    _send_from_browser(storage, caller, upload_id, at_the_cap)
+
+    response = await _finalize(client, upload_id)
+
+    assert response.status_code == 200
+
+
+async def test_finalizing_a_refused_upload_again_repeats_the_refusal(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    db_session: AsyncSession,
+    caller: Caller,
+) -> None:
+    encrypted = make_encrypted_pdf()
+    upload_id = await _start_upload(client, encrypted)
+    _send_from_browser(storage, caller, upload_id, encrypted)
+    first = await _finalize(client, upload_id)
+
+    again = await _finalize(client, upload_id)
+
+    assert again.status_code == 422
+    assert again.json()["message"] == first.json()["message"]
+    assert await _document_count(db_session) == 0
