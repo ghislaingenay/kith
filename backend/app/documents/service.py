@@ -112,7 +112,15 @@ class UploadService:
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "upload.pdf"
-            content_hash = await self._download_hashing(temporary_key, path)
+            content_hash, downloaded_size = await self._download_hashing(
+                temporary_key, path
+            )
+            # The link stays valid for minutes, so the object can be replaced
+            # after `head`; what was hashed must be what was announced.
+            if downloaded_size != upload.declared_size:
+                raise UploadSizeMismatchError(
+                    "The file that arrived is not the size that was announced."
+                )
             page_count = await asyncio.to_thread(count_pdf_pages, path)
 
         document_id = uuid.uuid4()
@@ -123,7 +131,7 @@ class UploadService:
             tenant_id=upload.tenant_id,
             uploader_id=upload.user_id,
             name=upload.filename,
-            size_bytes=stored.size,
+            size_bytes=downloaded_size,
             page_count=page_count,
             content_hash=content_hash,
             storage_key=permanent_key,
@@ -139,13 +147,18 @@ class UploadService:
                 "The file has not been received yet."
             ) from exc
 
-    async def _download_hashing(self, key: str, path: Path) -> str:
+    async def _download_hashing(self, key: str, path: Path) -> tuple[str, int]:
         digest = hashlib.sha256()
-        with path.open("wb") as file:
+        size = 0
+        file = await asyncio.to_thread(path.open, "wb")
+        try:
             async for chunk in self.storage.download(key):
                 digest.update(chunk)
+                size += len(chunk)
                 await asyncio.to_thread(file.write, chunk)
-        return digest.hexdigest()
+        finally:
+            await asyncio.to_thread(file.close)
+        return digest.hexdigest(), size
 
     async def _delete_temporary_object(self, key: str) -> None:
         try:

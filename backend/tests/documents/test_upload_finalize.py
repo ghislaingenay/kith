@@ -8,6 +8,8 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth.dependencies import get_current_user
+from auth.exceptions import AuthenticationError
 from core.storage.dependencies import get_storage_provider
 from core.storage.exceptions import StorageError
 from documents.models import Document
@@ -18,17 +20,21 @@ from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_storage import FakeStorageProvider
 
 _TWO_PAGE_PDF = make_pdf(pages=2)
+_INIT_URL = "/api/v1/uploads/init"
+_PDF_CONTENT_TYPE = "application/pdf"
+_DEFAULT_FILENAME = "report.pdf"
+_THREE_PAGE_PDF = make_pdf(pages=3)
 
 
 async def _start_upload(
-    client: AsyncClient, data: bytes, *, filename: str = "report.pdf"
+    client: AsyncClient, data: bytes, *, filename: str = _DEFAULT_FILENAME
 ) -> str:
     response = await client.post(
-        "/api/v1/uploads/init",
+        _INIT_URL,
         json={
             "filename": filename,
             "size": len(data),
-            "content_type": "application/pdf",
+            "content_type": _PDF_CONTENT_TYPE,
             "sha256": sha256_hex(data),
         },
     )
@@ -163,6 +169,39 @@ async def test_another_tenants_upload_cannot_be_finalized(
 
     assert response.status_code == 404
     assert await _document_count(db_session) == 0
+
+
+class _StorageWhoseObjectChangesAfterTheSizeCheck(FakeStorageProvider):
+    async def head(self, key):
+        metadata = await super().head(key)
+        self.put_object(key, _THREE_PAGE_PDF)
+        return metadata
+
+
+async def test_a_file_replaced_after_the_size_check_is_refused(
+    client: AsyncClient, db_session: AsyncSession, caller: Caller
+) -> None:
+    storage = _StorageWhoseObjectChangesAfterTheSizeCheck()
+    app.dependency_overrides[get_storage_provider] = lambda: storage
+    upload_id = await _start_upload(client, _TWO_PAGE_PDF)
+    _send_from_browser(storage, caller, upload_id, _TWO_PAGE_PDF)
+
+    response = await _finalize(client, upload_id)
+
+    assert response.status_code == 422
+    assert await _document_count(db_session) == 0
+    assert storage.copied == []
+
+
+async def test_an_unauthenticated_caller_cannot_finalize(client: AsyncClient) -> None:
+    def _not_signed_in() -> None:
+        raise AuthenticationError("missing session")
+
+    app.dependency_overrides[get_current_user] = _not_signed_in
+
+    response = await _finalize(client, str(uuid.uuid4()))
+
+    assert response.status_code == 401
 
 
 async def test_an_unknown_upload_is_not_found(client: AsyncClient) -> None:
