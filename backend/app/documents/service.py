@@ -211,6 +211,11 @@ class DocumentUploadService:
                 )
 
         await self.repository.lock_tenant(tenant_id=upload.tenant_id)
+        existing = await self.repository.find_live_document_by_hash(
+            tenant_id=upload.tenant_id, content_hash=content_hash
+        )
+        if existing:
+            raise _duplicate_of(existing)
         await self._check_limits(upload.tenant_id, downloaded_size)
 
         document_id = uuid.uuid4()
@@ -269,23 +274,29 @@ class DocumentUploadService:
             logger.warning("Could not delete upload object", key=key)
 
 
+# Most specific first: `RefusedUploadError` is the base of the others.
+_REFUSAL_BY_KIND: dict[RejectionKind, type[RefusedUploadError]] = {
+    RejectionKind.DUPLICATE: DuplicateDocumentError,
+    RejectionKind.LIMIT_REACHED: LimitReachedError,
+    RejectionKind.INVALID_FILE: RefusedUploadError,
+}
+
+
 def _rejection_kind_of(refusal: RefusedUploadError) -> RejectionKind:
-    if isinstance(refusal, DuplicateDocumentError):
-        return RejectionKind.DUPLICATE
-    if isinstance(refusal, LimitReachedError):
-        return RejectionKind.LIMIT_REACHED
-    return RejectionKind.INVALID_FILE
+    return next(
+        kind
+        for kind, refusal_type in _REFUSAL_BY_KIND.items()
+        if isinstance(refusal, refusal_type)
+    )
 
 
 def _refusal_of(upload: Upload) -> RefusedUploadError:
     """The refusal a rejected Upload was given, so finalizing it again
     answers as the first finalize did."""
-    reason = upload.rejection_reason
-    if upload.rejection_kind == RejectionKind.DUPLICATE:
-        return DuplicateDocumentError(reason)
-    if upload.rejection_kind == RejectionKind.LIMIT_REACHED:
-        return LimitReachedError(reason)
-    return RefusedUploadError(reason)
+    refusal_type = _REFUSAL_BY_KIND.get(
+        RejectionKind(upload.rejection_kind), RefusedUploadError
+    )
+    return refusal_type(upload.rejection_reason)
 
 
 def _counted(count: int, noun: str) -> str:

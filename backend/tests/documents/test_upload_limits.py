@@ -391,3 +391,19 @@ async def test_another_tenants_documents_do_not_count_toward_this_tenants_limits
     response = await _init(client, make_pdf(pages=1))
 
     assert response.status_code == 201
+
+
+async def test_finalize_reports_a_duplicate_before_a_limit(
+    client: AsyncClient, storage: FakeStorageProvider, caller: Caller
+) -> None:
+    _limits(UPLOAD_MAX_DOCUMENTS=1)
+    same = make_pdf(pages=1)
+    first = await _start_and_send(client, storage, caller, same)
+    second = await _start_and_send(client, storage, caller, same)
+    await _finalize(client, first)
+
+    refused = await _finalize(client, second)
+
+    assert refused.status_code == 409
+    assert refused.json()["error"] == "Duplicate document"
+    assert "was already uploaded by" in refused.json()["message"]

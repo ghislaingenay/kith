@@ -1,5 +1,6 @@
 import math
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -38,7 +39,18 @@ def register_document_exception_handlers(app: FastAPI) -> None:
         TooManyPendingUploadsError,
         _problem_handler(status.HTTP_429_TOO_MANY_REQUESTS, "Too many uploads"),
     )
-    app.add_exception_handler(UploadRateExceededError, _rate_exceeded_handler)
+    app.add_exception_handler(
+        UploadRateExceededError,
+        _problem_handler(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many uploads",
+            headers=lambda exc: {
+                "Retry-After": str(
+                    math.ceil(cast(UploadRateExceededError, exc).retry_after.total_seconds())
+                )
+            },
+        ),
+    )
     app.add_exception_handler(
         UploadObjectMissingError,
         _problem_handler(status.HTTP_409_CONFLICT, "Upload not received"),
@@ -49,22 +61,16 @@ def register_document_exception_handlers(app: FastAPI) -> None:
     )
 
 
-async def _rate_exceeded_handler(_: Request, exc: Exception) -> JSONResponse:
-    assert isinstance(exc, UploadRateExceededError)
-    return JSONResponse(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content={"error": "Too many uploads", "message": str(exc)},
-        headers={"Retry-After": str(math.ceil(exc.retry_after.total_seconds()))},
-    )
-
-
 def _problem_handler(
-    status_code: int, error: str
+    status_code: int,
+    error: str,
+    headers: Callable[[Exception], dict[str, str]] | None = None,
 ) -> Callable[[Request, Exception], Awaitable[JSONResponse]]:
     async def handler(_: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(
             status_code=status_code,
             content={"error": error, "message": str(exc)},
+            headers=headers(exc) if headers else None,
         )
 
     return handler
