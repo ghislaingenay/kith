@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 from core.database import Base
+from documents import models as documents_models  # noqa: F401 — registers tables on Base.metadata
 from tenants import models as tenants_models  # noqa: F401 — registers tables on Base.metadata
 from users import models as users_models  # noqa: F401 — registers tables on Base.metadata
 

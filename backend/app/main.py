@@ -8,6 +8,7 @@ from auth.router import me_router
 from auth.router import router as auth_router
 from core.container import container
 from core.exceptions import register_exception_handlers
+from documents.router import router as uploads_router
 from templates.router import router as templates_router
 from tenants.router import router as tenants_router
 from users.router import router as users_router
@@ -24,12 +25,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     container.cache_provider()
     container.rate_limiter()
     container.mailer()
+    container.job_queue()
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
     # connections rather than letting the process drop them.
     await container.db_engine().dispose()
     await container.cache_provider().close()
     await container.rate_limiter().close()
+    await container.job_queue().close()
 
 
 def set_api_version(version: str = "v1") -> str:
@@ -51,6 +54,7 @@ app.include_router(auth_router, prefix=set_api_version())
 app.include_router(me_router, prefix=set_api_version())
 app.include_router(tenants_router, prefix=set_api_version())
 app.include_router(users_router, prefix=set_api_version())
+app.include_router(uploads_router, prefix=set_api_version())
 app.include_router(templates_router, prefix=set_api_version())
 
 
