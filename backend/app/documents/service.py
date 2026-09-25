@@ -49,9 +49,14 @@ class UploadService:
         self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, request: InitUploadRequest
     ) -> InitUploadResponse:
         if request.size > self.settings.max_file_bytes:
-            raise InvalidUploadRequestError(
-                f"File must be {self.settings.max_file_bytes // (1024 * 1024)} MB or smaller."
-            )
+            cap = self.settings.max_file_bytes
+            if cap < 1024:
+                human = f"{cap} bytes"
+            elif cap < 1024 * 1024:
+                human = f"{(cap + 1023) // 1024} KB"
+            else:
+                human = f"{(cap + (1024 * 1024 - 1)) // (1024 * 1024)} MB"
+            raise InvalidUploadRequestError(f"File must be {human} or smaller.")
         if request.content_type.lower() != _PDF_CONTENT_TYPE:
             raise InvalidUploadRequestError("Only PDF files can be uploaded.")
 
