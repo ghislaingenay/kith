@@ -49,15 +49,18 @@ def _endpoint(_minio: MinioContainer) -> str:
 @pytest.fixture
 def provider(
     _minio: MinioContainer, _endpoint: str, monkeypatch: pytest.MonkeyPatch
-) -> S3StorageProvider:
+) -> Iterator[S3StorageProvider]:
     config = _minio.get_config()
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", config["access_key"])
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", config["secret_key"])
     # boto3's default session caches the credentials it first resolved; drop
     # any picked up by earlier tests so these env vars are the ones used.
+    old_default_session = boto3.DEFAULT_SESSION
     boto3.setup_default_session()
-    return S3StorageProvider(bucket=_BUCKET, region=_REGION, endpoint_url=_endpoint)
-
+    try:
+        yield S3StorageProvider(bucket=_BUCKET, region=_REGION, endpoint_url=_endpoint)
+    finally:
+        boto3.DEFAULT_SESSION = old_default_session
 
 @pytest.fixture
 def key() -> str:
