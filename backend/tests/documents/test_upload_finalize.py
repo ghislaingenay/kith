@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import get_current_user
 from auth.exceptions import AuthenticationError
+from core.jobs.dependencies import get_job_queue
 from core.storage.dependencies import get_storage_provider
 from core.storage.exceptions import StorageError
 from documents.models import Document
@@ -105,7 +106,7 @@ async def test_an_ingest_job_is_enqueued_with_only_the_ids(
     }
 
 
-async def test_finalizing_twice_returns_the_same_document_and_reenqueues(
+async def test_finalizing_twice_returns_the_same_document_and_one_ingest_job(
     client: AsyncClient,
     storage: FakeStorageProvider,
     job_queue: FakeJobQueue,
@@ -121,7 +122,35 @@ async def test_finalizing_twice_returns_the_same_document_and_reenqueues(
     assert second_response.status_code == 200
     assert second_response.json() == first
     assert await _document_count(db_session) == 1
-    assert [job.job_id for job in job_queue.jobs] == [first["id"], first["id"]]
+    assert [job.job_id for job in job_queue.jobs] == [first["id"]]
+
+
+class _QueueThatFailsOnce(FakeJobQueue):
+    async def enqueue(self, queue, function, payload, *, job_id):
+        if not getattr(self, "has_failed", False):
+            self.has_failed = True
+            raise ConnectionError("queue unavailable")
+        await super().enqueue(queue, function, payload, job_id=job_id)
+
+
+async def test_finalizing_again_after_a_failed_enqueue_still_queues_the_ingest_job(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    db_session: AsyncSession,
+    caller: Caller,
+) -> None:
+    queue = _QueueThatFailsOnce()
+    app.dependency_overrides[get_job_queue] = lambda: queue
+    upload_id = await _start_upload(client, _TWO_PAGE_PDF)
+    _send_from_browser(storage, caller, upload_id, _TWO_PAGE_PDF)
+
+    with pytest.raises(ConnectionError):
+        await _finalize(client, upload_id)
+    retried = await _finalize(client, upload_id)
+
+    assert retried.status_code == 200
+    assert await _document_count(db_session) == 1
+    assert [job.job_id for job in queue.jobs] == [retried.json()["id"]]
 
 
 async def test_the_display_name_is_the_sanitised_filename(
