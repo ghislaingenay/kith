@@ -26,7 +26,7 @@ from documents.exceptions import (
     UploadSizeMismatchError,
 )
 from documents.keys import document_key, pending_upload_key
-from documents.models import Document, Upload, UploadStatus
+from documents.models import Document, RejectionKind, Upload, UploadStatus
 from documents.pdf import count_pdf_pages
 from documents.repository import DocumentsRepository, ExistingDocument
 from documents.schemas import DocumentResponse, InitUploadRequest, InitUploadResponse
@@ -108,6 +108,8 @@ class DocumentUploadService:
             raise UploadNotFoundError(upload_id)
 
         if upload.status == UploadStatus.REJECTED:
+            if upload.rejection_kind == RejectionKind.DUPLICATE:
+                raise DuplicateDocumentError(upload.rejection_reason)
             raise RefusedUploadError(upload.rejection_reason)
         if upload.status == UploadStatus.COMPLETED and upload.document_id:
             document = await self.repository.get_document(upload.document_id)
@@ -127,7 +129,12 @@ class DocumentUploadService:
         try:
             return await self._validate_and_promote(upload)
         except RefusedUploadError as exc:
-            await self.repository.reject_upload(upload, str(exc))
+            kind = (
+                RejectionKind.DUPLICATE
+                if isinstance(exc, DuplicateDocumentError)
+                else RejectionKind.INVALID_FILE
+            )
+            await self.repository.reject_upload(upload, reason=str(exc), kind=kind)
             await self._delete_object(pending_upload_key(upload.tenant_id, upload.id))
             raise
 

@@ -49,14 +49,25 @@ class UploadStatus(StrEnum):
     EXPIRED = "expired"
     REJECTED = "rejected"
 
+
+class RejectionKind(StrEnum):
+    """Why an Upload was rejected, so a repeated finalize can answer the way
+    the first one did."""
+
+    DUPLICATE = "duplicate"
+    INVALID_FILE = "invalid_file"
+
+
 class DocumentSource(StrEnum):
     PDF = "pdf"
+
 
 _DOCUMENT_SOURCE_VALUES = ", ".join(f"'{source.value}'" for source in DocumentSource)
 
 _INGESTION_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in IngestionStatus)
 _INGESTION_STAGE_VALUES = ", ".join(f"'{stage.value}'" for stage in IngestionStage)
 _UPLOAD_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in UploadStatus)
+_REJECTION_KIND_VALUES = ", ".join(f"'{kind.value}'" for kind in RejectionKind)
 
 
 class Document(Base):
@@ -132,6 +143,10 @@ class Upload(Base):
             f"status IN ({_UPLOAD_STATUS_VALUES})",
             name="ck_uploads_status",
         ),
+        CheckConstraint(
+            f"rejection_kind IN ({_REJECTION_KIND_VALUES})",
+            name="ck_uploads_rejection_kind",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -159,6 +174,7 @@ class Upload(Base):
         nullable=True,
     )
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_kind: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

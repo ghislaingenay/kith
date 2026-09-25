@@ -162,3 +162,22 @@ async def test_two_concurrent_finalizes_of_identical_content_make_one_document(
     assert not any(key.startswith("pending/") for key in storage.keys)
     outcomes = await db_session.scalars(select(Upload.status))
     assert sorted(outcomes) == ["completed", "rejected"]
+
+
+async def test_finalizing_an_upload_refused_as_a_duplicate_again_repeats_the_conflict(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+) -> None:
+    first_id = (await _init(client, _PDF, "one.pdf")).json()["upload_id"]
+    second_id = (await _init(client, _PDF, "two.pdf")).json()["upload_id"]
+    _send_from_browser(storage, caller, first_id, _PDF)
+    _send_from_browser(storage, caller, second_id, _PDF)
+    await _finalize(client, first_id)
+    refused = await _finalize(client, second_id)
+
+    again = await _finalize(client, second_id)
+
+    assert refused.status_code == 409
+    assert again.status_code == 409
+    assert again.json()["message"] == refused.json()["message"]

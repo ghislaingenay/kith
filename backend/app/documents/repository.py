@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from documents.models import Document, IngestionStatus, Upload, UploadStatus
+from documents.models import (
+    Document,
+    IngestionStatus,
+    RejectionKind,
+    Upload,
+    UploadStatus,
+)
 from users.models import Profile, User
 
 
@@ -106,7 +112,10 @@ class DocumentsRepository:
         upload.document_id = document.id
         await self.session.commit()
 
-    async def reject_upload(self, upload: Upload, reason: str) -> None:
+    async def reject_upload(
+        self, upload: Upload, *, reason: str, kind: RejectionKind
+    ) -> None:
         upload.status = UploadStatus.REJECTED
         upload.rejection_reason = reason
+        upload.rejection_kind = kind
         await self.session.commit()
