@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
@@ -247,5 +248,100 @@ describe("UploadsLibrary", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "nope",
     );
+  });
+
+  describe("deleting", () => {
+    const OWN_ID = "11111111-1111-4111-8111-111111111111";
+    const THEIRS_ID = "22222222-2222-4222-8222-222222222222";
+
+    /** The API's library, where each id in `forbidden` answers 403 and every
+     * other delete succeeds and drops the Document from the list. */
+    function mockDeletingApi(documents: ApiDocument[], forbidden: string[]) {
+      let remaining = documents;
+      const seen: { deleted: string[]; tenantIds: (string | null)[] } = {
+        deleted: [],
+        tenantIds: [],
+      };
+      server.use(
+        http.get(`${API_URL}/documents`, () => HttpResponse.json(remaining)),
+        http.get(`${API_URL}/documents/summary`, () =>
+          HttpResponse.json({ in_progress: 0, failed: 0 }),
+        ),
+        http.delete(`${API_URL}/documents/:id`, ({ params, request }) => {
+          const id = params.id as string;
+          seen.deleted.push(id);
+          seen.tenantIds.push(request.headers.get("x-tenant-id"));
+          if (forbidden.includes(id)) {
+            return HttpResponse.json(
+              { error: "Forbidden", message: "Not permitted." },
+              { status: 403 },
+            );
+          }
+          remaining = remaining.filter((document) => document.id !== id);
+          return new HttpResponse(null, { status: 204 });
+        }),
+      );
+      return seen;
+    }
+
+    it("deletes the selected Documents it may and lists the ones it was refused", async () => {
+      const seen = mockDeletingApi(
+        [
+          apiDocument({ id: OWN_ID, name: "mine.pdf" }),
+          apiDocument({ id: THEIRS_ID, name: "theirs.pdf", uploader: "Sam" }),
+        ],
+        [THEIRS_ID],
+      );
+      const user = userEvent.setup();
+      renderLibrary();
+      await screen.findByText("mine.pdf");
+
+      await user.click(screen.getByRole("checkbox", { name: "Select mine.pdf" }));
+      await user.click(screen.getByRole("checkbox", { name: "Select theirs.pdf" }));
+      await user.click(screen.getByRole("button", { name: "Delete selected (2)" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("theirs.pdf");
+      expect(alert).toHaveTextContent("You do not have permission to delete this document.");
+      expect(alert).not.toHaveTextContent("mine.pdf");
+      const table = screen.getByRole("table");
+      expect(within(table).queryByText("mine.pdf")).not.toBeInTheDocument();
+      expect(within(table).getByText("theirs.pdf")).toBeInTheDocument();
+      expect([...seen.deleted].sort()).toEqual([OWN_ID, THEIRS_ID]);
+      expect(seen.tenantIds).toEqual([TENANT_ID, TENANT_ID]);
+    });
+
+    it("deletes a single selected Document and reports no problem", async () => {
+      const seen = mockDeletingApi(
+        [
+          apiDocument({ id: OWN_ID, name: "mine.pdf" }),
+          apiDocument({ id: THEIRS_ID, name: "theirs.pdf" }),
+        ],
+        [],
+      );
+      const user = userEvent.setup();
+      renderLibrary();
+      await screen.findByText("mine.pdf");
+
+      await user.click(screen.getByRole("checkbox", { name: "Select mine.pdf" }));
+      await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+
+      await waitFor(() =>
+        expect(screen.queryByText("mine.pdf")).not.toBeInTheDocument(),
+      );
+      expect(screen.getByText("theirs.pdf")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(seen.deleted).toEqual([OWN_ID]);
+    });
+
+    it("cannot delete until something is selected", async () => {
+      mockDeletingApi([apiDocument({ id: OWN_ID, name: "mine.pdf" })], []);
+      renderLibrary();
+      await screen.findByText("mine.pdf");
+
+      expect(
+        screen.getByRole("button", { name: "Delete selected (0)" }),
+      ).toBeDisabled();
+    });
   });
 });

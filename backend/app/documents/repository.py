@@ -204,6 +204,26 @@ class DocumentsRepository:
             raise DocumentNotFoundError(f"Document with ID {document_id} not found.")
         return document
 
+    async def get_live_document_for_update(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> Document | None:
+        """The Tenant's non-deleted Document, row-locked until the transaction
+        ends so two deletes of it queue up."""
+        result = await self.session.execute(
+            select(Document)
+            .where(
+                Document.id == document_id,
+                Document.tenant_id == tenant_id,
+                Document.ingestion_status != IngestionStatus.DELETED,
+            )
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_document_deleted(self, document: Document) -> None:
+        document.ingestion_status = IngestionStatus.DELETED
+        await self.session.commit()
+
     async def complete_upload(self, upload: Upload, document: Document) -> None:
         """Insert the Document and mark the Upload completed in one
         transaction. The insert runs in a savepoint so that, if the unique

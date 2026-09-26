@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
@@ -82,7 +82,56 @@ describe("UploadScreen", () => {
     renderWithProviders(<UploadScreen tenantId={TENANT_ID} />);
 
     expect(screen.getByText("PDF, up to 20 MB")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Files" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select File" })).toBeInTheDocument();
+  });
+
+  describe("one PDF at a time", () => {
+    it("only lets the person pick a single file", () => {
+      renderWithProviders(<UploadScreen tenantId={TENANT_ID} />);
+
+      expect(screen.getByLabelText("PDF file")).not.toHaveAttribute("multiple");
+    });
+
+    it("refuses several files at once without calling the API", async () => {
+      // No handlers registered: an unexpected request would fail the test.
+      renderWithProviders(<UploadScreen tenantId={TENANT_ID} />);
+
+      fireEvent.change(screen.getByLabelText("PDF file"), {
+        target: { files: [pdfFile("a.pdf"), pdfFile("b.pdf")] },
+      });
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Upload one PDF at a time.",
+      );
+      expect(screen.queryByText("a.pdf")).not.toBeInTheDocument();
+      expect(screen.queryByText("b.pdf")).not.toBeInTheDocument();
+    });
+
+    it("cannot pick another file while one is uploading, then can again", async () => {
+      const seen = mockUploadApi();
+      let releaseStorage: () => void = () => {};
+      const storageHeld = new Promise<void>((resolve) => {
+        releaseStorage = resolve;
+      });
+      server.use(
+        http.put(STORAGE_URL, async () => {
+          await storageHeld;
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await choose(pdfFile("first.pdf"));
+
+      expect(await screen.findByText("Uploading…")).toBeInTheDocument();
+      expect(screen.getByLabelText("PDF file")).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Select File" })).toBeDisabled();
+
+      releaseStorage();
+
+      expect(await screen.findByText("Accepted")).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText("PDF file")).toBeEnabled());
+      expect(seen.finalized).toBe(1);
+    });
   });
 
   it("shows a chosen PDF as accepted once it has been uploaded and finalized", async () => {
