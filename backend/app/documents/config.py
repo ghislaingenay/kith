@@ -24,9 +24,9 @@ class UploadSettings(BaseSettings):
     max_pending_per_user: int = Field(
         default=5, validation_alias="UPLOAD_MAX_PENDING_PER_USER"
     )
-    max_starts_per_hour: int = Field(
-        default=30, validation_alias="UPLOAD_MAX_STARTS_PER_HOUR"
+    max_allowed_per_hour: int = Field(
+        default=30, description="Maximum allowed uploads per hour when the upload starts", validation_alias="UPLOAD_MAX_STARTS_PER_HOUR"
     )
     pending_expiry_seconds: int = Field(
-        default=30 * 60, validation_alias="UPLOAD_PENDING_EXPIRY_SECONDS"
+        default=30 * 60, description="Time in seconds after which a pending upload expires", validation_alias="UPLOAD_PENDING_EXPIRY_SECONDS"
     )

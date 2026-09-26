@@ -132,7 +132,7 @@ class DocumentUploadService:
         starts = await self.repository.upload_start_times_since(
             user_id=user_id, since=now - _RATE_WINDOW
         )
-        starts_past_allowance = len(starts) - self.settings.max_starts_per_hour
+        starts_past_allowance = len(starts) - self.settings.max_allowed_per_hour
         if starts_past_allowance >= 0:
             # A slot frees when this many of the oldest starts have left the window.
             retry_after = starts[starts_past_allowance] + _RATE_WINDOW - now

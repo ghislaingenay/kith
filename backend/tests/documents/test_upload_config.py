@@ -21,7 +21,7 @@ def test_defaults_are_20_documents_100_mb_5_pending_and_30_starts_an_hour() -> N
     assert settings.max_documents == 20
     assert settings.max_storage_bytes == 100 * 1024 * 1024
     assert settings.max_pending_per_user == 5
-    assert settings.max_starts_per_hour == 30
+    assert settings.max_allowed_per_hour == 30
     assert settings.pending_expiry_seconds == 30 * 60
 
 
@@ -43,5 +43,5 @@ def test_every_value_is_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.max_documents == 3
     assert settings.max_storage_bytes == 4000
     assert settings.max_pending_per_user == 2
-    assert settings.max_starts_per_hour == 9
+    assert settings.max_allowed_per_hour == 9
     assert settings.pending_expiry_seconds == 120
