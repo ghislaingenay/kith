@@ -2,10 +2,23 @@
 `exception_handlers.py`."""
 
 import uuid
+from datetime import timedelta
 
 
 class InvalidUploadRequestError(Exception):
     """The declared file can't be uploaded: too large or not a PDF."""
+
+
+class TooManyPendingUploadsError(Exception):
+    """The User already has the most Uploads in progress that they may."""
+
+
+class UploadRateExceededError(Exception):
+    """The User has started the most Uploads they may in the past hour."""
+
+    def __init__(self, message: str, retry_after: timedelta) -> None:
+        self.retry_after = retry_after
+        super().__init__(message)
 
 
 class UploadNotFoundError(Exception):
@@ -48,3 +61,7 @@ class TooManyPagesError(RefusedUploadError):
 
 class DuplicateDocumentError(RefusedUploadError):
     """A Document with identical content already exists in the Tenant."""
+
+
+class LimitReachedError(RefusedUploadError):
+    """The Tenant's Documents or storage Limit leaves no room for the file."""

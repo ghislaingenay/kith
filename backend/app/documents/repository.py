@@ -2,8 +2,9 @@
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from documents.models import (
@@ -13,6 +14,7 @@ from documents.models import (
     Upload,
     UploadStatus,
 )
+from tenants.models import Tenant
 from users.models import Profile, User
 
 
@@ -31,6 +33,14 @@ class ExistingDocument:
             part for part in (self.uploader_first_name, self.uploader_last_name) if part
         )
         return full_name or self.uploader_email or "someone who has since left"
+
+
+@dataclass(frozen=True)
+class DocumentUsage:
+    """What a Tenant's non-deleted Documents take up."""
+
+    count: int
+    size_bytes: int
 
 
 class DocumentsRepository:
@@ -93,6 +103,47 @@ class DocumentsRepository:
         )
         row = result.first()
         return ExistingDocument(*row) if row else None
+
+    async def count_pending_uploads_since(
+        self, *, user_id: uuid.UUID, since: datetime
+    ) -> int:
+        """The User's pending Uploads, in any Tenant, started at or after `since`."""
+        result = await self.session.execute(
+            select(func.count()).where(
+                Upload.user_id == user_id,
+                Upload.status == UploadStatus.PENDING,
+                Upload.created_at >= since,
+            )
+        )
+        return result.scalar_one()
+
+    async def upload_start_times_since(
+        self, *, user_id: uuid.UUID, since: datetime
+    ) -> list[datetime]:
+        """When the User started Uploads at or after `since`, oldest first,
+        whatever became of them."""
+        result = await self.session.execute(
+            select(Upload.created_at)
+            .where(Upload.user_id == user_id, Upload.created_at >= since)
+            .order_by(Upload.created_at)
+        )
+        return list(result.scalars())
+
+    async def lock_tenant(self, *, tenant_id: uuid.UUID) -> None:
+        """Holds until the transaction ends, so finalizes in a Tenant queue up."""
+        await self.session.execute(
+            select(Tenant.id).where(Tenant.id == tenant_id).with_for_update()
+        )
+
+    async def live_document_usage(self, *, tenant_id: uuid.UUID) -> DocumentUsage:
+        result = await self.session.execute(
+            select(func.count(), func.coalesce(func.sum(Document.size_bytes), 0)).where(
+                Document.tenant_id == tenant_id,
+                Document.ingestion_status != IngestionStatus.DELETED,
+            )
+        )
+        count, size_bytes = result.one()
+        return DocumentUsage(count=count, size_bytes=int(size_bytes))
 
     async def get_document(self, document_id: uuid.UUID) -> Document:
         result = await self.session.execute(

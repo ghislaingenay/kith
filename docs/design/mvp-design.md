@@ -59,7 +59,7 @@ Outcome of the design interview held 2026-09-14. Vocabulary is defined in `CONTE
 
 - Usage per Tenant per calendar month (UTC): Documents, storage bytes, Asks, Answer tokens (input + output as reported by the provider). Embedding tokens recorded, not limited.
 - Default Limits: 100 MB storage, 20 Documents, 30 Asks per month. Storage and Documents block; Asks warn at 80 % and block at 100 %. No payment.
-- Rate limits in Redis (env): per User 30 upload `init` calls/hour and 5 concurrent pending Uploads, 60 searches/minute, 10 Asks/minute; per email 5 magic-link requests/hour.
+- Rate limits in Redis (env): per User 60 searches/minute and 10 Asks/minute; per email 5 magic-link requests/hour. Upload starts are counted from the `uploads` table instead (env): per User 30 starts in the past hour and 5 pending Uploads younger than 30 minutes, so the retry hint is exact. The Documents and storage Limits are env defaults, the same for every Tenant, until Limits become per Tenant.
 
 ## 6. Surfaces
 

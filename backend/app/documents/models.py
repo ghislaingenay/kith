@@ -56,6 +56,7 @@ class RejectionKind(StrEnum):
 
     DUPLICATE = "duplicate"
     INVALID_FILE = "invalid_file"
+    LIMIT_REACHED = "limit_reached"
 
 
 class DocumentSource(StrEnum):
