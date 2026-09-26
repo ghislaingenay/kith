@@ -6,13 +6,13 @@ import main
 from main import app
 
 
-async def test_root_returns_hello_world() -> None:
+async def test_root_returns_not_found() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/")
 
-    assert response.status_code == 200
-    assert response.json() == {"message": "Hello World!"}
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
 
 
 async def test_lifespan_initializes_infra_on_startup_and_releases_it_on_shutdown() -> (
