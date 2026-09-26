@@ -62,8 +62,3 @@ app.include_router(library_router, prefix=set_api_version())
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
-
-@app.get("*")
-async def not_found() -> dict[str, str]:
-    return JSONResponse(status_code=404, content={"detail": "Not Found"})
-

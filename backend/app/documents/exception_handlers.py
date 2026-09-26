@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from documents.exceptions import (
+    DocumentNotFoundError,
     DuplicateDocumentError,
     InvalidUploadRequestError,
     LimitReachedError,
@@ -60,6 +61,10 @@ def register_document_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         UploadNotFoundError,
         _problem_handler(status.HTTP_404_NOT_FOUND, "Upload not found"),
+    )
+    app.add_exception_handler(
+        DocumentNotFoundError,
+        _problem_handler(status.HTTP_404_NOT_FOUND, "Document not found"),
     )
 
 
