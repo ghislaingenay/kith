@@ -557,7 +557,18 @@ deduplication.
 - Python 3.11+
 - Type hints on all function signatures.
 - Lowercase `snake_case` filenames.
-- Descriptive variable names.
+- Names are descriptive: variables, functions, classes, attributes, files.
+  A reader should know what a name holds or does without opening the code
+  that fills it (PEP 8, Google Python Style Guide §3.16).
+- Avoid abbreviations that are ambiguous or unfamiliar outside the project,
+  and never shorten a word by deleting letters (`cnt`, `usr`).
+- Descriptiveness grows with scope: `i` is fine in a 5-line block, too vague
+  across nested scopes (Google Python Style Guide §3.16).
+- Do not put the type in the name (`id_to_name_dict`); the name says what
+  the value means, the annotation says what it is.
+- Variables are nouns, functions are verbs (`upload_count`,
+  `count_pending_uploads`); booleans read as a yes/no question.
+- Never use `l`, `O`, `I` as single-character names (PEP 8).
 - Prefer `is_active`, `has_permission`, `should_retry`, etc.
 - Prefer functions when no state is required.
 - Use classes when they provide meaningful state, identity, or dependency management.

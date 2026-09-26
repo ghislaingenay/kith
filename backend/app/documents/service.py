@@ -3,13 +3,11 @@
 import asyncio
 import base64
 import hashlib
-import tempfile
 import math
+import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-from sqlalchemy.exc import IntegrityError
 
 from core.jobs.provider import JobQueue
 from core.logging import setup_logger
@@ -18,8 +16,8 @@ from core.storage.provider import StorageObjectMetadata, StorageProvider
 from documents.config import UploadSettings
 from documents.display_name import sanitize_display_name
 from documents.exceptions import (
-    DuplicateDocumentError,
     ContentHashMismatchError,
+    DuplicateDocumentError,
     InvalidUploadRequestError,
     LimitReachedError,
     RefusedUploadError,
@@ -35,6 +33,7 @@ from documents.models import Document, RejectionKind, Upload, UploadStatus
 from documents.pdf import count_pdf_pages
 from documents.repository import DocumentsRepository, ExistingDocument
 from documents.schemas import DocumentResponse, InitUploadRequest, InitUploadResponse
+from sqlalchemy.exc import IntegrityError
 
 logger = setup_logger(__name__)
 
@@ -129,28 +128,43 @@ class DocumentUploadService:
 
     async def _check_user_may_start(self, user_id: uuid.UUID) -> None:
         now = datetime.now(UTC)
-        starts = await self.repository.upload_start_times_since(
-            user_id=user_id, since=now - _RATE_WINDOW
+        rate_window_start = now - _RATE_WINDOW
+        uploads_time_started_within_last_hour = (
+            await self.repository.upload_start_times_since(
+                user_id=user_id, since=rate_window_start
+            )
         )
-        starts_past_allowance = len(starts) - self.settings.max_allowed_per_hour
-        if starts_past_allowance >= 0:
+        hourly_allowance = self.settings.max_allowed_per_hour
+        is_hourly_allowance_used_up = (
+            len(uploads_time_started_within_last_hour) >= hourly_allowance
+        )
+        if is_hourly_allowance_used_up:
             # A slot frees when this many of the oldest starts have left the window.
-            retry_after = starts[starts_past_allowance] + _RATE_WINDOW - now
-            minutes = max(1, math.ceil(retry_after.total_seconds() / 60))
+            index_of_start_that_frees_a_slot = (
+                len(uploads_time_started_within_last_hour) - hourly_allowance
+            )
+            time_until_slot_frees = (
+                uploads_time_started_within_last_hour[index_of_start_that_frees_a_slot]
+                + _RATE_WINDOW
+                - now   
+            )
+            retry_after_seconds = max(1, math.ceil(time_until_slot_frees.total_seconds()))
+            retry_after = timedelta(seconds=retry_after_seconds)
+            minutes_until_slot_frees = math.ceil(retry_after_seconds / 60)
             raise UploadRateExceededError(
                 "You have started too many uploads this hour. "
-                f"Try again in {_counted(minutes, 'minute')}.",
+                f"Try again in {_counted(minutes_until_slot_frees, 'minute')}.",
                 retry_after,
             )
 
-        pending = await self.repository.count_pending_uploads_since(
+        pending_upload_count = await self.repository.count_pending_uploads_since(
             user_id=user_id,
             since=now - timedelta(seconds=self.settings.pending_expiry_seconds),
         )
-        cap = self.settings.max_pending_per_user
-        if pending >= cap:
+        pending_upload_cap = self.settings.max_pending_per_user
+        if pending_upload_count >= pending_upload_cap:
             raise TooManyPendingUploadsError(
-                f"You already have {_counted(cap, 'upload')} in progress. "
+                f"You already have {_counted(pending_upload_cap, 'upload')} in progress. "
                 "Wait for one to finish, then try again."
             )
 
