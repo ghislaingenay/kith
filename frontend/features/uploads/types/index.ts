@@ -21,3 +21,27 @@ export const documentSchema = z.object({
 });
 
 export type UploadedDocument = Readonly<z.infer<typeof documentSchema>>;
+
+/** One row of the Uploads Library (GET /documents). The Stage and page
+ * progress stay null until the ingestion worker writes them. */
+export const libraryDocumentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  size_bytes: z.number(),
+  uploader: z.string(),
+  created_at: z.string(),
+  ingestion_status: z.string(),
+  ingestion_stage: z.string().nullable(),
+  pages_extracted: z.number().nullable(),
+  page_count: z.number(),
+});
+
+export type LibraryDocument = Readonly<z.infer<typeof libraryDocumentSchema>>;
+
+/** Counts behind the library banner (GET /documents/summary). */
+export const librarySummarySchema = z.object({
+  in_progress: z.number(),
+  failed: z.number(),
+});
+
+export type LibrarySummary = Readonly<z.infer<typeof librarySummarySchema>>;

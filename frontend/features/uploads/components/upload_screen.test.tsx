@@ -7,6 +7,7 @@ import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/render_with_providers";
 
 import { UploadScreen } from "./upload_screen";
+import { UploadsLibrary } from "./uploads_library";
 
 const API_URL = "http://localhost:8000/api/v1";
 const STORAGE_URL = "https://storage.example.com/pending/t1/u1?signature=abc";
@@ -123,6 +124,47 @@ describe("UploadScreen", () => {
       checksum: "checksum-from-server",
       bytes: 2048,
     });
+  });
+
+  it("makes the library list the new Document as soon as the upload is accepted", async () => {
+    const seen = mockUploadApi();
+    server.use(
+      http.get(`${API_URL}/documents`, () =>
+        HttpResponse.json(
+          seen.finalized === 0
+            ? []
+            : [
+                {
+                  id: DOCUMENT_ID,
+                  name: "report.pdf",
+                  size_bytes: 1024,
+                  uploader: "Jane Doe",
+                  created_at: "2026-09-01T12:00:00Z",
+                  ingestion_status: "uploaded",
+                  ingestion_stage: null,
+                  pages_extracted: null,
+                  page_count: 3,
+                },
+              ],
+        ),
+      ),
+      http.get(`${API_URL}/documents/summary`, () =>
+        HttpResponse.json({ in_progress: 0, failed: 0 }),
+      ),
+    );
+    const user = userEvent.setup({ applyAccept: false });
+    renderWithProviders(
+      <>
+        <UploadScreen tenantId={TENANT_ID} />
+        <UploadsLibrary tenantId={TENANT_ID} />
+      </>,
+    );
+    await screen.findByText("No documents yet");
+
+    await user.upload(screen.getByLabelText("PDF file"), pdfFile("report.pdf"));
+
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("report.pdf")).toBeInTheDocument();
   });
 
   it("shows the API's reason when it refuses the file", async () => {

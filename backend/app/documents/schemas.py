@@ -1,6 +1,7 @@
 """Pydantic API schemas for the documents domain."""
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,3 +35,26 @@ class DocumentResponse(BaseModel):
     page_count: int
     content_hash: str
     ingestion_status: str
+
+
+class LibraryDocumentResponse(BaseModel):
+    """One row of the Uploads Library. `ingestion_stage` and `pages_extracted`
+    are null until the worker writes them."""
+
+    id: uuid.UUID
+    name: str
+    size_bytes: int
+    uploader: str
+    created_at: datetime
+    ingestion_status: str
+    ingestion_stage: str | None
+    pages_extracted: int | None
+    page_count: int
+
+
+class LibrarySummaryResponse(BaseModel):
+    """What the Uploads Library banner needs: Documents still being ingested
+    (`uploaded` or `processing`) and Documents whose ingestion `failed`."""
+
+    in_progress: int
+    failed: int

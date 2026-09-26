@@ -18,6 +18,13 @@ from tenants.models import Tenant
 from users.models import Profile, User
 
 
+def _uploader_label(
+    email: str | None, first_name: str | None, last_name: str | None
+) -> str:
+    full_name = " ".join(part for part in (first_name, last_name) if part)
+    return full_name or email or "someone who has since left"
+
+
 @dataclass(frozen=True)
 class ExistingDocument:
     """A Tenant's live Document with some content, and who uploaded it."""
@@ -29,10 +36,17 @@ class ExistingDocument:
 
     @property
     def uploader_label(self) -> str:
-        full_name = " ".join(
-            part for part in (self.uploader_first_name, self.uploader_last_name) if part
+        return _uploader_label(
+            self.uploader_email, self.uploader_first_name, self.uploader_last_name
         )
-        return full_name or self.uploader_email or "someone who has since left"
+
+
+@dataclass(frozen=True)
+class LibraryDocument:
+    """A Tenant's live Document as the Uploads Library lists it."""
+
+    document: Document
+    uploader: str
 
 
 @dataclass(frozen=True)
@@ -103,6 +117,41 @@ class DocumentsRepository:
         )
         row = result.first()
         return ExistingDocument(*row) if row else None
+
+    async def list_documents_per_tenant(
+        self, *, tenant_id: uuid.UUID
+    ) -> list[LibraryDocument]:
+        """The Tenant's non-deleted Documents, newest first. Bounded by the
+        Tenant's Documents Limit, so it is not paginated."""
+        result = await self.session.execute(
+            select(Document, User.email, Profile.first_name, Profile.last_name)
+            .outerjoin(User, User.id == Document.uploader_id)
+            .outerjoin(Profile, Profile.user_id == User.id)
+            .where(
+                Document.tenant_id == tenant_id,
+                Document.ingestion_status != IngestionStatus.DELETED,
+            )
+            .order_by(Document.created_at.desc(), Document.id)
+        )
+        return [
+            LibraryDocument(document, _uploader_label(email, first_name, last_name))
+            for document, email, first_name, last_name in result.all()
+        ]
+
+    async def count_live_documents_by_status(
+        self, *, tenant_id: uuid.UUID
+    ) -> dict[str, int]:
+        """How many non-deleted Documents the Tenant has in each Ingestion
+        Status; a status with none is absent."""
+        result = await self.session.execute(
+            select(Document.ingestion_status, func.count())
+            .where(
+                Document.tenant_id == tenant_id,
+                Document.ingestion_status != IngestionStatus.DELETED,
+            )
+            .group_by(Document.ingestion_status)
+        )
+        return {status: count for status, count in result.all()}
 
     async def count_pending_uploads_since(
         self, *, user_id: uuid.UUID, since: datetime
