@@ -3,13 +3,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from auth.router import me_router
 from auth.router import router as auth_router
 from core.container import container
 from core.exceptions import register_exception_handlers
+from documents.router import library_router
 from documents.router import router as uploads_router
-from templates.router import router as templates_router
 from tenants.router import router as tenants_router
 from users.router import router as users_router
 
@@ -55,12 +56,7 @@ app.include_router(me_router, prefix=set_api_version())
 app.include_router(tenants_router, prefix=set_api_version())
 app.include_router(users_router, prefix=set_api_version())
 app.include_router(uploads_router, prefix=set_api_version())
-app.include_router(templates_router, prefix=set_api_version())
-
-
-@app.get("/")
-async def root() -> dict[str, str]:
-    return {"message": "Hello World!"}
+app.include_router(library_router, prefix=set_api_version())
 
 
 @app.get("/health")

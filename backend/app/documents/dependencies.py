@@ -13,6 +13,7 @@ from core.jobs.provider import JobQueue
 from core.storage.dependencies import get_storage_provider
 from core.storage.provider import StorageProvider
 from documents.config import UploadSettings
+from documents.library_service import DocumentLibraryService
 from documents.repository import DocumentsRepository
 from documents.service import DocumentUploadService
 
@@ -39,3 +40,9 @@ def get_upload_service(
     settings: Annotated[UploadSettings, Depends(get_upload_settings)],
 ) -> DocumentUploadService:
     return DocumentUploadService(repository, storage, job_queue, settings)
+
+
+def get_library_service(
+    repository: Annotated[DocumentsRepository, Depends(get_documents_repository)],
+) -> DocumentLibraryService:
+    return DocumentLibraryService(repository)

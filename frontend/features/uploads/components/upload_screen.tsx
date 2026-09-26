@@ -29,7 +29,7 @@ export function UploadScreen({ tenantId }: { readonly tenantId: string }) {
   };
 
   return (
-    <div className="flex flex-1 flex-col items-center px-4 py-16">
+    <div className="flex w-full flex-col items-center px-4 pb-8 pt-16">
       <div className="w-full max-w-xl">
         <h1 className="text-xl font-semibold text-zinc-950 dark:text-zinc-50">
           Upload
