@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from documents.exceptions import DocumentNotFoundError
 from documents.models import (
     Document,
     IngestionStatus,
@@ -198,7 +199,10 @@ class DocumentsRepository:
         result = await self.session.execute(
             select(Document).where(Document.id == document_id)
         )
-        return result.scalar_one()
+        document =  result.scalar_one_or_none()
+        if document is None:
+            raise DocumentNotFoundError(f"Document with ID {document_id} not found.")
+        return document
 
     async def complete_upload(self, upload: Upload, document: Document) -> None:
         """Insert the Document and mark the Upload completed in one

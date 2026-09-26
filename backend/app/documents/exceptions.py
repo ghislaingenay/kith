@@ -65,3 +65,10 @@ class DuplicateDocumentError(RefusedUploadError):
 
 class LimitReachedError(RefusedUploadError):
     """The Tenant's Documents or storage Limit leaves no room for the file."""
+
+class DocumentNotFoundError(Exception):
+    """No such Document for this caller in this Tenant. Also raised for
+    another Tenant's Document, so its existence isn't revealed."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
