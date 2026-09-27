@@ -13,6 +13,7 @@ from core.jobs.provider import JobQueue
 from core.storage.dependencies import get_storage_provider
 from core.storage.provider import StorageProvider
 from documents.config import UploadSettings
+from documents.deletion_service import DocumentDeletionService
 from documents.library_service import DocumentLibraryService
 from documents.repository import DocumentsRepository
 from documents.service import DocumentUploadService
@@ -46,3 +47,10 @@ def get_library_service(
     repository: Annotated[DocumentsRepository, Depends(get_documents_repository)],
 ) -> DocumentLibraryService:
     return DocumentLibraryService(repository)
+
+
+def get_deletion_service(
+    repository: Annotated[DocumentsRepository, Depends(get_documents_repository)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
+) -> DocumentDeletionService:
+    return DocumentDeletionService(repository, job_queue)

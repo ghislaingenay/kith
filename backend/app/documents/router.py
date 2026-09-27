@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, status
 from auth.dependencies import get_current_tenant, get_current_user
 from auth.schemas import AuthenticatedUser, TenantContext
 from core.security.dependencies import require_allowed_origin
-from documents.dependencies import get_library_service, get_upload_service
+from documents.deletion_service import DocumentDeletionService
+from documents.dependencies import (
+    get_deletion_service,
+    get_library_service,
+    get_upload_service,
+)
 from documents.library_service import DocumentLibraryService
 from documents.schemas import (
     DocumentResponse,
@@ -85,3 +90,27 @@ async def summarize_documents(
 ) -> LibrarySummaryResponse:
     """Counts of in-progress and failed Documents, for the Uploads banner."""
     return await service.summarize(tenant_id=tenant.tenant_id)
+
+
+@library_router.delete(
+    "/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[
+        Depends(require_allowed_origin),
+        Depends(require_permission(Action.UPLOAD)),
+    ],
+)
+async def delete_document(
+    document_id: uuid.UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    service: Annotated[DocumentDeletionService, Depends(get_deletion_service)],
+) -> None:
+    """Soft-deletes a Document: it leaves the library at once and a purge job
+    removes its Chunks and file."""
+    await service.delete_document(
+        tenant_id=tenant.tenant_id,
+        user_id=user.id,
+        role=tenant.role,
+        document_id=document_id,
+    )

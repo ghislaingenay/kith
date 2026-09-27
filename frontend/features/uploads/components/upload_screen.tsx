@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useUploadPdf } from "../api/use_upload_pdf";
 import { PDF_CONTENT_TYPE, validatePdfFile } from "../utils/validate_pdf_file";
 
-/** The upload screen: pick a PDF and see whether it was accepted. The API
+/** The upload screen: pick one PDF at a time and see whether it was accepted. The API
  * checks the file again after it arrives; this only spares an obviously bad
  * file the trip. */
 export function UploadScreen({ tenantId }: { readonly tenantId: string }) {
@@ -19,9 +19,15 @@ export function UploadScreen({ tenantId }: { readonly tenantId: string }) {
 
   const errorMessage = fileError ?? error?.message ?? null;
 
-  const choose = (file: File | null) => {
-    if (!file) return;
+  const choose = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
     reset();
+    if (files.length > 1) {
+      setChosen(null);
+      setFileError("Upload one PDF at a time.");
+      return;
+    }
+    const file = files[0];
     setChosen(file);
     const problem = validatePdfFile(file);
     setFileError(problem);
@@ -45,22 +51,29 @@ export function UploadScreen({ tenantId }: { readonly tenantId: string }) {
             disabled={isPending}
             onClick={() => inputRef.current?.click()}
           >
-            Select Files
+            Select File
           </Button>
           <input
             ref={inputRef}
             type="file"
             aria-label="PDF file"
             accept={PDF_CONTENT_TYPE}
+            disabled={isPending}
             tabIndex={-1}
             className="sr-only"
             onChange={(event) => {
-              choose(event.target.files?.[0] ?? null);
+              choose(event.target.files);
               // So choosing the same file again still fires `change`.
               event.target.value = "";
             }}
           />
         </div>
+
+        {!chosen && errorMessage && (
+          <p role="alert" className="mt-4 text-sm text-destructive">
+            {errorMessage}
+          </p>
+        )}
 
         {chosen && (
           <ul className="mt-4 divide-y rounded-lg border text-sm">
