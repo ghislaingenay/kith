@@ -34,6 +34,7 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
     });
 
   const deleteSelected = () => {
+    deletion.reset();
     deletion.mutate(selected);
     setSelectedIds(new Set());
   };
