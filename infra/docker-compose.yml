@@ -36,16 +36,26 @@ services:
       start_period: 30s
 
   # MinIO doesn't provision buckets on startup — this one-shot job creates
-  # the bucket `app` uploads/reads from (S3_BUCKET below) and exits.
+  # the bucket `app` uploads/reads from (S3_BUCKET below) and exits. It also
+  # adds the `pending/` expiry rule ADR-0009 relies on as a backstop for
+  # abandoned document uploads (the cron is the primary cleanup).
   minio-init:
     image: quay.io/minio/mc:latest
     depends_on:
       minio:
         condition: service_healthy
+    # bash, not sh: the mc image ships no grep/sed, so the idempotency check
+    # below leans on bash's [[ ... ]] pattern matching instead.
     entrypoint: >
-      sh -c "
+      bash -c "
       mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} &&
-      mc mb --ignore-existing local/${S3_BUCKET:-kith-dev}
+      mc mb --ignore-existing local/${S3_BUCKET:-kith-dev} &&
+      rules=$$(mc ilm rule ls local/${S3_BUCKET:-kith-dev} --json 2>/dev/null || true) &&
+      if [[ $$rules == *pending/* ]]; then
+        echo pending/ lifecycle rule already present;
+      else
+        mc ilm rule add local/${S3_BUCKET:-kith-dev} --prefix pending/ --expire-days 1;
+      fi
       "
 
   redis:
