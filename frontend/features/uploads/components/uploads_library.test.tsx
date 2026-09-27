@@ -299,6 +299,7 @@ describe("UploadsLibrary", () => {
       await user.click(screen.getByRole("checkbox", { name: "Select mine.pdf" }));
       await user.click(screen.getByRole("checkbox", { name: "Select theirs.pdf" }));
       await user.click(screen.getByRole("button", { name: "Delete selected (2)" }));
+      await user.click(await screen.findByRole("button", { name: "Delete" }));
 
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent("theirs.pdf");
@@ -325,6 +326,7 @@ describe("UploadsLibrary", () => {
 
       await user.click(screen.getByRole("checkbox", { name: "Select mine.pdf" }));
       await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+      await user.click(await screen.findByRole("button", { name: "Delete" }));
 
       await waitFor(() =>
         expect(screen.queryByText("mine.pdf")).not.toBeInTheDocument(),
@@ -332,6 +334,26 @@ describe("UploadsLibrary", () => {
       expect(screen.getByText("theirs.pdf")).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(seen.deleted).toEqual([OWN_ID]);
+    });
+
+    it("asks for confirmation before deleting, and keeps the Document if cancelled", async () => {
+      const seen = mockDeletingApi(
+        [apiDocument({ id: OWN_ID, name: "mine.pdf" })],
+        [],
+      );
+      const user = userEvent.setup();
+      renderLibrary();
+      await screen.findByText("mine.pdf");
+
+      await user.click(screen.getByRole("checkbox", { name: "Select mine.pdf" }));
+      await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+
+      expect(await screen.findByText("Delete this document?")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByText("Delete this document?")).not.toBeInTheDocument();
+      expect(screen.getByText("mine.pdf")).toBeInTheDocument();
+      expect(seen.deleted).toEqual([]);
     });
 
     it("cannot delete until something is selected", async () => {
