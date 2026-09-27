@@ -45,13 +45,15 @@ export function WorkspaceShell({
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton size="lg" className="cursor-default hover:bg-transparent">
-                <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <Building2 className="size-4" />
+              <SidebarMenuButton asChild size="lg" className="cursor-default hover:bg-transparent">
+                <div className="flex items-center gap-2">
+                  <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                    <Building2 className="size-4" />
+                  </div>
+                  <span className="truncate font-semibold text-sidebar-foreground">
+                    {tenantName}
+                  </span>
                 </div>
-                <span className="truncate font-semibold text-sidebar-foreground">
-                  {tenantName}
-                </span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
