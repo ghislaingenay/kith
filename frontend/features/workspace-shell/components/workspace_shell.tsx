@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { displayName, useProfile, UserAvatar, type Profile } from "@/features/profile";
-import { Settings, Upload } from "lucide-react";
+import { Building2, Home, Settings, Upload } from "lucide-react";
 
 import {
   Sidebar,
@@ -33,28 +34,48 @@ export function WorkspaceShell({
 }) {
   const profile = useProfile(initialProfile);
   const shownName = displayName(profile);
+  const pathname = usePathname();
+  const homeHref = `/w/${tenantSlug}`;
+  const uploadsHref = `/w/${tenantSlug}/uploads`;
+  const settingsHref = `/w/${tenantSlug}/settings`;
 
   return (
     <SidebarProvider className="flex-1">
-      <Sidebar>
+      <Sidebar collapsible="icon">
         <SidebarHeader>
-          <p className="px-2 text-sm font-semibold text-sidebar-foreground">
-            {tenantName}
-          </p>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton size="lg" className="cursor-default hover:bg-transparent">
+                <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                  <Building2 className="size-4" />
+                </div>
+                <span className="truncate font-semibold text-sidebar-foreground">
+                  {tenantName}
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <Link href={`/w/${tenantSlug}/uploads`}>
+                <SidebarMenuButton asChild isActive={pathname === homeHref}>
+                  <Link href={homeHref}>
+                    <Home /> Home
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname.startsWith(uploadsHref)}>
+                  <Link href={uploadsHref}>
                     <Upload /> Uploads
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <Link href={`/w/${tenantSlug}/settings`}>
+                <SidebarMenuButton asChild isActive={pathname.startsWith(settingsHref)}>
+                  <Link href={settingsHref}>
                     <Settings /> Settings
                   </Link>
                 </SidebarMenuButton>

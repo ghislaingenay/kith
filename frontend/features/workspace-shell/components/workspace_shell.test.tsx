@@ -7,6 +7,7 @@ import { WorkspaceShell } from "./workspace_shell";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => "/w/acme/uploads",
 }));
 
 const EMAIL = "jane@example.com";

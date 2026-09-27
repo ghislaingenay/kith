@@ -16,6 +16,7 @@ dependencies = [
     "pypdfium2>=5.13.0",
     "pytest>=9.1.1",
     "redis>=8.1.0",
+    "sqlalchemy[asyncio]>=2.0.53",
     "structlog>=26.1.0",
     "uvicorn-worker>=0.4.0",
 ]

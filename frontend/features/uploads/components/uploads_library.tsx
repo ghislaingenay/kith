@@ -1,7 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 
 import {
@@ -22,6 +33,7 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
   const { summary, documents } = useLibrary(tenantId);
   const deletion = useDeleteDocuments(tenantId);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const selected =
     documents.data?.filter((document) => selectedIds.has(document.id)) ?? [];
@@ -34,9 +46,24 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
     });
 
   const deleteSelected = () => {
+    const count = selected.length;
     deletion.reset();
-    deletion.mutate(selected);
+    deletion.mutate(selected, {
+      onSuccess: (refused) => {
+        if (refused.length === 0) {
+          toast.success(count === 1 ? "Document deleted" : `${count} documents deleted`);
+        } else if (refused.length === count) {
+          toast.error(count === 1 ? "Could not delete document" : "Could not delete documents");
+        } else {
+          toast.warning(`Deleted ${count - refused.length} of ${count} documents`);
+        }
+      },
+      onError: () => {
+        toast.error(count === 1 ? "Could not delete document" : "Could not delete documents");
+      },
+    });
     setSelectedIds(new Set());
+    setConfirmingDelete(false);
   };
 
   return (
@@ -56,15 +83,35 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
         ) : (
           <>
             <div className="mb-2 flex justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={selected.length === 0 || deletion.isPending}
-                onClick={deleteSelected}
-              >
-                {`Delete selected (${selected.length})`}
-              </Button>
+              <AlertDialog open={confirmingDelete} onOpenChange={setConfirmingDelete}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={selected.length === 0 || deletion.isPending}
+                  onClick={() => setConfirmingDelete(true)}
+                >
+                  {`Delete selected (${selected.length})`}
+                </Button>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {selected.length === 1
+                        ? "Delete this document?"
+                        : `Delete ${selected.length} documents?`}
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This can&apos;t be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction variant="destructive" onClick={deleteSelected}>
+                      Delete
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
             {deletion.data && deletion.data.length > 0 && (
               <RefusedDeletions refused={deletion.data} />
