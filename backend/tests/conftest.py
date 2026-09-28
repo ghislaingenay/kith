@@ -1,10 +1,10 @@
 """Shared fixtures for domain tests that need a real Postgres (JSONB,
 UUID(as_uuid=True), and other dialect-specific behavior plain create_all
-against SQLite/fakes can't exercise). Backed by a throwaway Postgres
-container (testcontainers), started once per test session and torn down
-after — deliberately never the dev database (DATABASE_URL isn't read here),
-so a test run can't wipe real data. Skipped entirely when Docker isn't
-reachable.
+against SQLite/fakes can't exercise) or a real Redis (proving actual queue
+wiring, not a fake). Backed by throwaway containers (testcontainers),
+started once per test session and torn down after — deliberately never the
+dev database/Redis (DATABASE_URL/REDIS_URL aren't read here), so a test run
+can't touch real data. Skipped entirely when Docker isn't reachable.
 
 Domain-specific `repository` fixtures (AuthRepository, TenantsRepository,
 ...) stay in each domain's own tests/<domain>/conftest.py — only the
@@ -13,10 +13,11 @@ container/session plumbing that's identical across domains lives here."""
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
+from arq.connections import RedisSettings
+from core.database import Base, DatabaseSettings, create_engine, create_session_factory
 from sqlalchemy.ext.asyncio import AsyncSession
 from testcontainers.community.postgres import PostgresContainer
-
-from core.database import Base, DatabaseSettings, create_engine, create_session_factory
+from testcontainers.community.redis import RedisContainer
 
 
 @pytest.fixture(scope="session")
@@ -51,3 +52,20 @@ async def db_session(_database_url: str) -> AsyncIterator[AsyncSession]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def _redis_container() -> Iterator[RedisContainer]:
+    try:
+        with RedisContainer("redis:7-alpine") as redis:
+            yield redis
+    except Exception as exc:  # noqa: BLE001 — see `_postgres_container` above
+        pytest.skip(f"Docker not available — skipping Redis integration tests: {exc}")
+
+
+@pytest.fixture(scope="session")
+def _redis_settings(_redis_container: RedisContainer) -> RedisSettings:
+    return RedisSettings(
+        host=_redis_container.get_container_host_ip(),
+        port=int(_redis_container.get_exposed_port(_redis_container.port)),
+    )
