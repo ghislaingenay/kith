@@ -1152,7 +1152,7 @@ dev = [
     { name = "pypdf" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
-    { name = "testcontainers", extra = ["minio"] },
+    { name = "testcontainers", extra = ["minio", "redis"] },
 ]
 
 [package.metadata]
@@ -1180,7 +1180,7 @@ dev = [
     { name = "pypdf", specifier = ">=6.19.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
-    { name = "testcontainers", extras = ["minio", "postgres"], specifier = ">=4.15.0" },
+    { name = "testcontainers", extras = ["minio", "postgres", "redis"], specifier = ">=4.15.0" },
 ]
 
 [[package]]
@@ -2021,6 +2021,9 @@ wheels = [
 [package.optional-dependencies]
 minio = [
     { name = "minio" },
+]
+redis = [
+    { name = "redis" },
 ]
 
 [[package]]

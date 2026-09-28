@@ -15,6 +15,19 @@ services:
       timeout: 5s
       retries: 5
 
+  # Web UI for the postgres service — http://localhost:8080, System:
+  # PostgreSQL, Server: postgres, Username/Password/DB: see the postgres
+  # service's env above.
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   minio:
     # Docker Hub's minio/minio now denies anonymous pulls (MinIO restricted
     # public distribution there in 2025) — Quay still serves it freely.
@@ -129,6 +142,36 @@ services:
       redis:
         condition: service_healthy
       mailpit:
+        condition: service_healthy
+    volumes:
+      - ../backend:/app
+
+  # ADR-0005: a second worker service off the same image, consuming the
+  # `ingest` queue independently of `app`. `--watch app` mirrors `app`'s
+  # `--reload` for the same dev hot-reload convenience.
+  worker-ingest:
+    build: ../backend
+    command: arq workers.ingest.WorkerSettings --watch app
+    environment:
+      PYTHONPATH: /app/app
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kith}:${POSTGRES_PASSWORD:-kithpassword}@postgres:5432/${POSTGRES_DB:-kith}
+      STORAGE_PROVIDER: minio
+      S3_REGION: us-east-1
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-kith-dev}
+      # boto3's standard credential chain (core/storage/s3_provider.py) —
+      # these are the vars it reads, matching the minio service's root user.
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      redis:
         condition: service_healthy
     volumes:
       - ../backend:/app
