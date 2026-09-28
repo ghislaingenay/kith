@@ -29,6 +29,15 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
             )
             return
 
+        if str(document.tenant_id) != tenant_id:
+            logger.warning(
+                "ingest_document_tenant_mismatch",
+                document_id=document_id,
+                tenant_id=tenant_id,
+                document_tenant_id=str(document.tenant_id),
+            )
+            return
+
         if document.ingestion_status != IngestionStatus.UPLOADED:
             # Per ADR-0005: check the Document's current state before acting,
             # so a stale or duplicate job doesn't redo (or clobber) work
