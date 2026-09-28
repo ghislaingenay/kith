@@ -1,6 +1,6 @@
-"""Proves the real wiring #39 exists to prove: a job `finalize_upload`
-enqueues onto the `ingest` queue reaches an actual running arq worker and
-executes `ingest_document` — real Redis, real Postgres, the real
+"""Proves the wiring for #39: a job enqueued by `finalize_upload` onto the
+`ingest` queue is picked up by a running arq worker and executes
+`ingest_document` — real Redis, real Postgres, and the real
 `ArqJobQueue`/`arq.Worker` pair. Only the seams this domain's other upload
 tests already fake (storage, the caller's identity) are faked here too."""
 
