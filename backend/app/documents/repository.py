@@ -1,15 +1,18 @@
 """Persistence access for the documents domain."""
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from documents.exceptions import DocumentNotFoundError
 from documents.models import (
     Document,
+    DocumentPage,
     IngestionStatus,
     RejectionKind,
     Upload,
@@ -243,3 +246,36 @@ class DocumentsRepository:
         upload.rejection_reason = reason
         upload.rejection_kind = kind
         await self.session.commit()
+
+    async def upsert_document_pages(self, pages: Sequence[DocumentPage]) -> None:
+        """Insert or update `document_pages` rows in one statement,
+        upserting on `(document_id, page_number)` so a retry's full
+        re-extraction overwrites a prior attempt's rows instead of
+        erroring on the unique constraint (ADR-0010). Does not commit —
+        the caller decides the transaction boundary."""
+        if not pages:
+            return
+        statement = pg_insert(DocumentPage).values(
+            [
+                {
+                    "id": page.id,
+                    "document_id": page.document_id,
+                    "tenant_id": page.tenant_id,
+                    "page_number": page.page_number,
+                    "text": page.text,
+                    "extraction_method": page.extraction_method,
+                    "error_detail": page.error_detail,
+                }
+                for page in pages
+            ]
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=[DocumentPage.document_id, DocumentPage.page_number],
+            set_={
+                "text": statement.excluded.text,
+                "extraction_method": statement.excluded.extraction_method,
+                "error_detail": statement.excluded.error_detail,
+                "updated_at": func.now(),
+            },
+        )
+        await self.session.execute(statement)

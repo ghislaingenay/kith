@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -63,12 +64,22 @@ class DocumentSource(StrEnum):
     PDF = "pdf"
 
 
+class ExtractionMethod(StrEnum):
+    """How a `DocumentPage` row's text (if any) was produced (ADR-0010)."""
+
+    TEXT_LAYER = "text_layer"
+    EXTRACTION_ERROR = "extraction_error"
+
+
 _DOCUMENT_SOURCE_VALUES = ", ".join(f"'{source.value}'" for source in DocumentSource)
 
 _INGESTION_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in IngestionStatus)
 _INGESTION_STAGE_VALUES = ", ".join(f"'{stage.value}'" for stage in IngestionStage)
 _UPLOAD_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in UploadStatus)
 _REJECTION_KIND_VALUES = ", ".join(f"'{kind.value}'" for kind in RejectionKind)
+_EXTRACTION_METHOD_VALUES = ", ".join(
+    f"'{method.value}'" for method in ExtractionMethod
+)
 
 
 class Document(Base):
@@ -123,6 +134,59 @@ class Document(Base):
         String, nullable=True, default=None
     )
     pages_extracted: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class DocumentPage(Base):
+    """One page's extracted text (ADR-0002, ADR-0010). Keeps no history —
+    a retry re-extracts every page from 1 and upserts over what's here,
+    never a partial resume."""
+
+    __tablename__ = "document_pages"
+    __table_args__ = (
+        CheckConstraint(
+            f"extraction_method IN ({_EXTRACTION_METHOD_VALUES})",
+            name="ck_document_pages_extraction_method",
+        ),
+        # Retries re-extract every page from 1 (ADR-0010): this unique
+        # index exists so a retry's writes upsert cleanly onto a prior
+        # attempt's rows, not to prevent duplicates that could otherwise
+        # occur.
+        Index(
+            "uq_document_pages_document_id_page_number",
+            "document_id",
+            "page_number",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_method: Mapped[str] = mapped_column(String, nullable=False)
+    ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    """Reserved for a future OCR pass; unused until OCR extraction exists."""
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
