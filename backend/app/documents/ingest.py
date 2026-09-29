@@ -13,6 +13,8 @@ completed run at `processing`/`chunking`, regardless of the per-page mix."""
 import asyncio
 import tempfile
 import uuid
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pypdfium2
@@ -32,6 +34,16 @@ from documents.repository import DocumentsRepository
 logger = setup_logger(__name__)
 
 _PAGES_EXTRACTED_BATCH_SIZE = 5
+
+# PDFium objects are thread-affine (pypdfium2/PDFium isn't thread-safe);
+# `asyncio.to_thread` can hop across the default pool's threads between
+# calls, so every PDFium call instead runs on this one pinned thread.
+_PDFIUM_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pdfium")
+
+
+async def _run_in_pdfium_thread[T](func: Callable[..., T], *args: object) -> T:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_PDFIUM_EXECUTOR, func, *args)
 
 
 async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> None:
@@ -113,13 +125,14 @@ async def _extract_pages(
     after every page, since it's a progress counter a caller polls rather
     than reads live.
 
-    The per-page extraction call runs via `asyncio.to_thread`, off the
-    event loop — a thread, not the `ProcessPoolExecutor` ADR-0005 calls
-    for. That process-pool architecture is deliberately deferred, not
-    forgotten: there's nothing else CPU-bound to share a pool with yet."""
-    pdf = await asyncio.to_thread(open_pdf, path)
+    Every PDFium call runs off the event loop via the single dedicated
+    `_PDFIUM_EXECUTOR` thread — a thread, not the `ProcessPoolExecutor`
+    ADR-0005 calls for. That process-pool architecture is deliberately
+    deferred, not forgotten: there's nothing else CPU-bound to share a
+    pool with yet."""
+    pdf = await _run_in_pdfium_thread(open_pdf, path)
     try:
-        total_pages = len(pdf)
+        total_pages = await _run_in_pdfium_thread(len, pdf)
         batch: list[DocumentPage] = []
         for page_number in range(1, total_pages + 1):
             page = await _extract_one_page(document, pdf, page_number)
@@ -133,14 +146,14 @@ async def _extract_pages(
                 await repository.session.commit()
                 batch = []
     finally:
-        pdf.close()
+        await _run_in_pdfium_thread(pdf.close)
 
 
 async def _extract_one_page(
     document: Document, pdf: pypdfium2.PdfDocument, page_number: int
 ) -> DocumentPage:
     try:
-        text = await asyncio.to_thread(extract_page_text, pdf, page_number)
+        text = await _run_in_pdfium_thread(extract_page_text, pdf, page_number)
     except Exception as exc:  # noqa: BLE001 -- a page's extraction call raising
         # is, by definition (ADR-0010), the only thing that counts as a
         # page-level failure; it's caught here, never re-raised, so it
