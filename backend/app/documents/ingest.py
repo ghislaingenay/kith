@@ -90,15 +90,11 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
 
         try:
             with tempfile.TemporaryDirectory() as directory:
-                print("open directory")
                 path = Path(directory) / "document.pdf"
-                print(f"document path: {path}")
                 await _download_to(storage, document.storage_key, path)
-                print("downloading document to path")
                 successful_pages, total_pages = await _extract_pages(
                     repository, document, path
                 )
-                print("extracting pages from document")
         except Exception:
             # Infra-level failure (page-level ones are already caught in
             # `_extract_one_page`): log for correlation, then re-raise so
