@@ -9,7 +9,9 @@ from collections.abc import AsyncIterator
 
 import pypdfium2
 import pytest
-from pypdf import PdfWriter
+from fpdf import FPDF
+from PIL import Image
+from pypdf import PdfReader, PdfWriter
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,6 +120,64 @@ def make_encrypted_pdf() -> bytes:
     buffer = io.BytesIO()
     writer.write(buffer)
     return buffer.getvalue()
+
+
+def make_text_pdf(pages: list[str]) -> bytes:
+    """A PDF with one page per string in `pages`, each page's entire
+    content being that string — or nothing, for an empty string, to make
+    a genuinely blank page."""
+    pdf = FPDF()
+    for page_text in pages:
+        pdf.add_page()
+        if page_text:
+            pdf.set_font("helvetica", size=14)
+            pdf.cell(text=page_text)
+    return bytes(pdf.output())
+
+
+def make_two_column_pdf(left: str, right: str) -> bytes:
+    """A single page with `left` and `right` each written to their own
+    half of the page, side by side, the way a two-column layout reads."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("helvetica", size=12)
+    pdf.set_xy(10, 20)
+    pdf.multi_cell(w=80, text=left)
+    pdf.set_xy(110, 20)
+    pdf.multi_cell(w=80, text=right)
+    return bytes(pdf.output())
+
+
+def make_rotated_text_pdf(text: str, rotation: int = 90) -> bytes:
+    """A single page holding `text`, rotated by `rotation` degrees via the
+    page's `/Rotate` entry. fpdf2 has no page-rotation primitive, so the
+    page is built with `make_text_pdf` and then rotated with pypdf, this
+    domain's existing dev-only library for structural PDF edits (see
+    `make_encrypted_pdf`)."""
+    unrotated = make_text_pdf([text])
+
+    reader = PdfReader(io.BytesIO(unrotated))
+    writer = PdfWriter()
+    page = reader.pages[0]
+    page.rotate(rotation)
+    writer.add_page(page)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def make_image_only_pdf() -> bytes:
+    """A single page whose only content is a rasterised image — no text
+    layer at all, the way a scanned page looks to a PDF text extractor."""
+    image = Image.new("RGB", (100, 100), color=(200, 0, 0))
+    image_buffer = io.BytesIO()
+    image.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.image(image_buffer, x=10, y=10, w=50, h=50)
+    return bytes(pdf.output())
 
 
 INIT_URL = "/api/v1/uploads/init"

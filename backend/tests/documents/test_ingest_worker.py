@@ -36,7 +36,9 @@ async def job_queue(_redis_settings: RedisSettings) -> AsyncIterator[ArqJobQueue
 
 
 async def _run_ingest_worker_once(
-    redis_settings: RedisSettings, database_url: str
+    redis_settings: RedisSettings,
+    database_url: str,
+    storage_provider: FakeStorageProvider,
 ) -> None:
     """Runs a real arq worker against `redis_settings` in burst mode: it
     processes whatever is already queued on `ingest`, then returns — a
@@ -46,6 +48,7 @@ async def _run_ingest_worker_once(
         engine = create_engine(DatabaseSettings(database_url=database_url))
         ctx["_engine"] = engine
         ctx["db_session_factory"] = create_session_factory(engine)
+        ctx["storage_provider"] = storage_provider
 
     async def shutdown(ctx: dict) -> None:
         await ctx["_engine"].dispose()
@@ -75,7 +78,7 @@ async def test_an_enqueued_job_is_picked_up_and_executed_by_a_real_worker(
     storage.put_object(pending_upload_key(caller.tenant_id, uuid.UUID(upload_id)), _PDF)
     document_id = (await finalize_upload(client, upload_id)).json()["id"]
 
-    await _run_ingest_worker_once(_redis_settings, _database_url)
+    await _run_ingest_worker_once(_redis_settings, _database_url, storage)
 
     document = (
         await db_session.execute(
@@ -83,7 +86,7 @@ async def test_an_enqueued_job_is_picked_up_and_executed_by_a_real_worker(
         )
     ).scalar_one()
     assert document.ingestion_status == IngestionStatus.PROCESSING
-    assert document.ingestion_stage == IngestionStage.EXTRACTING
+    assert document.ingestion_stage == IngestionStage.CHUNKING
 
 
 async def test_a_job_for_a_document_already_past_uploaded_is_left_alone(
@@ -106,7 +109,7 @@ async def test_a_job_for_a_document_already_past_uploaded_is_left_alone(
     document.ingestion_status = IngestionStatus.FAILED
     await db_session.commit()
 
-    await _run_ingest_worker_once(_redis_settings, _database_url)
+    await _run_ingest_worker_once(_redis_settings, _database_url, storage)
 
     await db_session.refresh(document)
     assert document.ingestion_status == IngestionStatus.FAILED
