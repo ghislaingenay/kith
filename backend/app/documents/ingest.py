@@ -87,14 +87,20 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
 
         try:
             with tempfile.TemporaryDirectory() as directory:
+                print("open directory")
                 path = Path(directory) / "document.pdf"
+                print(f"document path: {path}")
                 await _download_to(storage, document.storage_key, path)
+                print("downloading document to path")
                 await _extract_pages(repository, document, path)
+                print("extracting pages from document")
         except Exception:
             # Infra-level failure (page-level ones are already caught in
             # `_extract_one_page`): log for correlation, then re-raise so
             # the queue's automatic retry still fires (ADR-0010).
-            logger.error("ingest_document_extraction_failed", document_id=document_id)
+            logger.exception(
+                "ingest_document_extraction_failed", document_id=document_id
+            )
             document.ingestion_status = IngestionStatus.UPLOADED
             document.ingestion_stage = None
             document.pages_extracted = None
@@ -111,6 +117,7 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
 
 
 async def _download_to(storage: StorageProvider, key: str, path: Path) -> None:
+    """ PDFium can't read a stream. It needs random access to the whole PDF file."""
     file = await asyncio.to_thread(path.open, "wb")
     try:
         async for chunk in storage.download(key):
