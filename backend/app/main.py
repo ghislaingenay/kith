@@ -8,6 +8,7 @@ from auth.router import me_router
 from auth.router import router as auth_router
 from core.container import container
 from core.exceptions import register_exception_handlers
+from core.migrations import warn_if_schema_out_of_date
 from documents.router import library_router
 from documents.router import router as uploads_router
 from tenants.router import router as tenants_router
@@ -21,7 +22,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # eagerly so a bad DATABASE_URL/REDIS_URL fails fast at startup instead
     # of on first request (see notes in core/container.py).
     container.logging_configured()
-    container.db_engine()
+    await warn_if_schema_out_of_date(container.db_engine())
     container.cache_provider()
     container.rate_limiter()
     container.mailer()
