@@ -360,6 +360,6 @@ async def test_an_infrastructure_failure_propagates_instead_of_being_swallowed(
     await engine.dispose()
 
     document = await _document(db_session, document_id)
-    assert document.ingestion_status == IngestionStatus.PROCESSING
-    assert document.ingestion_stage == IngestionStage.EXTRACTING
+    assert document.ingestion_status == IngestionStatus.UPLOADED
+    assert document.ingestion_stage == None
     assert await _pages_of(db_session, document_id) == []
