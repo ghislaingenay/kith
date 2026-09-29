@@ -95,6 +95,10 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
             # `_extract_one_page`): log for correlation, then re-raise so
             # the queue's automatic retry still fires (ADR-0010).
             logger.error("ingest_document_extraction_failed", document_id=document_id)
+            document.ingestion_status = IngestionStatus.UPLOADED
+            document.ingestion_stage = None
+            document.pages_extracted = None
+            await session.commit()
             raise
 
         document.ingestion_stage = IngestionStage.CHUNKING
