@@ -32,6 +32,7 @@ async def startup(ctx: dict) -> None:
     await warn_if_schema_out_of_date(container.db_engine())
     ctx["db_session_factory"] =container.db_session_factory()
     ctx["storage_provider"] = container.storage_provider()
+    ctx["ingestion_settings"] = container.ingestion_settings()
     logger.info("worker_ingest_started")
 
 

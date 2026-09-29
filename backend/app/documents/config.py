@@ -30,3 +30,17 @@ class UploadSettings(BaseSettings):
     pending_expiry_seconds: int = Field(
         default=30 * 60, description="Time in seconds after which a pending upload expires", validation_alias="UPLOAD_PENDING_EXPIRY_SECONDS"
     )
+
+
+class IngestionSettings(BaseSettings):
+    """Env-driven ingestion rules (ADR-0010)."""
+
+    model_config = SettingsConfigDict(case_sensitive=False)
+
+    min_extraction_success_ratio: float = Field(
+        default=0.8,
+        ge=0,
+        le=1,
+        description="Minimum successful_pages / total_pages for a Document's extraction to count as a success",
+        validation_alias="INGESTION_MIN_EXTRACTION_SUCCESS_RATIO",
+    )
