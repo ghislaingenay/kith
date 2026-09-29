@@ -13,6 +13,7 @@ import pytest
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.storage.dependencies import get_storage_provider
 from core.storage.exceptions import StorageError
+from documents.config import IngestionSettings
 from documents.ingest import ingest_document
 from documents.keys import pending_upload_key
 from documents.models import (
@@ -54,6 +55,7 @@ async def ingest_ctx(
     yield {
         "db_session_factory": create_session_factory(engine),
         "storage_provider": storage,
+        "ingestion_settings": IngestionSettings(),
     }
     await engine.dispose()
 
@@ -275,8 +277,8 @@ async def test_one_pages_extraction_call_raising_does_not_stop_the_rest(
     assert pages[2].text == "Page three."
 
     document = await _document(db_session, document_id)
-    assert document.ingestion_status == IngestionStatus.PROCESSING
-    assert document.ingestion_stage == IngestionStage.CHUNKING
+    # 2 of 3 pages (0.67) is below the default 0.8 threshold (#41).
+    assert document.ingestion_status == IngestionStatus.FAILED
     assert document.pages_extracted == 3
 
 
@@ -353,6 +355,7 @@ async def test_an_infrastructure_failure_propagates_instead_of_being_swallowed(
     ctx = {
         "db_session_factory": create_session_factory(engine),
         "storage_provider": storage,
+        "ingestion_settings": IngestionSettings(),
     }
 
     with pytest.raises(StorageError):
@@ -363,3 +366,119 @@ async def test_an_infrastructure_failure_propagates_instead_of_being_swallowed(
     assert document.ingestion_status == IngestionStatus.UPLOADED
     assert document.ingestion_stage == None
     assert await _pages_of(db_session, document_id) == []
+
+
+def _fail_pages(*failing: int):
+    from documents.pdf import extract_page_text as real_extract_page_text
+
+    def _extract(pdf, page_number):
+        if page_number in failing:
+            raise RuntimeError("simulated extraction failure")
+        return real_extract_page_text(pdf, page_number)
+
+    return patch("documents.ingest.extract_page_text", side_effect=_extract)
+
+
+async def test_a_document_below_the_success_ratio_ends_failed_with_a_reason(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    document_id = await _upload_and_finalize(
+        client, storage, caller, make_text_pdf(["One.", "Two.", "Three."])
+    )
+
+    with _fail_pages(2, 3):
+        # Returns normally: a business-level failure never raises, so the
+        # queue's automatic retry can't fire for it.
+        await _ingest(ingest_ctx, caller, document_id)
+
+    document = await _document(db_session, document_id)
+    assert document.ingestion_status == IngestionStatus.FAILED
+    assert document.ingestion_stage == IngestionStage.EXTRACTING
+    assert "1 of 3" in document.ingestion_error
+    assert document.pages_extracted == 3
+
+
+async def test_a_document_exactly_at_the_success_ratio_stays_processing(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    texts = [f"Page {number}" for number in range(1, 6)]
+    document_id = await _upload_and_finalize(
+        client, storage, caller, make_text_pdf(texts)
+    )
+
+    with _fail_pages(5):  # 4 of 5 = 0.8, the default threshold
+        await _ingest(ingest_ctx, caller, document_id)
+
+    document = await _document(db_session, document_id)
+    assert document.ingestion_status == IngestionStatus.PROCESSING
+    assert document.ingestion_stage == IngestionStage.CHUNKING
+    assert document.ingestion_error is None
+
+
+async def test_the_success_ratio_threshold_is_configurable(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    ingest_ctx["ingestion_settings"] = IngestionSettings.model_validate(
+        {"INGESTION_MIN_EXTRACTION_SUCCESS_RATIO": 0.3}
+    )
+    document_id = await _upload_and_finalize(
+        client, storage, caller, make_text_pdf(["One.", "Two.", "Three."])
+    )
+
+    with _fail_pages(2, 3):  # 1 of 3 = 0.33 >= 0.3
+        await _ingest(ingest_ctx, caller, document_id)
+
+    document = await _document(db_session, document_id)
+    assert document.ingestion_status == IngestionStatus.PROCESSING
+
+
+async def test_a_retry_re_extracts_every_page_without_duplicate_or_stale_rows(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    texts = [f"Page {number}" for number in range(1, 8)]
+    document_id = await _upload_and_finalize(
+        client, storage, caller, make_text_pdf(texts)
+    )
+
+    original_upsert = DocumentsRepository.upsert_document_pages
+    calls = 0
+
+    async def _fail_second_batch(self, pages):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ConnectionError("database unavailable")
+        return await original_upsert(self, pages)
+
+    # First attempt: the first batch of 5 pages lands, then the database
+    # drops: an infrastructure failure, so it propagates.
+    with patch.object(DocumentsRepository, "upsert_document_pages", _fail_second_batch):
+        with pytest.raises(ConnectionError):
+            await _ingest(ingest_ctx, caller, document_id)
+    partial_pages = await _pages_of(db_session, document_id)
+    assert len(partial_pages) == 5
+    partial_pages[2].text = "stale text from the failed attempt"
+    await db_session.commit()
+
+    await _ingest(ingest_ctx, caller, document_id)
+
+    db_session.expire_all()
+    pages = await _pages_of(db_session, document_id)
+    assert [page.page_number for page in pages] == list(range(1, 8))
+    assert [page.text for page in pages] == texts

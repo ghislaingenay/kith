@@ -134,6 +134,8 @@ class Document(Base):
         String, nullable=True, default=None
     )
     pages_extracted: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Human-readable reason a Document ended `FAILED` (ADR-0010)."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

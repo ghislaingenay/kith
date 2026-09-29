@@ -12,6 +12,7 @@ from arq.connections import RedisSettings
 from arq.worker import Worker
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.jobs.arq_queue import ArqJobQueue
+from documents.config import IngestionSettings
 from documents.ingest import ingest_document
 from documents.keys import pending_upload_key
 from documents.models import Document, IngestionStage, IngestionStatus
@@ -49,6 +50,7 @@ async def _run_ingest_worker_once(
         ctx["_engine"] = engine
         ctx["db_session_factory"] = create_session_factory(engine)
         ctx["storage_provider"] = storage_provider
+        ctx["ingestion_settings"] = IngestionSettings()
 
     async def shutdown(ctx: dict) -> None:
         await ctx["_engine"].dispose()

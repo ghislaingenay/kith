@@ -15,7 +15,7 @@ from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
-from documents.config import UploadSettings
+from documents.config import IngestionSettings, UploadSettings
 
 
 def _configure_logging_once(settings: LoggingSettings) -> bool:
@@ -72,6 +72,8 @@ class Container(containers.DeclarativeContainer):
     job_queue = providers.Singleton(JobQueueFactory.create, settings=cache_settings)
 
     upload_settings = providers.Singleton(UploadSettings)
+
+    ingestion_settings = providers.Singleton(IngestionSettings)
 
     database_settings = providers.Singleton(DatabaseSettings)
 

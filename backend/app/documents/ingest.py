@@ -7,8 +7,9 @@ signature (#40).
 A page's extraction only counts as failed when the extraction call itself
 raises (ADR-0010): one bad page never stops the rest, and never raises out
 of this job by itself. Whether the *Document* as a whole then succeeds is
-a #41 concern (the success-ratio threshold) — this job always leaves a
-completed run at `processing`/`chunking`, regardless of the per-page mix."""
+decided by the success-ratio threshold (#41): below it the Document ends
+`failed` with a reason, handled inside the job and never raised, so the
+queue's automatic retry only ever fires for infrastructure errors."""
 
 import asyncio
 import tempfile
@@ -20,6 +21,7 @@ from pathlib import Path
 import pypdfium2
 from core.logging import setup_logger
 from core.storage.provider import StorageProvider
+from documents.config import IngestionSettings
 from documents.exceptions import DocumentNotFoundError
 from documents.models import (
     Document,
@@ -49,6 +51,7 @@ async def _run_in_pdfium_thread[T](func: Callable[..., T], *args: object) -> T:
 async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> None:
     session_factory = ctx["db_session_factory"]
     storage: StorageProvider = ctx["storage_provider"]
+    settings: IngestionSettings = ctx["ingestion_settings"]
     async with session_factory() as session:
         repository = DocumentsRepository(session)
         try:
@@ -92,7 +95,9 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
                 print(f"document path: {path}")
                 await _download_to(storage, document.storage_key, path)
                 print("downloading document to path")
-                await _extract_pages(repository, document, path)
+                successful_pages, total_pages = await _extract_pages(
+                    repository, document, path
+                )
                 print("extracting pages from document")
         except Exception:
             # Infra-level failure (page-level ones are already caught in
@@ -106,6 +111,26 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
             document.pages_extracted = None
             await session.commit()
             raise
+
+        if total_pages and (
+            successful_pages / total_pages < settings.min_extraction_success_ratio
+        ):
+            # Business-level failure: recorded on the Document, never raised
+            # (ADR-0010) — a static file would fail identically on retry.
+            document.ingestion_status = IngestionStatus.FAILED
+            document.ingestion_error = (
+                f"Only {successful_pages} of {total_pages} pages could be "
+                f"extracted; at least "
+                f"{settings.min_extraction_success_ratio:.0%} is required."
+            )
+            await session.commit()
+            logger.warning(
+                "ingest_document_below_success_ratio",
+                document_id=document_id,
+                successful_pages=successful_pages,
+                total_pages=total_pages,
+            )
+            return
 
         document.ingestion_stage = IngestionStage.CHUNKING
         await session.commit()
@@ -130,8 +155,10 @@ async def _extract_pages(
     repository: DocumentsRepository,
     document: Document,
     path: Path,
-) -> None:
-    """Extracts every page's text, writing one `document_pages` row per
+) -> tuple[int, int]:
+    """Returns `(successful_pages, total_pages)`.
+
+    Extracts every page's text, writing one `document_pages` row per
     page. `document.pages_extracted` is written in batches of 5 pages, not
     after every page, since it's a progress counter a caller polls rather
     than reads live.
@@ -145,9 +172,12 @@ async def _extract_pages(
     try:
         total_pages = await _run_in_pdfium_thread(len, pdf)
         batch: list[DocumentPage] = []
+        successful_pages = 0
         for page_number in range(1, total_pages + 1):
             page = await _extract_one_page(document, pdf, page_number)
             batch.append(page)
+            if page.extraction_method != ExtractionMethod.EXTRACTION_ERROR:
+                successful_pages += 1
 
             is_batch_full = len(batch) >= _PAGES_EXTRACTED_BATCH_SIZE
             is_last_page = page_number == total_pages
@@ -156,6 +186,7 @@ async def _extract_pages(
                 document.pages_extracted = page_number
                 await repository.session.commit()
                 batch = []
+        return successful_pages, total_pages
     finally:
         await _run_in_pdfium_thread(pdf.close)
 
