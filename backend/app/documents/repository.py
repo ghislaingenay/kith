@@ -5,12 +5,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from documents.exceptions import DocumentNotFoundError
 from documents.models import (
+    Chunk,
     Document,
     DocumentPage,
     IngestionStatus,
@@ -285,3 +286,30 @@ class DocumentsRepository:
             },
         )
         await self.session.execute(statement)
+
+    async def replace_chunks(
+        self, document: Document, chunks: Sequence[Chunk], metadata: dict
+    ) -> None:
+        """Swap all of a Document's Chunks, and its chunking record, for the
+        new ones (ADR-0011). Does not commit: delete and insert share the
+        caller's transaction, so a retry never leaves duplicates or stale
+        rows behind."""
+        await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
+        self.session.add_all(chunks)
+        document.chunk_metadata = metadata
+        await self.session.flush()
+
+    async def list_pages_with_clean_text(
+        self, document_id: uuid.UUID
+    ) -> Sequence[DocumentPage]:
+        """The Document's pages that have Clean Text (failed pages don't),
+        in page order."""
+        result = await self.session.execute(
+            select(DocumentPage)
+            .where(
+                DocumentPage.document_id == document_id,
+                DocumentPage.clean_text.is_not(None),
+            )
+            .order_by(DocumentPage.page_number)
+        )
+        return result.scalars().all()
