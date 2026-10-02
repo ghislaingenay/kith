@@ -24,6 +24,7 @@ from documents.models import (
     IngestionStatus,
 )
 from documents.repository import DocumentsRepository
+from documents.text_cleaner import clean_text
 from httpx import AsyncClient
 from main import app
 from sqlalchemy import select
@@ -482,3 +483,80 @@ async def test_a_retry_re_extracts_every_page_without_duplicate_or_stale_rows(
     pages = await _pages_of(db_session, document_id)
     assert [page.page_number for page in pages] == list(range(1, 8))
     assert [page.text for page in pages] == texts
+
+
+async def test_a_pages_clean_text_is_stored_beside_its_unchanged_page_text(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    raw = "Une for-\nmation  générale\nexcellente\n\nSecond fine paragraph"
+    pdf_bytes = make_text_pdf([raw])
+    document_id = await _upload_and_finalize(client, storage, caller, pdf_bytes)
+
+    await _ingest(ingest_ctx, caller, document_id)
+
+    [page] = await _pages_of(db_session, document_id)
+    assert page.text is not None
+    assert "for-" in page.text  # raw Page Text is left as extracted
+    assert page.clean_text == clean_text(page.text)
+    assert "formation" in page.clean_text
+
+
+async def test_a_blank_page_has_empty_clean_text_and_is_not_a_failure(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    document_id = await _upload_and_ingest(
+        client, storage, caller, ingest_ctx, make_text_pdf(["", "Some text"])
+    )
+
+    blank, _ = await _pages_of(db_session, document_id)
+    assert blank.clean_text == ""
+    assert blank.extraction_method == ExtractionMethod.TEXT_LAYER
+
+
+async def test_a_failed_page_has_no_clean_text(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    document_id = await _upload_and_finalize(
+        client, storage, caller, make_text_pdf(["a", "b", "c"])
+    )
+
+    with _fail_pages(2):
+        await _ingest(ingest_ctx, caller, document_id)
+
+    pages = await _pages_of(db_session, document_id)
+    assert [page.clean_text for page in pages] == ["a", None, "c"]
+
+
+async def test_a_retry_rewrites_clean_text_for_every_page(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    document_id = await _upload_and_finalize(
+        client, storage, caller, make_text_pdf(["Page one", "Page two"])
+    )
+    with _fail_pages(1, 2):
+        await _ingest(ingest_ctx, caller, document_id)
+    document = await _document(db_session, document_id)
+    document.ingestion_status = IngestionStatus.UPLOADED
+    await db_session.commit()
+
+    await _ingest(ingest_ctx, caller, document_id)
+
+    db_session.expire_all()
+    pages = await _pages_of(db_session, document_id)
+    assert [page.clean_text for page in pages] == ["Page one", "Page two"]
