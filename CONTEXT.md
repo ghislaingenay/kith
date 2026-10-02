@@ -79,15 +79,23 @@ The background work that turns an uploaded Document into searchable Chunks. Its 
 _Avoid_: Processing, indexing (indexing is one step of Ingestion)
 
 **Ingestion Status**:
-Where a Document is in Ingestion: `uploaded`, `processing`, `partial` (some Chunks embedded, some failed), `ready`, `failed`, or `deleted`. Derived from the Chunks' embedding statuses once chunking is done.
+Where a Document is in Ingestion: `uploaded`, `processing`, `partial` (some Chunks made searchable, some failed), `ready`, `failed`, or `deleted`. Derived from the Chunks' indexing and embedding statuses once chunking is done. A Document can be searched by keyword before it is `ready`.
 _Avoid_: State
 
 **Ingestion Stage**:
-The step of Ingestion a `processing` Document is currently in: `extracting`, `chunking`, `embedding`, or `indexing`. Shown as the sub-label under the Ingestion Status. Separate from Ingestion Status, which stays a coarse outcome.
+The step of Ingestion a `processing` Document is currently in: `extracting`, `chunking`, `indexing` (Chunk text made keyword-searchable), or `embedding` (vectors added afterwards). Shown as the sub-label under the Ingestion Status. Separate from Ingestion Status, which stays a coarse outcome.
 _Avoid_: Step, phase, progress (progress is pages extracted out of page count, not a Stage)
 
+**Page Text**:
+The text extracted from one page of a Document, exactly as the PDF supplies it. Kept unchanged as the raw record of what extraction produced.
+_Avoid_: Raw text, content
+
+**Clean Text**:
+A page's Page Text after cleanup: broken words rejoined across line breaks, soft-wrapped lines joined, paragraph breaks kept, whitespace and odd characters tidied, wording, case and accents untouched. Chunks are cut from it, and their positions refer to it.
+_Avoid_: Normalized text, processed text
+
 **Chunk**:
-A passage of a Document's text, stored with its vector embedding, that search retrieves and answers cite. A Chunk knows which Document and which location in it (for PDF, the page) it came from.
+A passage of a Document's text, stored with its vector embedding, that search retrieves and answers cite. A Chunk knows which Document and which location in it (for PDF, the page) it came from. A Chunk never spans two pages.
 _Avoid_: Passage, segment, fragment, snippet
 
 ### Search
