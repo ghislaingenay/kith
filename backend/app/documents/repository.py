@@ -223,8 +223,12 @@ class DocumentsRepository:
         )
         return result.scalar_one_or_none()
 
-    async def mark_document_deleted(self, document: Document) -> None:
+    async def mark_document_deleted(
+        self, document: Document, *, deleted_by: uuid.UUID
+    ) -> None:
         document.ingestion_status = IngestionStatus.DELETED
+        document.deleted_at = func.now()
+        document.deleted_by = deleted_by
         await self.session.commit()
 
     async def complete_upload(self, upload: Upload, document: Document) -> None:

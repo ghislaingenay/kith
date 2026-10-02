@@ -97,6 +97,10 @@ class Document(Base):
             f"ingestion_stage IN ({_INGESTION_STAGE_VALUES})",
             name="ck_documents_ingestion_stage",
         ),
+        CheckConstraint(
+            f"(ingestion_status = '{IngestionStatus.DELETED}') = (deleted_at IS NOT NULL)",
+            name="ck_documents_deleted_at_iff_deleted",
+        ),
         Index(
             "uq_documents_tenant_content_hash_active",
             "tenant_id",
@@ -136,6 +140,16 @@ class Document(Base):
     pages_extracted: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     """Human-readable reason a Document ended `FAILED` (ADR-0010)."""
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Set exactly when `ingestion_status` is `DELETED`; the status stays the
+    filter of record for a valid Document."""
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

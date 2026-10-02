@@ -79,7 +79,7 @@ async def test_a_soft_deleted_document_does_not_block_reuploading_its_content(
     await db_session.execute(
         update(Document)
         .where(Document.id == uuid.UUID(first["id"]))
-        .values(ingestion_status=IngestionStatus.DELETED)
+        .values(ingestion_status=IngestionStatus.DELETED, deleted_at=func.now())
     )
     await db_session.commit()
 

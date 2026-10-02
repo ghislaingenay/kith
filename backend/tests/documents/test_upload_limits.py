@@ -27,6 +27,7 @@ from tests.documents.conftest import (
 from tests.support.fake_storage import FakeStorageProvider
 
 _MB = 1024 * 1024
+_DELETED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 _UNCAPPED_PENDING = 99
 
 
@@ -75,6 +76,7 @@ async def _seed_document(
             content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
             storage_key="tenants/x/documents/y.pdf",
             ingestion_status=status,
+            deleted_at=(_DELETED_AT if status == IngestionStatus.DELETED else None),
         )
     )
     await db_session.commit()
