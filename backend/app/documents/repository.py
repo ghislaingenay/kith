@@ -267,6 +267,7 @@ class DocumentsRepository:
                     "tenant_id": page.tenant_id,
                     "page_number": page.page_number,
                     "text": page.text,
+                    "clean_text": page.clean_text,
                     "extraction_method": page.extraction_method,
                     "error_detail": page.error_detail,
                 }
@@ -277,6 +278,7 @@ class DocumentsRepository:
             index_elements=[DocumentPage.document_id, DocumentPage.page_number],
             set_={
                 "text": statement.excluded.text,
+                "clean_text": statement.excluded.clean_text,
                 "extraction_method": statement.excluded.extraction_method,
                 "error_detail": statement.excluded.error_detail,
                 "updated_at": func.now(),

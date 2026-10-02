@@ -199,6 +199,10 @@ class DocumentPage(Base):
     )
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Page Text: raw, exactly as extraction produced it."""
+    clean_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Clean Text (ADR-0011): `text` after cleanup; empty for a blank page,
+    null when the page's extraction failed."""
     extraction_method: Mapped[str] = mapped_column(String, nullable=False)
     ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     """Reserved for a future OCR pass; unused until OCR extraction exists."""

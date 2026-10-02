@@ -32,6 +32,7 @@ from documents.models import (
 )
 from documents.pdf import extract_page_text, open_pdf
 from documents.repository import DocumentsRepository
+from documents.text_cleaner import clean_text
 
 logger = setup_logger(__name__)
 
@@ -208,6 +209,7 @@ async def _extract_one_page(
             tenant_id=document.tenant_id,
             page_number=page_number,
             text=None,
+            clean_text=None,
             extraction_method=ExtractionMethod.EXTRACTION_ERROR,
             error_detail=str(exc),
         )
@@ -218,6 +220,7 @@ async def _extract_one_page(
             tenant_id=document.tenant_id,
             page_number=page_number,
             text=text,
+            clean_text=clean_text(text),
             extraction_method=ExtractionMethod.TEXT_LAYER,
             error_detail=None,
         )
