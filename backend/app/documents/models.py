@@ -17,7 +17,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.database import Base
@@ -60,6 +60,15 @@ class RejectionKind(StrEnum):
     LIMIT_REACHED = "limit_reached"
 
 
+class ChunkStatus(StrEnum):
+    """Where a Chunk is in indexing or embedding (ADR-0011): every Chunk
+    starts `PENDING` in both."""
+
+    PENDING = "pending"
+    DONE = "done"
+    FAILED = "failed"
+
+
 class DocumentSource(StrEnum):
     PDF = "pdf"
 
@@ -77,6 +86,7 @@ _INGESTION_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in Ingestion
 _INGESTION_STAGE_VALUES = ", ".join(f"'{stage.value}'" for stage in IngestionStage)
 _UPLOAD_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in UploadStatus)
 _REJECTION_KIND_VALUES = ", ".join(f"'{kind.value}'" for kind in RejectionKind)
+_CHUNK_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in ChunkStatus)
 _EXTRACTION_METHOD_VALUES = ", ".join(
     f"'{method.value}'" for method in ExtractionMethod
 )
@@ -140,6 +150,9 @@ class Document(Base):
     pages_extracted: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     """Human-readable reason a Document ended `FAILED` (ADR-0010)."""
+    chunk_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    """How the Document's current Chunks were made (ADR-0011): size, overlap,
+    cleaner version, tokenizer and time. Overwritten by a retry, no history."""
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -207,6 +220,64 @@ class DocumentPage(Base):
     ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     """Reserved for a future OCR pass; unused until OCR extraction exists."""
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class Chunk(Base):
+    """A passage of one page's Clean Text (ADR-0002, ADR-0011). Never spans
+    two pages; `char_start`/`char_end` slice the page's stored Clean Text to
+    exactly `text`, or are both null when that could not be verified."""
+
+    __tablename__ = "chunks"
+    __table_args__ = (
+        CheckConstraint(
+            f"indexing_status IN ({_CHUNK_STATUS_VALUES})",
+            name="ck_chunks_indexing_status",
+        ),
+        CheckConstraint(
+            f"embedding_status IN ({_CHUNK_STATUS_VALUES})",
+            name="ck_chunks_embedding_status",
+        ),
+        Index("uq_chunks_document_id_ordinal", "document_id", "ordinal", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    """Position within the whole Document, from 0."""
+    char_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    char_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    indexing_status: Mapped[str] = mapped_column(
+        String, nullable=False, default=ChunkStatus.PENDING
+    )
+    indexing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_status: Mapped[str] = mapped_column(
+        String, nullable=False, default=ChunkStatus.PENDING
+    )
+    embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

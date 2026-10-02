@@ -6,6 +6,11 @@ COPY pyproject.toml uv.lock ./
 RUN pip install --no-cache-dir uv \
     && uv pip install --system --no-cache .
 
+# The chunking tokenizer's encoding file is fetched here, at build time, so
+# the worker never downloads it at runtime (ADR-0011).
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./

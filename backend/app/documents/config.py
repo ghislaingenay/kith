@@ -1,6 +1,6 @@
 """Configuration for the documents domain."""
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,3 +44,21 @@ class IngestionSettings(BaseSettings):
         description="Minimum successful_pages / total_pages for a Document's extraction to count as a success",
         validation_alias="INGESTION_MIN_EXTRACTION_SUCCESS_RATIO",
     )
+    chunk_size_tokens: int = Field(
+        default=500,
+        gt=0,
+        description="Soft target size of a Chunk, in tokens (ADR-0011)",
+        validation_alias="INGESTION_CHUNK_SIZE_TOKENS",
+    )
+    chunk_overlap_tokens: int = Field(
+        default=50,
+        ge=0,
+        description="Tokens shared between consecutive Chunks of a page",
+        validation_alias="INGESTION_CHUNK_OVERLAP_TOKENS",
+    )
+
+    @model_validator(mode="after")
+    def _overlap_smaller_than_size(self) -> "IngestionSettings":
+        if self.chunk_overlap_tokens >= self.chunk_size_tokens:
+            raise ValueError("chunk overlap must be smaller than chunk size")
+        return self

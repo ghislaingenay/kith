@@ -20,10 +20,15 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.documents.conftest import Caller, finalize_upload, init_upload, make_pdf
+from tests.documents.conftest import (
+    Caller,
+    finalize_upload,
+    init_upload,
+    make_text_pdf,
+)
 from tests.support.fake_storage import FakeStorageProvider
 
-_PDF = make_pdf(pages=2)
+_PDF = make_text_pdf(["First page.", "Second page."])
 
 
 @pytest.fixture

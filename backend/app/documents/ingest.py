@@ -12,9 +12,11 @@ decided by the success-ratio threshold (#41): below it the Document ends
 queue's automatic retry only ever fires for infrastructure errors."""
 
 import asyncio
+import hashlib
 import tempfile
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -23,7 +25,9 @@ from core.logging import setup_logger
 from core.storage.provider import StorageProvider
 from documents.config import IngestionSettings
 from documents.exceptions import DocumentNotFoundError
+from documents.chunker import CHUNK_TOKENIZER, chunk_page
 from documents.models import (
+    Chunk,
     Document,
     DocumentPage,
     ExtractionMethod,
@@ -32,7 +36,7 @@ from documents.models import (
 )
 from documents.pdf import extract_page_text, open_pdf
 from documents.repository import DocumentsRepository
-from documents.text_cleaner import clean_text
+from documents.text_cleaner import CLEANER_VERSION, clean_text
 
 logger = setup_logger(__name__)
 
@@ -136,6 +140,76 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
             document_id=document_id,
             pages_extracted=document.pages_extracted,
         )
+
+        try:
+            chunk_count = await _chunk_pages(repository, document, settings)
+        except Exception:
+            # Same rule as extraction: an infrastructure error goes back to
+            # `uploaded` and re-raises so the queue's retry fires.
+            logger.exception("ingest_document_chunking_failed", document_id=document_id)
+            await session.rollback()
+            document.ingestion_status = IngestionStatus.UPLOADED
+            document.ingestion_stage = None
+            document.pages_extracted = None
+            await session.commit()
+            raise
+
+        if chunk_count == 0:
+            document.ingestion_status = IngestionStatus.FAILED
+            document.ingestion_error = (
+                "No extractable text was found in this document. "
+                "It may be a scanned PDF."
+            )
+            await session.commit()
+            logger.warning("ingest_document_no_chunks", document_id=document_id)
+            return
+        logger.info(
+            "ingest_document_chunked", document_id=document_id, chunks=chunk_count
+        )
+
+
+async def _chunk_pages(
+    repository: DocumentsRepository,
+    document: Document,
+    settings: IngestionSettings,
+) -> int:
+    """Cuts every page's Clean Text into Chunks and swaps them in for the
+    Document's current ones in one transaction (ADR-0011). Returns how many
+    Chunks the Document now has."""
+    pages = await repository.list_pages_with_clean_text(document.id)
+    chunks: list[Chunk] = []
+    for page in pages:
+        drafts = await asyncio.to_thread(
+            chunk_page,
+            page.clean_text,
+            size=settings.chunk_size_tokens,
+            overlap=settings.chunk_overlap_tokens,
+        )
+        for draft in drafts:
+            chunks.append(
+                Chunk(
+                    id=uuid.uuid4(),
+                    document_id=document.id,
+                    tenant_id=document.tenant_id,
+                    page_number=page.page_number,
+                    ordinal=len(chunks),
+                    char_start=draft.char_start,
+                    char_end=draft.char_end,
+                    text=draft.text,
+                    text_hash=hashlib.sha256(draft.text.encode()).hexdigest(),
+                    token_count=draft.token_count,
+                )
+            )
+    metadata = {
+        "chunk_size": settings.chunk_size_tokens,
+        "chunk_overlap": settings.chunk_overlap_tokens,
+        "cleaner_version": CLEANER_VERSION,
+        "tokenizer": CHUNK_TOKENIZER,
+        "chunked_at": datetime.now(UTC).isoformat(),
+    }
+    await repository.replace_chunks(document, chunks, metadata)
+    await repository.session.commit()
+    return len(chunks)
 
 
 async def _download_to(storage: StorageProvider, key: str, path: Path) -> None:
