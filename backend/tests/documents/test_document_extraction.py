@@ -7,6 +7,7 @@ existing upload feature's test convention in this domain."""
 
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -25,6 +26,7 @@ from documents.models import (
 )
 from documents.repository import DocumentsRepository
 from documents.text_cleaner import clean_text
+from fpdf import FPDF
 from httpx import AsyncClient
 from main import app
 from sqlalchemy import select
@@ -560,3 +562,29 @@ async def test_a_retry_rewrites_clean_text_for_every_page(
     db_session.expire_all()
     pages = await _pages_of(db_session, document_id)
     assert [page.clean_text for page in pages] == ["Page one", "Page two"]
+
+
+_UNICODE_FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+
+
+@pytest.mark.skipif(not _UNICODE_FONT.exists(), reason="needs a TTF with ligatures")
+async def test_a_ligature_in_a_real_pdf_reads_plainly_in_clean_text(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+) -> None:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.add_font("dejavu", fname=str(_UNICODE_FONT))
+    pdf.set_font("dejavu", size=14)
+    pdf.cell(text="The o\ufb03ce \ufb01le")
+    document_id = await _upload_and_ingest(
+        client, storage, caller, ingest_ctx, bytes(pdf.output())
+    )
+
+    [page] = await _pages_of(db_session, document_id)
+    # PDFium may already expand ligatures itself; either way the Clean Text
+    # reads plainly (NFKC on ligatures is proven in test_text_cleaner.py).
+    assert page.clean_text == "The office file"

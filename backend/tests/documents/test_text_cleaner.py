@@ -32,7 +32,7 @@ def test_a_blank_line_holding_only_spaces_is_still_a_paragraph_break() -> None:
 
 
 def test_nfkc_normalises_ligatures_and_special_spaces() -> None:
-    assert clean_text("oﬃce ①") == "office 1"
+    assert clean_text("o\ufb03ce\u00a0\u2460") == "office 1"
 
 
 def test_control_and_zero_width_characters_are_removed() -> None:
