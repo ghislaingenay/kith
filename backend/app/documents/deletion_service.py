@@ -33,7 +33,7 @@ class DocumentDeletionService:
         is_uploader = document.uploader_id == user_id
         if not is_uploader and not has_permission(role, Action.DELETE_ANY_DOCUMENT):
             raise PermissionDenied(Action.DELETE_ANY_DOCUMENT)
-        await self.repository.mark_document_deleted(document)
+        await self.repository.mark_document_deleted(document, deleted_by=user_id)
         await self.job_queue.enqueue(
             _TASKS_QUEUE,
             _PURGE_FUNCTION,

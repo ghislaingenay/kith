@@ -15,6 +15,7 @@ from users.models import Profile
 LIST_URL = "/api/v1/documents"
 SUMMARY_URL = "/api/v1/documents/summary"
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+_DELETED_AT = _NOW
 
 
 async def _seed(
@@ -39,6 +40,7 @@ async def _seed(
         content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
         storage_key="tenants/x/documents/y.pdf",
         ingestion_status=status,
+        deleted_at=(_DELETED_AT if status == IngestionStatus.DELETED else None),
         ingestion_stage=stage,
         pages_extracted=pages_extracted,
         created_at=_NOW - age,

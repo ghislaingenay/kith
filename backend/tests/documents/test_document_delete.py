@@ -2,9 +2,12 @@
 and the purge job it queues."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from documents.config import UploadSettings
@@ -37,6 +40,7 @@ async def _seed(
     name: str = "report.pdf",
     status: IngestionStatus = IngestionStatus.READY,
     content_hash: str | None = None,
+    deleted_at: datetime | None = None,
 ) -> Document:
     document = Document(
         tenant_id=tenant_id,
@@ -47,6 +51,7 @@ async def _seed(
         content_hash=content_hash or uuid.uuid4().hex + uuid.uuid4().hex,
         storage_key="tenants/x/documents/y.pdf",
         ingestion_status=status,
+        deleted_at=deleted_at,
     )
     db_session.add(document)
     await db_session.commit()
@@ -64,6 +69,100 @@ async def test_the_uploader_can_delete_their_own_document(
 
     assert response.status_code == 204
     assert (await client.get(LIST_URL)).json() == []
+
+
+async def test_deleting_records_who_deleted_it_and_when(
+    client: AsyncClient, db_session: AsyncSession, caller: Caller
+) -> None:
+    caller.role = Role.ADMIN
+    document = await _seed(
+        db_session, tenant_id=caller.tenant_id, uploader_id=await make_user(db_session)
+    )
+    await db_session.refresh(document)
+    assert document.deleted_at is None
+    assert document.deleted_by is None
+
+    await client.delete(_document_url(document.id))
+
+    await db_session.refresh(document)
+    assert document.ingestion_status == IngestionStatus.DELETED
+    assert document.deleted_by == caller.user_id
+    assert document.deleted_at is not None
+
+
+async def test_a_refused_delete_records_nothing(
+    client: AsyncClient, db_session: AsyncSession, caller: Caller
+) -> None:
+    document = await _seed(
+        db_session, tenant_id=caller.tenant_id, uploader_id=await make_user(db_session)
+    )
+
+    await client.delete(_document_url(document.id))
+
+    await db_session.refresh(document)
+    assert document.deleted_at is None
+    assert document.deleted_by is None
+
+
+async def test_deleting_twice_keeps_the_first_deletion_record(
+    client: AsyncClient, db_session: AsyncSession, caller: Caller
+) -> None:
+    document = await _seed(
+        db_session, tenant_id=caller.tenant_id, uploader_id=caller.user_id
+    )
+    await client.delete(_document_url(document.id))
+    await db_session.refresh(document)
+    first_deleted_at = document.deleted_at
+
+    response = await client.delete(_document_url(document.id))
+
+    assert response.status_code == 404
+    await db_session.refresh(document)
+    assert document.deleted_at == first_deleted_at
+
+
+async def test_the_database_refuses_a_deleted_status_without_a_deletion_time(
+    db_session: AsyncSession, caller: Caller
+) -> None:
+    with pytest.raises(IntegrityError):
+        await _seed(
+            db_session,
+            tenant_id=caller.tenant_id,
+            uploader_id=caller.user_id,
+            status=IngestionStatus.DELETED,
+            deleted_at=None,
+        )
+
+
+async def test_the_database_refuses_a_deletion_time_on_a_live_document(
+    db_session: AsyncSession, caller: Caller
+) -> None:
+    with pytest.raises(IntegrityError):
+        await _seed(
+            db_session,
+            tenant_id=caller.tenant_id,
+            uploader_id=caller.user_id,
+            status=IngestionStatus.READY,
+            deleted_at=datetime.now(UTC),
+        )
+
+
+async def test_removing_the_deleting_user_empties_deleted_by(
+    client: AsyncClient, db_session: AsyncSession, caller: Caller
+) -> None:
+    document = await _seed(
+        db_session, tenant_id=caller.tenant_id, uploader_id=caller.user_id
+    )
+    await client.delete(_document_url(document.id))
+
+    await db_session.execute(
+        text("DELETE FROM users WHERE id = :id"), {"id": caller.user_id}
+    )
+    await db_session.commit()
+
+    await db_session.refresh(document)
+    assert document.deleted_by is None
+    assert document.deleted_at is not None
 
 
 async def test_deleting_queues_a_purge_job_on_the_tasks_queue(
@@ -177,6 +276,8 @@ async def test_deleting_another_tenants_document_is_refused_without_side_effects
     assert job_queue.jobs == []
     await db_session.refresh(theirs)
     assert theirs.ingestion_status == IngestionStatus.READY
+    assert theirs.deleted_at is None
+    assert theirs.deleted_by is None
 
 
 async def test_deleting_a_document_that_does_not_exist_is_refused(
