@@ -12,6 +12,6 @@ Rejected: OpenAI `text-embedding-3-large` (1024 only by truncation, weakest docu
 ## Consequences
 
 - The OpenSearch mapping is `knn_vector`, dimension 1024, `cosinesimil`, HNSW on the Faiss engine; hybrid search with reciprocal rank fusion requires OpenSearch 2.19 or later.
-- The embedding model id is part of the index name (see ADR-0001); changing model means a new index and a reindex.
+- The embedding model id is part of the index name (see ADR-0012); changing model means a new index and a reindex.
 - Voyage publishes no language list for the v4 family, so the Golden Set must cover the languages the team actually uses (English and French at minimum) and be run against Jina v5 as a second candidate before this decision is treated as final.
 - The worker batches embedding requests by token count, not only by text count, because of the per-request token cap.

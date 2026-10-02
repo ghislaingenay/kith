@@ -94,6 +94,41 @@ services:
       timeout: 5s
       retries: 5
 
+  # ADR-0012: security is off for local development only.
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # Web UI for OpenSearch — http://localhost:5601
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.19.1
+    ports:
+      - "5601:5601"
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
   app:
     build: ../backend
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -114,6 +149,7 @@ services:
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       REDIS_URL: redis://redis:6379/0
+      SEARCH_URL: http://opensearch:9200
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
@@ -141,6 +177,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      opensearch:
+        condition: service_healthy
       mailpit:
         condition: service_healthy
     volumes:
@@ -164,6 +202,7 @@ services:
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       REDIS_URL: redis://redis:6379/0
+      SEARCH_URL: http://opensearch:9200
     depends_on:
       postgres:
         condition: service_healthy
@@ -172,6 +211,8 @@ services:
       minio-init:
         condition: service_completed_successfully
       redis:
+        condition: service_healthy
+      opensearch:
         condition: service_healthy
     volumes:
       - ../backend:/app
@@ -208,6 +249,7 @@ services:
         condition: service_healthy
 
 volumes:
+  opensearch-data:
   minio-data:
   postgres-data:
   redis-data:

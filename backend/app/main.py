@@ -9,6 +9,7 @@ from auth.router import router as auth_router
 from core.container import container
 from core.exceptions import register_exception_handlers
 from core.migrations import warn_if_schema_out_of_date
+from core.search.startup import require_search_index
 from documents.router import library_router
 from documents.router import router as uploads_router
 from tenants.router import router as tenants_router
@@ -27,6 +28,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     container.rate_limiter()
     container.mailer()
     container.job_queue()
+    await require_search_index(container.search_index())
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
     # connections rather than letting the process drop them.
@@ -34,6 +36,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await container.cache_provider().close()
     await container.rate_limiter().close()
     await container.job_queue().close()
+    await container.search_index().close()
 
 
 def set_api_version(version: str = "v1") -> str:

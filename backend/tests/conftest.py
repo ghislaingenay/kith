@@ -16,6 +16,7 @@ import pytest
 from arq.connections import RedisSettings
 from core.database import Base, DatabaseSettings, create_engine, create_session_factory
 from sqlalchemy.ext.asyncio import AsyncSession
+from testcontainers.community.opensearch import OpenSearchContainer
 from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
 
@@ -69,3 +70,22 @@ def _redis_settings(_redis_container: RedisContainer) -> RedisSettings:
         host=_redis_container.get_container_host_ip(),
         port=int(_redis_container.get_exposed_port(_redis_container.port)),
     )
+
+
+@pytest.fixture(scope="session")
+def _opensearch_container() -> Iterator[OpenSearchContainer]:
+    try:
+        with OpenSearchContainer(
+            image="opensearchproject/opensearch:2.19.1"
+        ) as opensearch:
+            yield opensearch
+    except Exception as exc:  # noqa: BLE001 — see `_postgres_container` above
+        pytest.skip(
+            f"Docker not available — skipping OpenSearch integration tests: {exc}"
+        )
+
+
+@pytest.fixture(scope="session")
+def _opensearch_url(_opensearch_container: OpenSearchContainer) -> str:
+    config = _opensearch_container.get_config()
+    return f"http://{config['host']}:{config['port']}"

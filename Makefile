@@ -3,7 +3,7 @@ COMPOSE = docker compose -f infra/docker-compose.yml
 # --rm to create a temporary container for running alembic commands
 ALEMBIC = $(COMPOSE) run --rm app alembic
 
-.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current
+.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create
 
 up:
 	$(COMPOSE) up -d
@@ -37,3 +37,9 @@ db-history:
 
 db-current:
 	$(ALEMBIC) current
+
+# ── search ──────────────────────────────────────────────────────────────────
+
+# create the OpenSearch index and alias; the API refuses to start without them
+search-index-create:
+	$(COMPOSE) run --rm app python -m core.search.create_index
