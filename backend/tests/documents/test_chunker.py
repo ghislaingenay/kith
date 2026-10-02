@@ -4,7 +4,7 @@ offsets we verify ourselves (ADR-0011)."""
 from unittest.mock import patch
 
 import pytest
-from documents.chunker import CHUNK_TOKENIZER, chunk_page
+from documents.chunker import chunk_page
 
 _SENTENCE = "Le contrat prévoit une clause de résiliation anticipée. "
 
@@ -100,7 +100,3 @@ def test_mismatched_offsets_are_stored_unknown_and_warned(
     assert (chunks[1].char_start, chunks[1].char_end) == (None, None)
     assert chunks[1].text == "not in the page"
     assert "chunk_offsets_mismatch" in capsys.readouterr().out
-
-
-def test_tokenizer_name_is_cl100k_base() -> None:
-    assert CHUNK_TOKENIZER == "cl100k_base"

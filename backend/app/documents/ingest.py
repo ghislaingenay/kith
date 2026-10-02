@@ -23,6 +23,7 @@ from pathlib import Path
 import pypdfium2
 from core.logging import setup_logger
 from core.storage.provider import StorageProvider
+from sqlalchemy.ext.asyncio import AsyncSession
 from documents.config import IngestionSettings
 from documents.exceptions import DocumentNotFoundError
 from documents.chunker import CHUNK_TOKENIZER, chunk_page
@@ -107,10 +108,7 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
             logger.exception(
                 "ingest_document_extraction_failed", document_id=document_id
             )
-            document.ingestion_status = IngestionStatus.UPLOADED
-            document.ingestion_stage = None
-            document.pages_extracted = None
-            await session.commit()
+            await _reset_to_uploaded(session, document)
             raise
 
         if total_pages and (
@@ -148,10 +146,7 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
             # `uploaded` and re-raises so the queue's retry fires.
             logger.exception("ingest_document_chunking_failed", document_id=document_id)
             await session.rollback()
-            document.ingestion_status = IngestionStatus.UPLOADED
-            document.ingestion_stage = None
-            document.pages_extracted = None
-            await session.commit()
+            await _reset_to_uploaded(session, document)
             raise
 
         if chunk_count == 0:
@@ -210,6 +205,13 @@ async def _chunk_pages(
     await repository.replace_chunks(document, chunks, metadata)
     await repository.session.commit()
     return len(chunks)
+
+
+async def _reset_to_uploaded(session: AsyncSession, document: Document) -> None:
+    document.ingestion_status = IngestionStatus.UPLOADED
+    document.ingestion_stage = None
+    document.pages_extracted = None
+    await session.commit()
 
 
 async def _download_to(storage: StorageProvider, key: str, path: Path) -> None:

@@ -271,11 +271,17 @@ class Chunk(Base):
     text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     indexing_status: Mapped[str] = mapped_column(
-        String, nullable=False, default=ChunkStatus.PENDING
+        String,
+        nullable=False,
+        default=ChunkStatus.PENDING,
+        server_default=ChunkStatus.PENDING,
     )
     indexing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedding_status: Mapped[str] = mapped_column(
-        String, nullable=False, default=ChunkStatus.PENDING
+        String,
+        nullable=False,
+        default=ChunkStatus.PENDING,
+        server_default=ChunkStatus.PENDING,
     )
     embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

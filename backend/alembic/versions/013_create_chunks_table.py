@@ -39,9 +39,9 @@ def upgrade() -> None:
         sa.Column("text", sa.Text(), nullable=False),
         sa.Column("text_hash", sa.String(length=64), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=False),
-        sa.Column("indexing_status", sa.String(), nullable=False),
+        sa.Column("indexing_status", sa.String(), server_default="pending", nullable=False),
         sa.Column("indexing_error", sa.Text(), nullable=True),
-        sa.Column("embedding_status", sa.String(), nullable=False),
+        sa.Column("embedding_status", sa.String(), server_default="pending", nullable=False),
         sa.Column("embedding_error", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
