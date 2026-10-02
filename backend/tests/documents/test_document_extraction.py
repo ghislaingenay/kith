@@ -25,7 +25,6 @@ from documents.models import (
     IngestionStatus,
 )
 from documents.repository import DocumentsRepository
-from documents.text_cleaner import clean_text
 from fpdf import FPDF
 from httpx import AsyncClient
 from main import app
@@ -502,9 +501,10 @@ async def test_a_pages_clean_text_is_stored_beside_its_unchanged_page_text(
 
     [page] = await _pages_of(db_session, document_id)
     assert page.text is not None
-    assert "for-" in page.text  # raw Page Text is left as extracted
-    assert page.clean_text == clean_text(page.text)
-    assert "formation" in page.clean_text
+    assert "for-" in page.text
+    assert page.clean_text == (
+        "Une formation générale excellente\n\nSecond fine paragraph"
+    )
 
 
 async def test_a_blank_page_has_empty_clean_text_and_is_not_a_failure(

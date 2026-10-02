@@ -36,7 +36,7 @@ def test_nfkc_normalises_ligatures_and_special_spaces() -> None:
 
 
 def test_control_and_zero_width_characters_are_removed() -> None:
-    assert clean_text("a\x00b\x07c\u200bd‌e﻿­f") == "abcdef"
+    assert clean_text("a\x00b\x07c\u200bd\u200ce\ufeff\u00adf") == "abcdef"
 
 
 def test_runs_of_whitespace_collapse_and_edges_are_trimmed() -> None:
@@ -62,3 +62,7 @@ def test_empty_and_whitespace_only_text_cleans_to_empty() -> None:
 def test_the_cleaner_has_a_version() -> None:
     assert isinstance(CLEANER_VERSION, int)
     assert CLEANER_VERSION >= 1
+
+
+def test_form_feed_vertical_tab_and_next_line_separate_words_like_line_breaks() -> None:
+    assert clean_text("ab\x0cc\x0bd\x85e") == "ab c d e"
