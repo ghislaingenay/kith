@@ -10,7 +10,7 @@ import pytest
 from core.circuit_breaker.breaker import CircuitBreaker
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.search.circuit_breaker_index import CircuitBreakerSearchIndex
-from core.search.exceptions import SearchUnavailableError
+from core.search.exceptions import SearchError, SearchUnavailableError
 from documents.config import IngestionSettings
 from documents.ingest import ingest_document
 from documents.keys import pending_upload_key
@@ -220,7 +220,7 @@ async def test_a_document_with_no_indexed_chunks_is_failed_with_a_readable_reaso
     document = await _document(db_session, document_id)
     assert document.ingestion_status == IngestionStatus.FAILED
     assert document.ingestion_stage == IngestionStage.INDEXING
-    assert "search service was unavailable" in document.ingestion_error
+    assert "search service could not index" in document.ingestion_error
     assert "SearchUnavailableError" not in document.ingestion_error
 
 
@@ -294,3 +294,27 @@ async def test_a_failure_outside_the_search_store_returns_to_uploaded_and_raises
     assert document.ingestion_status == IngestionStatus.UPLOADED
     assert document.ingestion_stage is None
     assert await _dead_letters(db_session, document_id) == []
+
+
+async def test_a_batch_the_store_rejects_is_recorded_without_retries_and_without_raising(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+    fake_index: FakeSearchIndex,
+) -> None:
+    document_id = await _upload(
+        client, storage, caller, make_text_pdf(["Known page text."])
+    )
+    fake_index.crash_with = SearchError("mapping conflict")
+
+    await _ingest(ingest_ctx, caller, document_id)
+
+    assert fake_index.index_calls == 1
+    (dead_letter,) = await _dead_letters(db_session, document_id)
+    assert dead_letter.attempts == 1
+    assert "mapping conflict" in dead_letter.error
+    assert (await _document(db_session, document_id)).ingestion_status == (
+        IngestionStatus.FAILED
+    )

@@ -26,7 +26,7 @@ from core.circuit_breaker.exceptions import CircuitOpenError
 from core.logging import setup_logger
 from core.retry.exceptions import RetryExhaustedError
 from core.retry.handler import RetryHandler
-from core.search.exceptions import SearchUnavailableError
+from core.search.exceptions import SearchError, SearchUnavailableError
 from core.search.provider import ChunkDocument, SearchIndex
 from core.storage.provider import StorageProvider
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,10 +178,10 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
                 repository, document, search_index, retry_handler, settings
             )
         except Exception:
-            # The search store being down is handled inside `_index_chunks`
-            # and never gets here; this is storage or the database failing,
-            # an infrastructure error like the others: back to `uploaded`,
-            # re-raise for the retry.
+            # A search store that is down or rejects a batch is recorded
+            # inside `_index_chunks` and never gets here; this is storage or
+            # the database failing, an infrastructure error like the others:
+            # back to `uploaded`, re-raise for the retry.
             logger.exception("ingest_document_indexing_failed", document_id=document_id)
             await session.rollback()
             await _reset_to_uploaded(session, document)
@@ -204,8 +204,9 @@ async def _call_search(
 ) -> _SearchFailure | None:
     """Runs one search call through the retry handler; returns how it failed,
     or `None` if it worked. Only the search store being unavailable is
-    retried. A call the circuit breaker rejected is not retried, and does
-    not count as an attempt."""
+    retried. A request the store rejected would fail the same way again, and
+    a call the circuit breaker rejected never reached the store: neither is
+    retried, and the second does not count as an attempt."""
     attempts = 0
 
     async def attempt() -> None:
@@ -219,6 +220,8 @@ async def _call_search(
         return _SearchFailure(str(exc.last_exception), attempts)
     except CircuitOpenError as exc:
         return _SearchFailure(str(exc), attempts - 1)
+    except SearchError as exc:
+        return _SearchFailure(str(exc), attempts)
     return None
 
 
@@ -233,8 +236,8 @@ async def _index_chunks(
     commit, under the Chunk rows' ids, replacing whatever an earlier attempt
     left in the index (ADR-0011).
 
-    A batch the search store still refuses after the retries is recorded, not
-    raised: its Chunks are marked `failed` and a dead-letter row is written,
+    A batch the search store still refuses after the retries, or rejects
+    outright, is recorded, not raised: its Chunks are marked `failed` and a dead-letter row is written,
     so the queue's own retry does not pile on top. The Document is then
     `partial` if any Chunk was indexed and `failed` if none was. Otherwise it
     waits at `embedding`: keyword-searchable, not ready."""
@@ -306,15 +309,15 @@ async def _index_chunks(
     elif indexed_count == 0:
         document.ingestion_status = IngestionStatus.FAILED
         document.ingestion_error = (
-            "The search service was unavailable, so none of this document's "
-            "text could be made searchable. Please try again later."
+            "The search service could not index this document, so none of "
+            "its text could be made searchable. Please try again later."
         )
     else:
         document.ingestion_status = IngestionStatus.PARTIAL
         document.ingestion_error = (
-            f"The search service was unavailable, so {failed_count} of "
-            f"{len(chunks)} passages of this document could not be made "
-            "searchable."
+            f"The search service could not index {failed_count} of "
+            f"{len(chunks)} passages of this document, so they could not be "
+            "made searchable."
         )
     await repository.session.commit()
 
