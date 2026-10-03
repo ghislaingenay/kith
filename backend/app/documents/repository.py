@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from documents.exceptions import DocumentNotFoundError
 from documents.models import (
     Chunk,
-    ChunkStatus,
     ChunkDeadLetter,
+    ChunkStatus,
     Document,
     DocumentPage,
     IngestionStatus,
