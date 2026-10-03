@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.documents.conftest import (
     Caller,
+    fast_retry_handler,
     finalize_upload,
     init_upload,
     make_text_pdf,
@@ -59,6 +60,7 @@ async def _run_ingest_worker_once(
         ctx["storage_provider"] = storage_provider
         ctx["ingestion_settings"] = IngestionSettings()
         ctx["search_index"] = search_index
+        ctx["retry_handler"] = fast_retry_handler()
 
     async def shutdown(ctx: dict) -> None:
         await ctx["_engine"].dispose()

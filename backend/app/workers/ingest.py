@@ -34,6 +34,7 @@ async def startup(ctx: dict) -> None:
     ctx["storage_provider"] = container.storage_provider()
     ctx["ingestion_settings"] = container.ingestion_settings()
     ctx["search_index"] = container.search_index()
+    ctx["retry_handler"] = container.retry_handler()
     logger.info("worker_ingest_started")
 
 

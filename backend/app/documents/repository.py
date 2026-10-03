@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from documents.exceptions import DocumentNotFoundError
 from documents.models import (
     Chunk,
+    ChunkDeadLetter,
     ChunkStatus,
     Document,
     DocumentPage,
@@ -322,14 +323,29 @@ class DocumentsRepository:
         )
         return result.scalars().all()
 
-    async def mark_chunks_indexed(self, document_id: uuid.UUID) -> None:
-        """Does not commit: the caller moves the Document to its next Stage
-        in the same transaction."""
+    async def mark_chunks_indexed(self, chunk_ids: Sequence[uuid.UUID]) -> None:
+        """Does not commit: the caller decides the transaction boundary."""
         await self.session.execute(
             update(Chunk)
-            .where(Chunk.document_id == document_id)
+            .where(Chunk.id.in_(chunk_ids))
             .values(indexing_status=ChunkStatus.DONE, indexing_error=None)
         )
+
+    async def mark_chunks_indexing_failed(
+        self, chunk_ids: Sequence[uuid.UUID], *, error: str
+    ) -> None:
+        """Does not commit: the caller decides the transaction boundary."""
+        await self.session.execute(
+            update(Chunk)
+            .where(Chunk.id.in_(chunk_ids))
+            .values(indexing_status=ChunkStatus.FAILED, indexing_error=error)
+        )
+
+    async def add_chunk_dead_letter(self, chunk_dead_letter: ChunkDeadLetter) -> None:
+        """Does not commit: written in the same transaction as the Chunks it
+        records as failed."""
+        self.session.add(chunk_dead_letter)
+        await self.session.flush()
 
     async def list_live_document_ids(self, *, tenant_id: uuid.UUID) -> list[uuid.UUID]:
         """The Tenant's non-deleted Documents: the only ones keyword search

@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.documents.conftest import (
     Caller,
+    fast_retry_handler,
     finalize_upload,
     init_upload,
     make_image_only_pdf,
@@ -60,6 +61,7 @@ async def ingest_ctx(
         "storage_provider": storage,
         "ingestion_settings": IngestionSettings(),
         "search_index": search_index,
+        "retry_handler": fast_retry_handler(),
     }
     await engine.dispose()
 
@@ -361,6 +363,7 @@ async def test_an_infrastructure_failure_propagates_instead_of_being_swallowed(
         "storage_provider": storage,
         "ingestion_settings": IngestionSettings(),
         "search_index": None,
+        "retry_handler": fast_retry_handler(),
     }
 
     with pytest.raises(StorageError):

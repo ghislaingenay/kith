@@ -57,6 +57,13 @@ class IngestionSettings(BaseSettings):
         validation_alias="INGESTION_CHUNK_OVERLAP_TOKENS",
     )
 
+    index_batch_size: int = Field(
+        default=100,
+        gt=0,
+        description="Chunks sent to the search store in one bulk request (ADR-0011)",
+        validation_alias="INGESTION_INDEX_BATCH_SIZE",
+    )
+
     @model_validator(mode="after")
     def _overlap_smaller_than_size(self) -> "IngestionSettings":
         if self.chunk_overlap_tokens >= self.chunk_size_tokens:

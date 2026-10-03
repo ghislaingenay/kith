@@ -20,6 +20,8 @@ from opensearchpy import AsyncOpenSearch
 from auth.dependencies import get_current_tenant, get_current_user
 from auth.schemas import AuthenticatedUser, TenantContext
 from core.jobs.dependencies import get_job_queue
+from core.retry.config import RetrySettings
+from core.retry.handler import RetryHandler
 from core.storage.dependencies import get_storage_provider
 from documents.dependencies import get_db_session
 from main import app
@@ -214,3 +216,10 @@ async def init_upload(client: AsyncClient, data: bytes, filename: str = "report.
 
 async def finalize_upload(client: AsyncClient, upload_id: str):
     return await client.post(f"/api/v1/uploads/{upload_id}/finalize")
+
+
+def fast_retry_handler() -> RetryHandler:
+    """The real retry handler's three attempts, without the waiting."""
+    return RetryHandler(
+        RetrySettings(max_attempts=3, base_delay=0, max_delay=0, jitter=False)
+    )
