@@ -11,6 +11,9 @@ from opensearchpy import AsyncOpenSearch, helpers
 from opensearchpy.exceptions import RequestError
 
 
+_MINIMUM_WORDS_MATCHED = "70%"
+
+
 class OpenSearchIndex(SearchIndex):
     def __init__(self, settings: SearchSettings) -> None:
         self._client = AsyncOpenSearch(hosts=[settings.search_url])
@@ -94,7 +97,19 @@ class OpenSearchIndex(SearchIndex):
                 "size": limit,
                 "query": {
                     "bool": {
-                        "must": [{"match": {"text": query}}],
+                        # Most of the words must match, in any order...
+                        "must": [
+                            {
+                                "match": {
+                                    "text": {
+                                        "query": query,
+                                        "minimum_should_match": _MINIMUM_WORDS_MATCHED,
+                                    }
+                                }
+                            }
+                        ],
+                        # ...and the exact phrase ranks higher.
+                        "should": [{"match_phrase": {"text": query}}],
                         "filter": [
                             {"term": {"tenant_id": str(tenant_id)}},
                             {

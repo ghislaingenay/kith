@@ -232,3 +232,26 @@ async def test_the_query_is_cleaned_like_the_chunks_were(
     assert await _search(db_session, search_index, caller, "  \ufb01nal  ")
     assert await _search(db_session, search_index, caller, "con\u00adtract")
     assert await _search(db_session, search_index, caller, "   ") == []
+
+
+async def test_most_query_words_must_match_and_the_exact_phrase_ranks_first(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+    search_index: SearchIndex,
+) -> None:
+    pdf = make_text_pdf(
+        [
+            "In twelve months the contract ends.",
+            "The contract ends twelve months later.",
+            "Our contract covers hardware only.",
+        ]
+    )
+    await _upload_and_ingest(client, storage, caller, ingest_ctx, pdf)
+
+    hits = await _search(db_session, search_index, caller, "contract ends twelve months")
+
+    # Page 3 shares one of four words, below the 70% needed.
+    assert [hit.page_number for hit in hits] == [2, 1]
