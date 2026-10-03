@@ -1,4 +1,4 @@
-"""create dead_letters table
+"""create chunk_dead_letters table
 
 Revision ID: 014
 Revises: 013
@@ -24,7 +24,7 @@ _STATUSES = "'open', 'resolved'"
 def upgrade() -> None:
     """Upgrade schema."""
     op.create_table(
-        "dead_letters",
+        "chunk_dead_letters",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("document_id", sa.UUID(), nullable=False),
@@ -46,15 +46,15 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint(f"status IN ({_STATUSES})", name="ck_dead_letters_status"),
+        sa.CheckConstraint(f"status IN ({_STATUSES})", name="ck_chunk_dead_letters_status"),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_dead_letters_document_id", "dead_letters", ["document_id"])
+    op.create_index("ix_chunk_dead_letters_document_id", "chunk_dead_letters", ["document_id"])
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_index("ix_dead_letters_document_id", table_name="dead_letters")
-    op.drop_table("dead_letters")
+    op.drop_index("ix_chunk_dead_letters_document_id", table_name="chunk_dead_letters")
+    op.drop_table("chunk_dead_letters")

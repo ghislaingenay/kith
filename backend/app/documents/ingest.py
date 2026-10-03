@@ -35,7 +35,7 @@ from documents.exceptions import DocumentNotFoundError
 from documents.chunker import CHUNK_TOKENIZER, chunk_page
 from documents.models import (
     Chunk,
-    DeadLetter,
+    ChunkDeadLetter,
     Document,
     DocumentPage,
     ExtractionMethod,
@@ -244,8 +244,8 @@ async def _index_chunks(
     async def record_failure(batch: Sequence[Chunk], failure: _SearchFailure) -> None:
         chunk_ids = [chunk.id for chunk in batch]
         await repository.mark_chunks_indexing_failed(chunk_ids, error=failure.error)
-        await repository.add_dead_letter(
-            DeadLetter(
+        await repository.add_chunk_dead_letter(
+            ChunkDeadLetter(
                 tenant_id=document.tenant_id,
                 document_id=document.id,
                 stage=IngestionStage.INDEXING,

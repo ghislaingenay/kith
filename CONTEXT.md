@@ -86,9 +86,9 @@ _Avoid_: State
 The step of Ingestion a `processing` Document is currently in: `extracting`, `chunking`, `indexing` (Chunk text made keyword-searchable), or `embedding` (vectors added afterwards). Shown as the sub-label under the Ingestion Status. Separate from Ingestion Status, which stays a coarse outcome.
 _Avoid_: Step, phase, progress (progress is pages extracted out of page count, not a Stage)
 
-**Dead Letter**:
-The record of a batch of Chunks that an Ingestion Stage gave up on after its retries: which Tenant, Document and Stage, the Chunk ids, the last error and how many attempts were made. It is `open` until a replay re-does exactly those Chunks from the text kept in Postgres, then `resolved`.
-_Avoid_: Failed job, error log
+**Chunk Dead Letter**:
+The record of a batch of Chunks that a Chunk-level Ingestion Stage (`indexing` or `embedding`) gave up on after its retries: which Tenant, Document and Stage, the Chunk ids, the last error and how many attempts were made. It is `open` until a replay re-does exactly those Chunks from the text kept in Postgres, then `resolved`.
+_Avoid_: Dead Letter on its own, failed job, error log
 
 **Page Text**:
 The text extracted from one page of a Document, exactly as the PDF supplies it. Kept unchanged as the raw record of what extraction produced.

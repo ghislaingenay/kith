@@ -348,25 +348,28 @@ class Upload(Base):
     )
 
 
-class DeadLetterStatus(StrEnum):
+class ChunkDeadLetterStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
 
 
-_DEAD_LETTER_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in DeadLetterStatus)
+_CHUNK_DEAD_LETTER_STATUS_VALUES = ", ".join(
+    f"'{status.value}'" for status in ChunkDeadLetterStatus
+)
 
-class DeadLetter(Base):
-    """A batch of Chunks a stage of Ingestion gave up on (ADR-0011), kept so
-    a replay can redo exactly those Chunks from the text stored in Postgres.
-    `resolved_at` is set when the replay succeeds."""
 
-    __tablename__ = "dead_letters"
+class ChunkDeadLetter(Base):
+    """A batch of Chunks that indexing or embedding gave up on (ADR-0011),
+    kept so a replay can redo exactly those Chunks from the text stored in
+    Postgres. `resolved_at` is set when the replay succeeds."""
+
+    __tablename__ = "chunk_dead_letters"
     __table_args__ = (
         CheckConstraint(
-            f"status IN ({_DEAD_LETTER_STATUS_VALUES})",
-            name="ck_dead_letters_status",
+            f"status IN ({_CHUNK_DEAD_LETTER_STATUS_VALUES})",
+            name="ck_chunk_dead_letters_status",
         ),
-        Index("ix_dead_letters_document_id", "document_id"),
+        Index("ix_chunk_dead_letters_document_id", "document_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -383,7 +386,8 @@ class DeadLetter(Base):
         nullable=False,
     )
     stage: Mapped[str] = mapped_column(String, nullable=False)
-    """The `IngestionStage` the batch failed in."""
+    """The Chunk-level `IngestionStage` the batch failed in: `indexing` or
+    `embedding`."""
     chunk_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False
     )
@@ -394,8 +398,8 @@ class DeadLetter(Base):
     status: Mapped[str] = mapped_column(
         String,
         nullable=False,
-        default=DeadLetterStatus.OPEN,
-        server_default=DeadLetterStatus.OPEN,
+        default=ChunkDeadLetterStatus.OPEN,
+        server_default=ChunkDeadLetterStatus.OPEN,
     )
     resolved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

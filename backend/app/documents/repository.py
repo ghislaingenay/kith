@@ -13,7 +13,7 @@ from documents.exceptions import DocumentNotFoundError
 from documents.models import (
     Chunk,
     ChunkStatus,
-    DeadLetter,
+    ChunkDeadLetter,
     Document,
     DocumentPage,
     IngestionStatus,
@@ -341,10 +341,10 @@ class DocumentsRepository:
             .values(indexing_status=ChunkStatus.FAILED, indexing_error=error)
         )
 
-    async def add_dead_letter(self, dead_letter: DeadLetter) -> None:
+    async def add_chunk_dead_letter(self, chunk_dead_letter: ChunkDeadLetter) -> None:
         """Does not commit: written in the same transaction as the Chunks it
         records as failed."""
-        self.session.add(dead_letter)
+        self.session.add(chunk_dead_letter)
         await self.session.flush()
 
     async def list_live_document_ids(self, *, tenant_id: uuid.UUID) -> list[uuid.UUID]:

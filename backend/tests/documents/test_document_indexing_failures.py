@@ -17,8 +17,8 @@ from documents.keys import pending_upload_key
 from documents.models import (
     Chunk,
     ChunkStatus,
-    DeadLetter,
-    DeadLetterStatus,
+    ChunkDeadLetter,
+    ChunkDeadLetterStatus,
     Document,
     IngestionStage,
     IngestionStatus,
@@ -112,13 +112,13 @@ async def _chunks(db_session: AsyncSession, document_id: uuid.UUID) -> list[Chun
 
 async def _dead_letters(
     db_session: AsyncSession, document_id: uuid.UUID
-) -> list[DeadLetter]:
+) -> list[ChunkDeadLetter]:
     return list(
         (
             await db_session.execute(
-                select(DeadLetter)
-                .where(DeadLetter.document_id == document_id)
-                .order_by(DeadLetter.created_at, DeadLetter.attempts.desc())
+                select(ChunkDeadLetter)
+                .where(ChunkDeadLetter.document_id == document_id)
+                .order_by(ChunkDeadLetter.created_at, ChunkDeadLetter.attempts.desc())
             )
         ).scalars()
     )
@@ -168,14 +168,14 @@ async def test_a_batch_that_fails_three_times_is_recorded_and_the_job_does_not_r
     (chunk,) = await _chunks(db_session, document_id)
     assert chunk.indexing_status == ChunkStatus.FAILED
     assert chunk.indexing_error
-    (dead_letter,) = await _dead_letters(db_session, document_id)
-    assert dead_letter.tenant_id == caller.tenant_id
-    assert dead_letter.stage == IngestionStage.INDEXING
-    assert dead_letter.chunk_ids == [chunk.id]
-    assert dead_letter.error == chunk.indexing_error
-    assert dead_letter.attempts == 3
-    assert dead_letter.status == DeadLetterStatus.OPEN
-    assert dead_letter.resolved_at is None
+    (chunk_dead_letter,) = await _dead_letters(db_session, document_id)
+    assert chunk_dead_letter.tenant_id == caller.tenant_id
+    assert chunk_dead_letter.stage == IngestionStage.INDEXING
+    assert chunk_dead_letter.chunk_ids == [chunk.id]
+    assert chunk_dead_letter.error == chunk.indexing_error
+    assert chunk_dead_letter.attempts == 3
+    assert chunk_dead_letter.status == ChunkDeadLetterStatus.OPEN
+    assert chunk_dead_letter.resolved_at is None
     assert fake_index.index_calls == 3
 
 
@@ -267,8 +267,8 @@ async def test_an_unavailable_store_on_cleanup_fails_every_chunk_without_indexin
     await _ingest(ingest_ctx, caller, document_id)
 
     assert fake_index.index_calls == 0
-    (dead_letter,) = await _dead_letters(db_session, document_id)
-    assert len(dead_letter.chunk_ids) == 3
+    (chunk_dead_letter,) = await _dead_letters(db_session, document_id)
+    assert len(chunk_dead_letter.chunk_ids) == 3
     assert (await _document(db_session, document_id)).ingestion_status == (
         IngestionStatus.FAILED
     )
