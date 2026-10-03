@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pypdfium2
 from core.logging import setup_logger
+from core.search.provider import ChunkDocument, SearchIndex
 from core.storage.provider import StorageProvider
 from sqlalchemy.ext.asyncio import AsyncSession
 from documents.config import IngestionSettings
@@ -58,6 +59,7 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
     session_factory = ctx["db_session_factory"]
     storage: StorageProvider = ctx["storage_provider"]
     settings: IngestionSettings = ctx["ingestion_settings"]
+    search_index: SearchIndex = ctx["search_index"]
     async with session_factory() as session:
         repository = DocumentsRepository(session)
         try:
@@ -161,6 +163,49 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
         logger.info(
             "ingest_document_chunked", document_id=document_id, chunks=chunk_count
         )
+
+        document.ingestion_stage = IngestionStage.INDEXING
+        await session.commit()
+        try:
+            await _index_chunks(repository, document, search_index)
+        except Exception:
+            # The search store being unreachable is an infrastructure error
+            # like the others: back to `uploaded`, re-raise for the retry.
+            logger.exception("ingest_document_indexing_failed", document_id=document_id)
+            await session.rollback()
+            await _reset_to_uploaded(session, document)
+            raise
+        logger.info("ingest_document_indexed", document_id=document_id)
+
+
+async def _index_chunks(
+    repository: DocumentsRepository,
+    document: Document,
+    search_index: SearchIndex,
+) -> None:
+    """Bulk-indexes the Document's Chunks after the Postgres commit, under
+    the Chunk rows' ids, replacing whatever an earlier attempt left in the
+    index. The Document then waits at `embedding`: keyword-searchable, not
+    ready (ADR-0011)."""
+    chunks = await repository.list_chunks(document.id)
+    await search_index.replace_document_chunks(
+        tenant_id=document.tenant_id,
+        document_id=document.id,
+        chunks=[
+            ChunkDocument(
+                id=chunk.id,
+                tenant_id=chunk.tenant_id,
+                document_id=chunk.document_id,
+                page_number=chunk.page_number,
+                ordinal=chunk.ordinal,
+                text=chunk.text,
+            )
+            for chunk in chunks
+        ],
+    )
+    await repository.mark_chunks_indexed(document.id)
+    document.ingestion_stage = IngestionStage.EMBEDDING
+    await repository.session.commit()
 
 
 async def _chunk_pages(

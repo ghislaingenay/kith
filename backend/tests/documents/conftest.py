@@ -15,12 +15,16 @@ from pypdf import PdfReader, PdfWriter
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from opensearchpy import AsyncOpenSearch
+
 from auth.dependencies import get_current_tenant, get_current_user
 from auth.schemas import AuthenticatedUser, TenantContext
 from core.jobs.dependencies import get_job_queue
 from core.storage.dependencies import get_storage_provider
 from documents.dependencies import get_db_session
 from main import app
+from core.search.config import SearchSettings
+from core.search.opensearch_index import OpenSearchIndex
 from tenants.models import Tenant
 from tenants.permissions import Role
 from tests.support.fake_job_queue import FakeJobQueue
@@ -59,6 +63,18 @@ async def make_user(db_session: AsyncSession) -> uuid.UUID:
 @pytest.fixture
 def storage() -> FakeStorageProvider:
     return FakeStorageProvider()
+
+
+@pytest.fixture
+async def search_index(_opensearch_url: str) -> AsyncIterator[OpenSearchIndex]:
+    """The real OpenSearch container, with the shared index created and
+    emptied after each test."""
+    index = OpenSearchIndex(SearchSettings(search_url=_opensearch_url))
+    await index.ensure_index()
+    yield index
+    await index.close()
+    async with AsyncOpenSearch(hosts=[_opensearch_url]) as client:
+        await client.indices.delete(index="kith-chunks-*", ignore=[404])
 
 
 @pytest.fixture

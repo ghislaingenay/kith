@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from core.search.provider import SearchIndex
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.storage.dependencies import get_storage_provider
 from core.storage.exceptions import StorageError
@@ -47,7 +48,7 @@ _ACCENTED_TEXT = "Café résumé naïve façade"
 
 @pytest.fixture
 async def ingest_ctx(
-    _database_url: str, storage: FakeStorageProvider
+    _database_url: str, storage: FakeStorageProvider, search_index: SearchIndex
 ) -> AsyncIterator[dict]:
     """A `ctx` dict shaped the way the worker builds one at startup
     (`workers/ingest.py`): a real `db_session_factory` against the same
@@ -58,6 +59,7 @@ async def ingest_ctx(
         "db_session_factory": create_session_factory(engine),
         "storage_provider": storage,
         "ingestion_settings": IngestionSettings(),
+        "search_index": search_index,
     }
     await engine.dispose()
 
@@ -310,7 +312,7 @@ async def test_pages_extracted_is_written_in_batches_of_five_not_every_page(
     assert len(await _pages_of(db_session, document_id)) == 7
 
 
-async def test_a_completed_run_leaves_the_document_at_processing_chunking(
+async def test_a_completed_run_leaves_the_document_at_processing_embedding(
     client: AsyncClient,
     storage: FakeStorageProvider,
     caller: Caller,
@@ -325,7 +327,7 @@ async def test_a_completed_run_leaves_the_document_at_processing_chunking(
 
     document = await _document(db_session, document_id)
     assert document.ingestion_status == IngestionStatus.PROCESSING
-    assert document.ingestion_stage == IngestionStage.CHUNKING
+    assert document.ingestion_stage == IngestionStage.EMBEDDING
     assert document.pages_extracted == 1
 
 
@@ -358,6 +360,7 @@ async def test_an_infrastructure_failure_propagates_instead_of_being_swallowed(
         "db_session_factory": create_session_factory(engine),
         "storage_provider": storage,
         "ingestion_settings": IngestionSettings(),
+        "search_index": None,
     }
 
     with pytest.raises(StorageError):
@@ -421,7 +424,7 @@ async def test_a_document_exactly_at_the_success_ratio_stays_processing(
 
     document = await _document(db_session, document_id)
     assert document.ingestion_status == IngestionStatus.PROCESSING
-    assert document.ingestion_stage == IngestionStage.CHUNKING
+    assert document.ingestion_stage == IngestionStage.EMBEDDING
     assert document.ingestion_error is None
 
 

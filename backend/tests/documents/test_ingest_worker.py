@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 import pytest
 from arq.connections import RedisSettings
 from arq.worker import Worker
+from core.search.provider import SearchIndex
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.jobs.arq_queue import ArqJobQueue
 from documents.config import IngestionSettings
@@ -45,6 +46,7 @@ async def _run_ingest_worker_once(
     redis_settings: RedisSettings,
     database_url: str,
     storage_provider: FakeStorageProvider,
+    search_index: SearchIndex,
 ) -> None:
     """Runs a real arq worker against `redis_settings` in burst mode: it
     processes whatever is already queued on `ingest`, then returns — a
@@ -56,6 +58,7 @@ async def _run_ingest_worker_once(
         ctx["db_session_factory"] = create_session_factory(engine)
         ctx["storage_provider"] = storage_provider
         ctx["ingestion_settings"] = IngestionSettings()
+        ctx["search_index"] = search_index
 
     async def shutdown(ctx: dict) -> None:
         await ctx["_engine"].dispose()
@@ -80,12 +83,15 @@ async def test_an_enqueued_job_is_picked_up_and_executed_by_a_real_worker(
     db_session: AsyncSession,
     _redis_settings: RedisSettings,
     _database_url: str,
+    search_index: SearchIndex,
 ) -> None:
     upload_id = (await init_upload(client, _PDF)).json()["upload_id"]
     storage.put_object(pending_upload_key(caller.tenant_id, uuid.UUID(upload_id)), _PDF)
     document_id = (await finalize_upload(client, upload_id)).json()["id"]
 
-    await _run_ingest_worker_once(_redis_settings, _database_url, storage)
+    await _run_ingest_worker_once(
+        _redis_settings, _database_url, storage, search_index
+    )
 
     document = (
         await db_session.execute(
@@ -93,7 +99,7 @@ async def test_an_enqueued_job_is_picked_up_and_executed_by_a_real_worker(
         )
     ).scalar_one()
     assert document.ingestion_status == IngestionStatus.PROCESSING
-    assert document.ingestion_stage == IngestionStage.CHUNKING
+    assert document.ingestion_stage == IngestionStage.EMBEDDING
 
 
 async def test_a_job_for_a_document_already_past_uploaded_is_left_alone(
@@ -103,6 +109,7 @@ async def test_a_job_for_a_document_already_past_uploaded_is_left_alone(
     db_session: AsyncSession,
     _redis_settings: RedisSettings,
     _database_url: str,
+    search_index: SearchIndex,
 ) -> None:
     upload_id = (await init_upload(client, _PDF)).json()["upload_id"]
     storage.put_object(pending_upload_key(caller.tenant_id, uuid.UUID(upload_id)), _PDF)
@@ -116,7 +123,9 @@ async def test_a_job_for_a_document_already_past_uploaded_is_left_alone(
     document.ingestion_status = IngestionStatus.FAILED
     await db_session.commit()
 
-    await _run_ingest_worker_once(_redis_settings, _database_url, storage)
+    await _run_ingest_worker_once(
+        _redis_settings, _database_url, storage, search_index
+    )
 
     await db_session.refresh(document)
     assert document.ingestion_status == IngestionStatus.FAILED

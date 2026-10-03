@@ -5,7 +5,7 @@ index and needs a reindex."""
 import re
 
 INDEX_ALIAS = "kith-chunks"
-MAPPING_VERSION = 1
+MAPPING_VERSION = 2
 VECTOR_DIMENSION = 1024
 
 _TEXT_ANALYZER = "kith_text"
@@ -115,6 +115,8 @@ def index_body() -> dict:
                 "document_id": {"type": "keyword"},
                 # A number, so a Citation can be sorted and filtered by page.
                 "page_number": {"type": "integer"},
+                # The Chunk's position in its Document, to order hits.
+                "ordinal": {"type": "integer"},
             },
         },
         # The index is created already behind the alias, so the application
