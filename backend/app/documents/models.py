@@ -17,7 +17,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.database import Base
@@ -337,6 +337,69 @@ class Upload(Base):
     )
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class DeadLetterStatus(StrEnum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+
+
+_DEAD_LETTER_STATUS_VALUES = ", ".join(f"'{status.value}'" for status in DeadLetterStatus)
+
+class DeadLetter(Base):
+    """A batch of Chunks a stage of Ingestion gave up on (ADR-0011), kept so
+    a replay can redo exactly those Chunks from the text stored in Postgres.
+    `resolved_at` is set when the replay succeeds."""
+
+    __tablename__ = "dead_letters"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_DEAD_LETTER_STATUS_VALUES})",
+            name="ck_dead_letters_status",
+        ),
+        Index("ix_dead_letters_document_id", "document_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stage: Mapped[str] = mapped_column(String, nullable=False)
+    """The `IngestionStage` the batch failed in."""
+    chunk_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False
+    )
+    error: Mapped[str] = mapped_column(Text, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    """How many times the batch was tried; 0 when the circuit breaker
+    rejected it without a call."""
+    status: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        default=DeadLetterStatus.OPEN,
+        server_default=DeadLetterStatus.OPEN,
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

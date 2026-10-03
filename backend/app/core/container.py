@@ -2,6 +2,8 @@
 
 from dependency_injector import containers, providers
 
+from core.circuit_breaker.breaker import CircuitBreaker
+from core.circuit_breaker.config import CircuitBreakerSettings
 from core.cache.config import CacheSettings
 from core.cache.factory import CacheProviderFactory
 from core.cors import CorsSettings
@@ -14,6 +16,7 @@ from core.ratelimit.factory import RateLimiterFactory
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.search.config import SearchSettings
+from core.search.exceptions import SearchUnavailableError
 from core.search.factory import SearchIndexFactory
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
@@ -73,13 +76,27 @@ class Container(containers.DeclarativeContainer):
     # opens on the first enqueue.
     job_queue = providers.Singleton(JobQueueFactory.create, settings=cache_settings)
 
+    circuit_breaker_settings = providers.Singleton(CircuitBreakerSettings)
+
+    # One breaker for the whole process, so every job and batch sees the same
+    # state of the search store (ADR-0011).
+    search_circuit_breaker = providers.Singleton(
+        CircuitBreaker,
+        name="search",
+        failure_threshold=circuit_breaker_settings.provided.failure_threshold,
+        reset_timeout_seconds=circuit_breaker_settings.provided.reset_timeout_seconds,
+        failure_types=(SearchUnavailableError,),
+    )
+
     search_settings = providers.Singleton(SearchSettings)
 
     # Same eager-init note as storage_provider: call `container.search_index()`
     # during startup/lifespan so a bad SEARCH_URL fails fast. The client
     # connects on first use.
     search_index = providers.Singleton(
-        SearchIndexFactory.create, settings=search_settings
+        SearchIndexFactory.create,
+        settings=search_settings,
+        breaker=search_circuit_breaker,
     )
 
     upload_settings = providers.Singleton(UploadSettings)

@@ -17,3 +17,9 @@ class SearchIndexMissingError(SearchError):
             "Create it with `make search-index-create`."
         )
         self.alias = alias
+
+
+class SearchUnavailableError(SearchError):
+    """The search store could not be reached or refused the request. The only
+    failure the retry handler retries and the circuit breaker counts."""
+

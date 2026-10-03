@@ -50,16 +50,18 @@ class SearchIndex(ABC):
         """Whether the alias exists, without creating anything."""
 
     @abstractmethod
-    async def replace_document_chunks(
-        self,
-        *,
-        tenant_id: uuid.UUID,
-        document_id: uuid.UUID,
-        chunks: Sequence[ChunkDocument],
+    async def delete_document_chunks(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
     ) -> None:
-        """Make `chunks` the only Chunks the index holds for the Document: any
-        earlier ones (a previous attempt's) are removed first. Searchable
-        once this returns."""
+        """Remove every Chunk the index holds for the Document (a previous
+        attempt's, before it is indexed again). Raises
+        `SearchUnavailableError` when the store cannot be reached."""
+
+    @abstractmethod
+    async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
+        """Bulk-index one batch of Chunks under their ids; searchable once
+        this returns. Raises `SearchUnavailableError` when the store cannot
+        be reached or rejects any of them."""
 
     @abstractmethod
     async def search_chunks(

@@ -1,17 +1,55 @@
 """`SearchIndex` backed by OpenSearch."""
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 
 from core.search.config import SearchSettings
-from core.search.exceptions import ALREADY_EXISTS_ERROR, SearchError
+from core.search.exceptions import (
+    ALREADY_EXISTS_ERROR,
+    SearchError,
+    SearchUnavailableError,
+)
 from core.search.mapping import INDEX_ALIAS, index_body, versioned_index_name
 from core.search.provider import ChunkDocument, ChunkHit, SearchIndex
 from opensearchpy import AsyncOpenSearch, helpers
-from opensearchpy.exceptions import RequestError
+from opensearchpy.exceptions import OpenSearchException, RequestError
 
 
 _MINIMUM_WORDS_MATCHED = "70%"
+
+
+def _is_transient_status(status: object) -> bool:
+    # A connection or timeout error carries no HTTP status (a string such as
+    # "N/A"); a busy or failing store answers 429 or 5xx.
+    return not isinstance(status, int) or status == 429 or status >= 500
+
+
+def _is_transient(error: OpenSearchException) -> bool:
+    if isinstance(error, helpers.BulkIndexError):
+        return any(
+            _is_transient_status(next(iter(item.values())).get("status"))
+            for item in error.errors
+        )
+    return _is_transient_status(getattr(error, "status_code", None))
+
+
+@contextmanager
+def _store_errors(action: str) -> Iterator[None]:
+    """Turns a failure of the store into the application's own errors: one
+    worth retrying (`SearchUnavailableError`: unreachable, timing out,
+    overloaded) or one that would fail the same way again (a rejected
+    request, a mapping conflict), which must not trip the circuit breaker
+    for every other Tenant."""
+    try:
+        yield
+    except OpenSearchException as error:
+        detail = (
+            error.errors[:1] if isinstance(error, helpers.BulkIndexError) else error
+        )
+        if _is_transient(error):
+            raise SearchUnavailableError(f"{action} failed: {detail}") from error
+        raise SearchError(f"{action} was rejected: {detail}") from error
 
 
 class OpenSearchIndex(SearchIndex):
@@ -36,27 +74,26 @@ class OpenSearchIndex(SearchIndex):
     async def alias_exists(self) -> bool:
         return await self._client.indices.exists_alias(name=INDEX_ALIAS)
 
-    async def replace_document_chunks(
-        self,
-        *,
-        tenant_id: uuid.UUID,
-        document_id: uuid.UUID,
-        chunks: Sequence[ChunkDocument],
+    async def delete_document_chunks(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
     ) -> None:
-        await self._client.delete_by_query(
-            index=INDEX_ALIAS,
-            body={
-                "query": {
-                    "bool": {
-                        "filter": [
-                            {"term": {"tenant_id": str(tenant_id)}},
-                            {"term": {"document_id": str(document_id)}},
-                        ]
+        with _store_errors("Deleting Chunks"):
+            await self._client.delete_by_query(
+                index=INDEX_ALIAS,
+                body={
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                {"term": {"tenant_id": str(tenant_id)}},
+                                {"term": {"document_id": str(document_id)}},
+                            ]
+                        }
                     }
-                }
-            },
-            routing=str(tenant_id),
-        )
+                },
+                routing=str(tenant_id),
+            )
+
+    async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         actions = [
             {
                 "_op_type": "index",
@@ -74,11 +111,9 @@ class OpenSearchIndex(SearchIndex):
             for chunk in chunks
         ]
         # Raises on any failed item, so the caller never marks a half-indexed
-        # Document as indexed.
-        try:
+        # batch as indexed.
+        with _store_errors("Bulk indexing"):
             await helpers.async_bulk(self._client, actions, refresh=True)
-        except helpers.BulkIndexError as error:
-            raise SearchError(f"Bulk indexing failed: {error.errors[:1]}") from error
 
     async def search_chunks(
         self,
@@ -90,38 +125,39 @@ class OpenSearchIndex(SearchIndex):
     ) -> list[ChunkHit]:
         if not document_ids:
             return []
-        response = await self._client.search(
-            index=INDEX_ALIAS,
-            routing=str(tenant_id),
-            body={
-                "size": limit,
-                "query": {
-                    "bool": {
-                        # Most of the words must match, in any order...
-                        "must": [
-                            {
-                                "match": {
-                                    "text": {
-                                        "query": query,
-                                        "minimum_should_match": _MINIMUM_WORDS_MATCHED,
+        with _store_errors("Searching Chunks"):
+            response = await self._client.search(
+                index=INDEX_ALIAS,
+                routing=str(tenant_id),
+                body={
+                    "size": limit,
+                    "query": {
+                        "bool": {
+                            # Most of the words must match, in any order...
+                            "must": [
+                                {
+                                    "match": {
+                                        "text": {
+                                            "query": query,
+                                            "minimum_should_match": _MINIMUM_WORDS_MATCHED,
+                                        }
                                     }
                                 }
-                            }
-                        ],
-                        # ...and the exact phrase ranks higher.
-                        "should": [{"match_phrase": {"text": query}}],
-                        "filter": [
-                            {"term": {"tenant_id": str(tenant_id)}},
-                            {
-                                "terms": {
-                                    "document_id": [str(document_id) for document_id in document_ids]
-                                }
-                            },
-                        ],
-                    }
+                            ],
+                            # ...and the exact phrase ranks higher.
+                            "should": [{"match_phrase": {"text": query}}],
+                            "filter": [
+                                {"term": {"tenant_id": str(tenant_id)}},
+                                {
+                                    "terms": {
+                                        "document_id": [str(document_id) for document_id in document_ids]
+                                    }
+                                },
+                            ],
+                        }
+                    },
                 },
-            },
-        )
+            )
         return [
             ChunkHit(
                 chunk_id=uuid.UUID(hit["_id"]),

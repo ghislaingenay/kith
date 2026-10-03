@@ -1,11 +1,29 @@
-"""An in-memory `SearchIndex` stand-in that records whether the index and
-alias were created."""
+"""An in-memory `SearchIndex` stand-in. It records whether the index and
+alias were created, and can be scripted to fail the way a search store that
+is down does."""
+
+import uuid
+from collections.abc import Sequence
+
+from core.search.exceptions import SearchUnavailableError
+from core.search.provider import ChunkDocument, ChunkHit
 
 
 class FakeSearchIndex:
     def __init__(self, *, index_exists: bool = False) -> None:
         self.index_exists = index_exists
         self.ensure_calls = 0
+        self.index_calls = 0
+        self.delete_calls = 0
+        self.indexed: list[ChunkDocument] = []
+        self.index_outcomes: list[bool] = []
+        """What each `index_chunks` call does, in order: `True` works, `False`
+        raises. Once used up, `down` decides."""
+        self.down = False
+        self.delete_down = False
+        self.crash_with: Exception | None = None
+        """Raised by `index_chunks` instead of anything else, to stand for a
+        failure that is not the search store being unavailable."""
 
     @property
     def alias(self) -> str:
@@ -17,6 +35,33 @@ class FakeSearchIndex:
 
     async def alias_exists(self) -> bool:
         return self.index_exists
+
+    async def delete_document_chunks(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        self.delete_calls += 1
+        if self.delete_down:
+            raise SearchUnavailableError("fake search store is down")
+        self.indexed = [c for c in self.indexed if c.document_id != document_id]
+
+    async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
+        self.index_calls += 1
+        if self.crash_with is not None:
+            raise self.crash_with
+        works = self.index_outcomes.pop(0) if self.index_outcomes else not self.down
+        if not works:
+            raise SearchUnavailableError("fake search store is down")
+        self.indexed.extend(chunks)
+
+    async def search_chunks(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        document_ids: Sequence[uuid.UUID],
+        query: str,
+        limit: int,
+    ) -> list[ChunkHit]:
+        raise NotImplementedError
 
     async def close(self) -> None:
         pass
