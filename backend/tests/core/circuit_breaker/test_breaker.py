@@ -260,3 +260,15 @@ async def test_a_slow_call_that_fails_during_the_probe_is_not_the_probes_verdict
 
     assert await probe_call == "ok"
     assert await breaker.call(store.call) == "ok"
+
+
+async def test_the_open_error_names_the_service_the_breaker_guards(
+    breaker: CircuitBreaker, store: _Store
+) -> None:
+    await _fail(breaker, store, 5)
+
+    with pytest.raises(CircuitOpenError) as raised:
+        await breaker.call(store.call)
+
+    assert raised.value.service == "test"
+    assert "'test'" in str(raised.value)

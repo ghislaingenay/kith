@@ -87,7 +87,7 @@ class CircuitBreaker:
         logger.warning(
             "circuit_breaker_call_rejected", breaker=self._name, state=self._state
         )
-        raise CircuitOpenError
+        raise CircuitOpenError(self._name)
 
     def _transition(self, new_state: _State) -> None:
         previous = self._state
