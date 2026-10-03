@@ -13,6 +13,8 @@ from core.mail.factory import MailerFactory
 from core.ratelimit.factory import RateLimiterFactory
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
+from core.search.config import SearchSettings
+from core.search.factory import SearchIndexFactory
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
 from documents.config import IngestionSettings, UploadSettings
@@ -70,6 +72,15 @@ class Container(containers.DeclarativeContainer):
     # `container.job_queue()` during startup/lifespan. The Redis pool itself
     # opens on the first enqueue.
     job_queue = providers.Singleton(JobQueueFactory.create, settings=cache_settings)
+
+    search_settings = providers.Singleton(SearchSettings)
+
+    # Same eager-init note as storage_provider: call `container.search_index()`
+    # during startup/lifespan so a bad SEARCH_URL fails fast. The client
+    # connects on first use.
+    search_index = providers.Singleton(
+        SearchIndexFactory.create, settings=search_settings
+    )
 
     upload_settings = providers.Singleton(UploadSettings)
 

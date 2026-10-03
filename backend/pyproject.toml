@@ -14,6 +14,7 @@ dependencies = [
     "fastapi[standard]>=0.141.1",
     "gunicorn>=26.1.0",
     "langchain-text-splitters>=1.1.2",
+    "opensearch-py[async]>=2.8",
     "pypdfium2>=5.13.0",
     "pytest>=9.1.1",
     "redis>=8.1.0",
@@ -77,5 +78,5 @@ dev = [
     "pypdf>=6.19.0",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "testcontainers[minio,postgres,redis]>=4.15.0",
+    "testcontainers[minio,opensearch,postgres,redis]>=4.15.0",
 ]
