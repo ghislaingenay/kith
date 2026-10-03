@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from unittest.mock import patch
 
 import pytest
+from core.search.provider import SearchIndex
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from documents.config import IngestionSettings
 from documents.ingest import ingest_document
@@ -63,13 +64,14 @@ def _prose(sentence: str, repeats: int) -> str:
 
 @pytest.fixture
 async def ingest_ctx(
-    _database_url: str, storage: FakeStorageProvider
+    _database_url: str, storage: FakeStorageProvider, search_index: SearchIndex
 ) -> AsyncIterator[dict]:
     engine = create_engine(DatabaseSettings(database_url=_database_url))
     yield {
         "db_session_factory": create_session_factory(engine),
         "storage_provider": storage,
         "ingestion_settings": IngestionSettings(),
+        "search_index": search_index,
     }
     await engine.dispose()
 
@@ -144,11 +146,11 @@ async def test_a_multi_page_pdf_yields_page_bounded_chunks_with_full_records(
         assert chunk.text_hash == hashlib.sha256(chunk.text.encode()).hexdigest()
         assert chunk.token_count > 0
         assert chunk.tenant_id == caller.tenant_id
-        assert chunk.indexing_status == ChunkStatus.PENDING
+        assert chunk.indexing_status == ChunkStatus.DONE
         assert chunk.embedding_status == ChunkStatus.PENDING
     document = await _document(db_session, document_id)
     assert document.ingestion_status == IngestionStatus.PROCESSING
-    assert document.ingestion_stage == IngestionStage.CHUNKING
+    assert document.ingestion_stage == IngestionStage.EMBEDDING
 
 
 @pytest.mark.parametrize("sentence", [_FRENCH, _ENGLISH], ids=["french", "english"])

@@ -9,7 +9,7 @@ from core.search.opensearch_index import OpenSearchIndex
 from opensearchpy import AsyncOpenSearch
 
 _ALIAS = "kith-chunks"
-_VERSIONED_INDEX = "kith-chunks-voyage-4-large-1024-v1"
+_VERSIONED_INDEX = "kith-chunks-voyage-4-large-1024-v2"
 _VECTOR_DIMENSION = 1024
 
 
@@ -60,7 +60,7 @@ async def test_ensure_index_creates_the_versioned_index_behind_the_alias(
         "mappings"
     ]
     assert mapping["dynamic"] == "strict"
-    assert mapping["_meta"] == {"mapping_version": 1}
+    assert mapping["_meta"] == {"mapping_version": 2}
     assert mapping["properties"]["embedding"]["dimension"] == _VECTOR_DIMENSION
     assert mapping["properties"]["embedding"]["method"]["name"] == "hnsw"
     assert mapping["properties"]["embedding"]["method"]["engine"] == "faiss"

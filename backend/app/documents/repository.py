@@ -5,13 +5,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from documents.exceptions import DocumentNotFoundError
 from documents.models import (
     Chunk,
+    ChunkStatus,
     Document,
     DocumentPage,
     IngestionStatus,
@@ -313,3 +314,30 @@ class DocumentsRepository:
             .order_by(DocumentPage.page_number)
         )
         return result.scalars().all()
+
+    async def list_chunks(self, document_id: uuid.UUID) -> Sequence[Chunk]:
+        """The Document's Chunks in reading order."""
+        result = await self.session.execute(
+            select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.ordinal)
+        )
+        return result.scalars().all()
+
+    async def mark_chunks_indexed(self, document_id: uuid.UUID) -> None:
+        """Does not commit: the caller moves the Document to its next Stage
+        in the same transaction."""
+        await self.session.execute(
+            update(Chunk)
+            .where(Chunk.document_id == document_id)
+            .values(indexing_status=ChunkStatus.DONE, indexing_error=None)
+        )
+
+    async def list_live_document_ids(self, *, tenant_id: uuid.UUID) -> list[uuid.UUID]:
+        """The Tenant's non-deleted Documents: the only ones keyword search
+        may return Chunks of."""
+        result = await self.session.execute(
+            select(Document.id).where(
+                Document.tenant_id == tenant_id,
+                Document.ingestion_status != IngestionStatus.DELETED,
+            )
+        )
+        return list(result.scalars())

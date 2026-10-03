@@ -33,10 +33,12 @@ async def startup(ctx: dict) -> None:
     ctx["db_session_factory"] =container.db_session_factory()
     ctx["storage_provider"] = container.storage_provider()
     ctx["ingestion_settings"] = container.ingestion_settings()
+    ctx["search_index"] = container.search_index()
     logger.info("worker_ingest_started")
 
 
 async def shutdown(ctx: dict) -> None:
+    await ctx["search_index"].close()
     await container.db_engine().dispose()
     logger.info("worker_ingest_stopped")
 
