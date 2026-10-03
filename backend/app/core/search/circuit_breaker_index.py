@@ -1,5 +1,5 @@
 """A `SearchIndex` that sends every call to the search store through one
-circuit breaker (ADR-0011), so a store that is down is not hammered by every
+circuit breaker (ADR-0011, ADR-0013), so a store that is down is not hammered by every
 job and batch. The breaker is injected; the composition root decides which
 errors count as failures."""
 
