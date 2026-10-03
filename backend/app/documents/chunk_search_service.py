@@ -4,6 +4,7 @@ import uuid
 
 from core.search.provider import ChunkHit, SearchIndex
 from documents.repository import DocumentsRepository
+from documents.text_cleaner import clean_text
 
 
 class ChunkSearchService:
@@ -17,6 +18,11 @@ class ChunkSearchService:
         """Only Chunks of the Tenant's non-deleted Documents. The ids go to
         the index as a filter, so a deleted Document's Chunks, which stay in
         the index, never come back (ADR-0011)."""
+        # The same cleanup the Chunks went through, so the query takes the
+        # same form as the stored text (NFKC, invisible characters, spacing).
+        query = clean_text(query)
+        if not query:
+            return []
         document_ids = await self.repository.list_live_document_ids(tenant_id=tenant_id)
         return await self.search_index.search_chunks(
             tenant_id=tenant_id, document_ids=document_ids, query=query, limit=limit

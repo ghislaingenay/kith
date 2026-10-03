@@ -215,3 +215,20 @@ async def test_search_never_returns_another_tenants_chunks(
     other_tenant = Caller(uuid.uuid4(), caller.user_id)
 
     assert await _search(db_session, search_index, other_tenant, "known") == []
+
+
+async def test_the_query_is_cleaned_like_the_chunks_were(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+    search_index: SearchIndex,
+) -> None:
+    await _upload_and_ingest(
+        client, storage, caller, ingest_ctx, make_text_pdf(["The final contract."])
+    )
+
+    assert await _search(db_session, search_index, caller, "  \ufb01nal  ")
+    assert await _search(db_session, search_index, caller, "con\u00adtract")
+    assert await _search(db_session, search_index, caller, "   ") == []
