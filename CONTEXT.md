@@ -145,7 +145,7 @@ _Avoid_: Activity log, history, event log
 ### Limits
 
 **Usage**:
-What a Tenant has consumed in a period: Documents, storage bytes, Asks, tokens.
+What a Tenant has consumed in a period: Documents, storage bytes, Asks, and the language-model tokens spent writing Answers. Tokens spent embedding Chunks are not Usage; the Document and page Limits already bound them.
 _Avoid_: Consumption, metering (metering is the act of recording Usage)
 
 **Limit**:

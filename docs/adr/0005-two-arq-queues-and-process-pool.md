@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-09-14
+amended: 2026-10-04
 ---
 
 # Two arq queues, two worker services, CPU work in a process pool
@@ -14,3 +15,7 @@ Why: arq runs jobs as coroutines on one event loop, so a CPU-bound step such as 
 - Scaling ingestion is `docker compose up --scale worker-ingest=N`; scaling never changes code.
 - Calls to the embedding API are throttled by a Redis token bucket keyed on model id, because a per-process semaphore stops working at two replicas.
 - A per-Tenant fairness queue is a later change; with one Tenant it is not needed.
+
+> Amended 2026-10-04. The Redis token bucket for the embedding API is deferred. Voyage's limit is per account, and its only job is to keep several ingest workers from together going over it; with one worker there is nothing to share. Tier 1 allows 3M tokens per minute for `voyage-4-large`, about the whole seed corpus, and a 429 is retried with backoff and counted by the `embedding` circuit breaker (ADR-0014). Build it before running more than one `worker-ingest` replica.
+>
+> Embedding runs as its own `embed_document` job with job id `embed:{document_id}`, so the plain Document id stays unique to the ingestion job (ADR-0014).
