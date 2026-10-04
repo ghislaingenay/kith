@@ -208,6 +208,10 @@ async def _index_chunks(
     `partial` if any Chunk was indexed and `failed` if none was. Otherwise it
     waits at `embedding`: keyword-searchable, not ready."""
     chunks = list(await repository.list_chunks(document.id))
+    # End the read's transaction before the search calls, which can take
+    # minutes to fail: Postgres `now()` is the transaction's start, so the
+    # `updated_at` and `created_at` written after them would be that stale.
+    await repository.session.commit()
     indexed_count = 0
 
     async def record_failure(batch: Sequence[Chunk], failure: SearchFailure) -> None:
