@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-10-01
+amended: 2026-10-04
 ---
 
 # Clean Text is stored per page, Chunks are page-bounded and cut from it, and keyword search is language-agnostic for Latin-script text
@@ -21,7 +22,7 @@ A bulk indexing batch goes through the existing retry handler (three attempts, b
 
 - `document_pages` gains a nullable Clean Text column; the `chunks` table gains separate indexing and embedding statuses with their own error columns (this extends ADR-0002, which listed only an embedding status). Ingestion Status is still derived from Chunk statuses, now from both.
 - A Document records how its current Chunks were made in a `chunk_metadata` JSON column (size, overlap, cleaner version, tokenizer name, time), with no history. A retry replaces all of a Document's Chunks in one transaction. Changing the cleanup rules means bumping the cleaner version, then re-chunking the Documents whose stamp is older.
-- Chunk token counts come from the general tokenizer, so the embedding phase recounts when it batches for Voyage, and may re-chunk if its tokenizer differs enough to matter.
+- Chunk token counts come from the general tokenizer, so the embedding phase recounts when it batches for Voyage, and may re-chunk if its tokenizer differs enough to matter. (Amended 2026-10-04: it does not re-chunk. A gap of a few percent on a soft 500-token target makes no difference to retrieval, so Voyage's counts are used only to batch requests under its 120K-tokens-per-request cap. See ADR-0014.)
 - Header and footer removal is deliberately left out of the first cleaner version; the Golden Set decides whether it is added.
 - Because the vector field is in the first mapping, adding embeddings later does not force a reindex of every Tenant.
 - The "glossary" entries for Ingestion Stage and Ingestion Status, and the Clean Text and Page Text terms, are updated in `CONTEXT.md`.
