@@ -46,4 +46,4 @@ search-index-create:
 
 # usage: make search-replay [document=<uuid>] [limit=<n>]
 search-replay:
-	$(COMPOSE) run --rm app python -m documents.replay $(if $(document),--document-id $(document)) $(if $(limit),--limit $(limit))
+	$(COMPOSE) run --rm app python -m scripts.replay_failed_batches $(if $(document),--document-id $(document)) $(if $(limit),--limit $(limit))

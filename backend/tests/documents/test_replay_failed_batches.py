@@ -12,6 +12,7 @@ from core.database import DatabaseSettings, create_engine, create_session_factor
 from core.search.provider import SearchIndex
 from documents.chunk_search_service import ChunkSearchService
 from documents.config import IngestionSettings
+from documents.dead_letter_replay import replay_failed_batches
 from documents.ingest import ingest_document
 from documents.keys import pending_upload_key
 from documents.models import (
@@ -23,7 +24,6 @@ from documents.models import (
     IngestionStage,
     IngestionStatus,
 )
-from documents.replay import replay_failed_batches
 from documents.repository import DocumentsRepository
 from httpx import AsyncClient
 from sqlalchemy import select

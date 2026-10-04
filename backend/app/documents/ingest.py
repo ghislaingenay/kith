@@ -28,7 +28,7 @@ from core.storage.provider import StorageProvider
 from documents.chunker import CHUNK_TOKENIZER, chunk_page
 from documents.config import IngestionSettings
 from documents.exceptions import DocumentNotFoundError
-from documents.indexing_outcome import apply_indexing_outcome
+from documents.ingestion_status import set_status_after_indexing
 from documents.models import (
     Chunk,
     ChunkDeadLetter,
@@ -269,7 +269,7 @@ async def _index_chunks(
             await repository.session.commit()
             indexed_count += len(batch)
 
-    apply_indexing_outcome(document, indexed=indexed_count, total=len(chunks))
+    set_status_after_indexing(document, indexed=indexed_count, total=len(chunks))
     await repository.session.commit()
 
 

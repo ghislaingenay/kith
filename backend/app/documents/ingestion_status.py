@@ -4,7 +4,7 @@ attempt or a replay of failed batches."""
 from documents.models import Document, IngestionStage, IngestionStatus
 
 
-def apply_indexing_outcome(document: Document, *, indexed: int, total: int) -> None:
+def set_status_after_indexing(document: Document, *, indexed: int, total: int) -> None:
     """All Chunks indexed: the Document waits at `embedding`, keyword-searchable
     but not ready. None: `failed`. Some: `partial`."""
     failed = total - indexed

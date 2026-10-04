@@ -1,19 +1,16 @@
 """Replay of failed indexing batches (ADR-0011).
 
 Each open `indexing` Chunk Dead Letter is redone from the Chunk text stored
-in Postgres: never from the PDF, storage, extraction or chunking. Run with
-`make search-replay` (see `docs/search-quickstart.md`)."""
+in Postgres: never from the PDF, storage, extraction or chunking. The command that runs
+it is `scripts/replay_failed_batches.py` (see `docs/search-quickstart.md`)."""
 
-import argparse
-import asyncio
 import uuid
 from dataclasses import dataclass
 
-from core.container import container
 from core.logging import setup_logger
 from core.retry.handler import RetryHandler
 from core.search.provider import ChunkDocument, SearchIndex
-from documents.indexing_outcome import apply_indexing_outcome
+from documents.ingestion_status import set_status_after_indexing
 from documents.models import (
     ChunkDeadLetter,
     ChunkDeadLetterStatus,
@@ -124,7 +121,7 @@ async def _replay_row(
         IngestionStatus.FAILED,
     ):
         all_chunks = await repository.list_chunks(document.id)
-        apply_indexing_outcome(
+        set_status_after_indexing(
             document,
             indexed=sum(c.indexing_status == ChunkStatus.DONE for c in all_chunks),
             total=len(all_chunks),
@@ -136,29 +133,3 @@ async def _replay_row(
         chunks=len(chunks),
     )
     return True
-
-
-async def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--document-id", type=uuid.UUID, help="only this Document")
-    parser.add_argument("--limit", type=int, help="at most this many rows")
-    args = parser.parse_args()
-
-    container.logging_configured()
-    search_index = container.search_index()
-    try:
-        result = await replay_failed_batches(
-            container.db_session_factory(),
-            search_index,
-            container.retry_handler(),
-            document_id=args.document_id,
-            limit=args.limit,
-        )
-    finally:
-        await search_index.close()
-        await container.db_engine().dispose()
-    print(f"Replay: {result.resolved} resolved, {result.failed} still open")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
