@@ -6,6 +6,7 @@ tests show it never reads the PDF."""
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from core.database import DatabaseSettings, create_engine, create_session_factory
@@ -316,6 +317,34 @@ async def test_replay_can_be_limited_to_a_number_of_rows_oldest_first(
     ]
     assert (await _document(db_session, document_id)).ingestion_status == (
         IngestionStatus.PARTIAL
+    )
+
+
+async def test_replay_timestamps_are_taken_when_the_slow_call_returns(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker,
+    failing_index: FakeSearchIndex,
+) -> None:
+    document_id = await _ingest_with_failed_batches(
+        client, storage, caller, session_factory, failing_index
+    )
+    slow_store = FakeSearchIndex()
+    slow_store.delay_seconds = 0.3
+    started = datetime.now(UTC)
+
+    await replay_failed_batches(session_factory, slow_store, fast_retry_handler())
+
+    # Two rows, one 0.3 s call each, so the second finishes 0.6 s in.
+    done = started + timedelta(seconds=0.6)
+    rows = await _dead_letters(db_session, document_id)
+    assert all(row.resolved_at is not None for row in rows)
+    assert max(row.resolved_at for row in rows) >= done
+    assert all(
+        chunk.updated_at >= started + timedelta(seconds=0.3)
+        for chunk in (await _chunks(db_session, document_id))[1:]
     )
 
 
