@@ -15,24 +15,20 @@ import asyncio
 import hashlib
 import tempfile
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pypdfium2
-from core.circuit_breaker.exceptions import CircuitOpenError
 from core.logging import setup_logger
-from core.retry.exceptions import RetryExhaustedError
 from core.retry.handler import RetryHandler
-from core.search.exceptions import SearchError, SearchUnavailableError
 from core.search.provider import ChunkDocument, SearchIndex
 from core.storage.provider import StorageProvider
-from sqlalchemy.ext.asyncio import AsyncSession
+from documents.chunker import CHUNK_TOKENIZER, chunk_page
 from documents.config import IngestionSettings
 from documents.exceptions import DocumentNotFoundError
-from documents.chunker import CHUNK_TOKENIZER, chunk_page
+from documents.ingestion_status import set_status_after_indexing
 from documents.models import (
     Chunk,
     ChunkDeadLetter,
@@ -44,7 +40,9 @@ from documents.models import (
 )
 from documents.pdf import extract_page_text, open_pdf
 from documents.repository import DocumentsRepository
+from documents.search_calls import SearchFailure, call_search
 from documents.text_cleaner import CLEANER_VERSION, clean_text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = setup_logger(__name__)
 
@@ -193,38 +191,6 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
         )
 
 
-@dataclass(frozen=True)
-class _SearchFailure:
-    error: str
-    attempts: int
-
-
-async def _call_search(
-    retry_handler: RetryHandler, func: Callable[[], Awaitable[None]]
-) -> _SearchFailure | None:
-    """Runs one search call through the retry handler; returns how it failed,
-    or `None` if it worked. Only the search store being unavailable is
-    retried. A request the store rejected would fail the same way again, and
-    a call the circuit breaker rejected never reached the store: neither is
-    retried, and the second does not count as an attempt."""
-    attempts = 0
-
-    async def attempt() -> None:
-        nonlocal attempts
-        attempts += 1
-        await func()
-
-    try:
-        await retry_handler.execute(attempt, retry_on=(SearchUnavailableError,))
-    except RetryExhaustedError as exc:
-        return _SearchFailure(str(exc.last_exception), attempts)
-    except CircuitOpenError as exc:
-        return _SearchFailure(str(exc), attempts - 1)
-    except SearchError as exc:
-        return _SearchFailure(str(exc), attempts)
-    return None
-
-
 async def _index_chunks(
     repository: DocumentsRepository,
     document: Document,
@@ -244,7 +210,7 @@ async def _index_chunks(
     chunks = list(await repository.list_chunks(document.id))
     indexed_count = 0
 
-    async def record_failure(batch: Sequence[Chunk], failure: _SearchFailure) -> None:
+    async def record_failure(batch: Sequence[Chunk], failure: SearchFailure) -> None:
         chunk_ids = [chunk.id for chunk in batch]
         await repository.mark_chunks_indexing_failed(chunk_ids, error=failure.error)
         await repository.add_chunk_dead_letter(
@@ -266,7 +232,7 @@ async def _index_chunks(
             error=failure.error,
         )
 
-    delete_failure = await _call_search(
+    delete_failure = await call_search(
         retry_handler,
         lambda: search_index.delete_document_chunks(
             tenant_id=document.tenant_id, document_id=document.id
@@ -290,7 +256,7 @@ async def _index_chunks(
                 )
                 for chunk in batch
             ]
-            failure = await _call_search(
+            failure = await call_search(
                 retry_handler,
                 lambda index_documents=index_documents: search_index.index_chunks(
                     index_documents
@@ -303,22 +269,7 @@ async def _index_chunks(
             await repository.session.commit()
             indexed_count += len(batch)
 
-    failed_count = len(chunks) - indexed_count
-    if failed_count == 0:
-        document.ingestion_stage = IngestionStage.EMBEDDING
-    elif indexed_count == 0:
-        document.ingestion_status = IngestionStatus.FAILED
-        document.ingestion_error = (
-            "The search service could not index this document, so none of "
-            "its text could be made searchable. Please try again later."
-        )
-    else:
-        document.ingestion_status = IngestionStatus.PARTIAL
-        document.ingestion_error = (
-            f"The search service could not index {failed_count} of "
-            f"{len(chunks)} passages of this document, so they could not be "
-            "made searchable."
-        )
+    set_status_after_indexing(document, indexed=indexed_count, total=len(chunks))
     await repository.session.commit()
 
 

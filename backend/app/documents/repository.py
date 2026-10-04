@@ -13,9 +13,11 @@ from documents.exceptions import DocumentNotFoundError
 from documents.models import (
     Chunk,
     ChunkDeadLetter,
+    ChunkDeadLetterStatus,
     ChunkStatus,
     Document,
     DocumentPage,
+    IngestionStage,
     IngestionStatus,
     RejectionKind,
     Upload,
@@ -346,6 +348,43 @@ class DocumentsRepository:
         records as failed."""
         self.session.add(chunk_dead_letter)
         await self.session.flush()
+
+    async def list_open_chunk_dead_letters(
+        self,
+        *,
+        stage: IngestionStage,
+        document_id: uuid.UUID | None = None,
+        limit: int | None = None,
+    ) -> Sequence[ChunkDeadLetter]:
+        """Open rows for the stage, oldest first, optionally for one Document
+        and capped at `limit`."""
+        statement = (
+            select(ChunkDeadLetter)
+            .where(
+                ChunkDeadLetter.status == ChunkDeadLetterStatus.OPEN,
+                ChunkDeadLetter.stage == stage,
+            )
+            .order_by(ChunkDeadLetter.created_at, ChunkDeadLetter.id)
+            .limit(limit)
+        )
+        if document_id is not None:
+            statement = statement.where(ChunkDeadLetter.document_id == document_id)
+        result = await self.session.execute(statement)
+        return result.scalars().all()
+
+    async def get_chunk_dead_letter(
+        self, chunk_dead_letter_id: uuid.UUID
+    ) -> ChunkDeadLetter | None:
+        return await self.session.get(ChunkDeadLetter, chunk_dead_letter_id)
+
+    async def list_chunks_by_ids(
+        self, chunk_ids: Sequence[uuid.UUID]
+    ) -> Sequence[Chunk]:
+        """The listed Chunks that still exist, in reading order."""
+        result = await self.session.execute(
+            select(Chunk).where(Chunk.id.in_(chunk_ids)).order_by(Chunk.ordinal)
+        )
+        return result.scalars().all()
 
     async def list_live_document_ids(self, *, tenant_id: uuid.UUID) -> list[uuid.UUID]:
         """The Tenant's non-deleted Documents: the only ones keyword search
