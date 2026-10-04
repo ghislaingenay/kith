@@ -54,3 +54,22 @@ POST kith-chunks/_analyze
 ```
 
 You should see `resume` and `résumé` both, and `client's` with a straight apostrophe.
+
+## Replay failed indexing batches
+
+When the search store is down or refuses a batch, ingestion does not retry forever: it marks those Chunks `failed`, records an `open` Chunk Dead Letter row, and leaves the Document `partial` (or `failed` if nothing was indexed). Once OpenSearch is healthy again, replay the open rows:
+
+```sh
+make search-replay
+```
+
+Replay re-indexes only the failed Chunks, from the text kept in Postgres. It does not read the PDF or storage and does not re-chunk. For each row that works it marks the Chunks indexed, resolves the row, and recomputes the Document, which goes back to `processing` at the `embedding` stage once all its Chunks are indexed. A batch that fails again stays `open` and its attempt count goes up, so you can run replay again later. With no open rows it does nothing and succeeds.
+
+To limit a run to one Document or to the oldest few rows:
+
+```sh
+make search-replay document=<document-uuid>
+make search-replay limit=10
+```
+
+To see what is waiting: `SELECT document_id, attempts, error FROM chunk_dead_letters WHERE status = 'open';`
