@@ -1,4 +1,4 @@
-"""Enqueues embedding for Documents waiting at `embedding`. Run with
+"""Enqueues embedding for Documents waiting at `embedding` or `partial`. Run with
 `make embed-documents`; see `docs/search-quickstart.md`."""
 
 import argparse
@@ -11,7 +11,7 @@ from documents.embed_backlog import enqueue_embedding_backlog
 
 async def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Enqueue embedding for Documents waiting at embedding"
+        description="Enqueue embedding for Documents waiting at embedding or partial"
     )
     parser.add_argument("--document-id", type=uuid.UUID, help="only this Document")
     args = parser.parse_args()

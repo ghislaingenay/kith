@@ -48,7 +48,7 @@ search-index-create:
 search-replay:
 	$(COMPOSE) run --rm app python -m scripts.replay_failed_batches $(if $(document),--document-id $(document)) $(if $(limit),--limit $(limit))
 
-# enqueue embedding for Documents waiting at the embedding stage; the worker does the work
+# enqueue embedding for Documents waiting at the embedding stage or partial; the worker does the work
 # usage: make embed-documents [document=<uuid>]
 embed-documents:
 	$(COMPOSE) run --rm app python -m scripts.embed_documents $(if $(document),--document-id $(document))

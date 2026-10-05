@@ -50,13 +50,14 @@ async def _ingest(
     storage: FakeStorageProvider,
     caller: Caller,
     session_factory: async_sessionmaker,
-    text: str,
+    text: str | list[str],
     index: FakeSearchIndex | None = None,
+    settings: IngestionSettings | None = None,
 ) -> uuid.UUID:
-    """Ingests a one-page Document. By default it ends waiting at `embedding`;
+    """Ingests a Document of one page per text. By default it ends waiting at `embedding`;
     its own embed job goes to a queue nobody reads, as for a Document ingested
     before this phase."""
-    pdf = make_text_pdf([text])
+    pdf = make_text_pdf([text] if isinstance(text, str) else text)
     upload_id = (await init_upload(client, pdf)).json()["upload_id"]
     storage.put_object(pending_upload_key(caller.tenant_id, uuid.UUID(upload_id)), pdf)
     document_id = uuid.UUID((await finalize_upload(client, upload_id)).json()["id"])
@@ -64,7 +65,7 @@ async def _ingest(
         {
             "db_session_factory": session_factory,
             "storage_provider": storage,
-            "ingestion_settings": IngestionSettings(),
+            "ingestion_settings": settings or IngestionSettings(),
             "search_index": index or FakeSearchIndex(),
             "retry_handler": fast_retry_handler(),
             "job_queue": FakeJobQueue(),
@@ -105,6 +106,32 @@ async def test_every_document_waiting_at_embedding_gets_a_job_and_no_other_does(
     assert sorted(backlog_queue.jobs, key=lambda job: job.job_id) == sorted(
         [_job(caller, first), _job(caller, second)], key=lambda job: job.job_id
     )
+
+
+async def test_a_partial_document_is_enqueued_too(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    session_factory: async_sessionmaker,
+    backlog_queue: FakeJobQueue,
+) -> None:
+    # One page per batch: page 1 is indexed, page 2 fails all three attempts.
+    some_refused = FakeSearchIndex()
+    some_refused.index_outcomes = [True, False, False, False]
+    partial = await _ingest(
+        client,
+        storage,
+        caller,
+        session_factory,
+        ["Alpha page.", "Bravo page."],
+        some_refused,
+        IngestionSettings.model_validate({"INGESTION_INDEX_BATCH_SIZE": 1}),
+    )
+
+    count = await enqueue_embedding_backlog(session_factory, backlog_queue)
+
+    assert count == 1
+    assert backlog_queue.jobs == [_job(caller, partial)]
 
 
 async def test_one_document_can_be_enqueued_alone(

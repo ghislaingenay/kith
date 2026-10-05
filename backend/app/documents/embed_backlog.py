@@ -1,5 +1,5 @@
-"""Enqueues `embed_document` for Documents waiting at `embedding`, such as
-those ingested before the embedding phase (ADR-0014). It only enqueues: the
+"""Enqueues `embed_document` for Documents waiting at `embedding` or `partial`,
+such as those ingested before the embedding phase (ADR-0014). It only enqueues: the
 worker does the embedding, under its retries and breaker, so this takes no
 embedding provider. The command that runs it is `scripts/embed_documents.py`
 (see `docs/search-quickstart.md`)."""

@@ -74,13 +74,13 @@ make search-replay limit=10
 
 To see what is waiting: `SELECT document_id, attempts, error FROM chunk_dead_letters WHERE status = 'open';`
 
-## Embed Documents waiting at `embedding`
+## Embed Documents waiting for vectors
 
-A Document that finished indexing before the embedding phase existed, or whose `embed_document` job was lost, waits at the `embedding` stage with no job in the queue. To queue one for each:
+A Document that finished indexing before the embedding phase existed, or whose `embed_document` job was lost, waits at the `embedding` stage (or is `partial`) with no job in the queue. To queue one for each:
 
 ```sh
 make embed-documents
 make embed-documents document=<document-uuid>
 ```
 
-The command only adds `embed_document` jobs (`embed:{document_id}`) for Documents that are `processing` at `embedding`, in every Tenant (a `partial` or `failed` Document is not queued, and neither is one that is `ready` or deleted); with `document=` it adds the job for that Document only, if it is waiting. It never calls the embedding provider: the ingest worker does the embedding, under its retries and circuit breaker (ADR-0014). Running it again is safe: a Document whose job is already queued or running is not queued again, and a job only embeds Chunks that still wait for a vector. The worker (`worker-ingest`) must be running for the jobs to be picked up.
+The command only adds `embed_document` jobs (`embed:{document_id}`) for Documents that are `processing` at `embedding` or `partial`, in every Tenant (a `failed`, `ready` or deleted Document is not queued; a `partial` Document whose indexed Chunks all have vectors already is queued and the job embeds nothing); with `document=` it adds the job for that Document only, if it is waiting. It never calls the embedding provider: the ingest worker does the embedding, under its retries and circuit breaker (ADR-0014). Running it again is safe: a Document whose job is already queued or running is not queued again, and a job only embeds Chunks that still wait for a vector. The worker (`worker-ingest`) must be running for the jobs to be picked up.
