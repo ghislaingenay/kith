@@ -4,9 +4,10 @@ index and needs a reindex."""
 
 import re
 
+from core.embedding.provider import VECTOR_DIMENSION
+
 INDEX_ALIAS = "kith-chunks"
 MAPPING_VERSION = 2
-VECTOR_DIMENSION = 1024
 
 _TEXT_ANALYZER = "kith_text"
 _QUOTES_AND_DASHES_FILTER = "kith_quotes_and_dashes"

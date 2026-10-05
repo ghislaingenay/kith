@@ -333,6 +333,30 @@ class DocumentsRepository:
             .values(indexing_status=ChunkStatus.DONE, indexing_error=None)
         )
 
+    async def list_chunks_pending_embedding(
+        self, document_id: uuid.UUID
+    ) -> Sequence[Chunk]:
+        """The Document's Chunks that are in the search index and still wait
+        for a vector, in reading order."""
+        result = await self.session.execute(
+            select(Chunk)
+            .where(
+                Chunk.document_id == document_id,
+                Chunk.indexing_status == ChunkStatus.DONE,
+                Chunk.embedding_status == ChunkStatus.PENDING,
+            )
+            .order_by(Chunk.ordinal)
+        )
+        return result.scalars().all()
+
+    async def mark_chunks_embedded(self, chunk_ids: Sequence[uuid.UUID]) -> None:
+        """Does not commit: the caller decides the transaction boundary."""
+        await self.session.execute(
+            update(Chunk)
+            .where(Chunk.id.in_(chunk_ids))
+            .values(embedding_status=ChunkStatus.DONE, embedding_error=None)
+        )
+
     async def mark_chunks_indexing_failed(
         self, chunk_ids: Sequence[uuid.UUID], *, error: str
     ) -> None:

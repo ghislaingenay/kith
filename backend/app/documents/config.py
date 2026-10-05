@@ -64,6 +64,19 @@ class IngestionSettings(BaseSettings):
         validation_alias="INGESTION_INDEX_BATCH_SIZE",
     )
 
+    embed_batch_token_cap: int = Field(
+        default=100_000,
+        gt=0,
+        description="Voyage tokens sent to the embedding model in one request, kept under its 120K cap (ADR-0004)",
+        validation_alias="INGESTION_EMBED_BATCH_TOKEN_CAP",
+    )
+    embed_batch_max_chunks: int = Field(
+        default=1000,
+        gt=0,
+        description="Chunks sent to the embedding model in one request, the most it accepts",
+        validation_alias="INGESTION_EMBED_BATCH_MAX_CHUNKS",
+    )
+
     @model_validator(mode="after")
     def _overlap_smaller_than_size(self) -> "IngestionSettings":
         if self.chunk_overlap_tokens >= self.chunk_size_tokens:

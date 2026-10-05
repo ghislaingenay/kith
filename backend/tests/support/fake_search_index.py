@@ -4,7 +4,7 @@ is down does."""
 
 import asyncio
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from core.search.exceptions import SearchUnavailableError
 from core.search.provider import ChunkDocument, ChunkHit
@@ -17,6 +17,8 @@ class FakeSearchIndex:
         self.index_calls = 0
         self.delete_calls = 0
         self.indexed: list[ChunkDocument] = []
+        self.embeddings: dict[uuid.UUID, list[float]] = {}
+        """The vector written onto each indexed Chunk."""
         self.index_outcomes: list[bool] = []
         """What each `index_chunks` call does, in order: `True` works, `False`
         raises. Once used up, `down` decides."""
@@ -58,6 +60,19 @@ class FakeSearchIndex:
         if not works:
             raise SearchUnavailableError("fake search store is down")
         self.indexed.extend(chunks)
+
+    async def set_chunk_embeddings(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        embeddings: Mapping[uuid.UUID, Sequence[float]],
+    ) -> list[uuid.UUID]:
+        tenant_chunk_ids = {c.id for c in self.indexed if c.tenant_id == tenant_id}
+        missing = [id_ for id_ in embeddings if id_ not in tenant_chunk_ids]
+        for id_, vector in embeddings.items():
+            if id_ in tenant_chunk_ids:
+                self.embeddings[id_] = list(vector)
+        return missing
 
     async def search_chunks(
         self,
