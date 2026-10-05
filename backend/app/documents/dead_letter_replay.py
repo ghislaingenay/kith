@@ -13,6 +13,7 @@ from core.logging import setup_logger
 from core.retry.handler import RetryHandler
 from core.search.provider import ChunkDocument, SearchIndex
 from documents.embedding_calls import EmbeddingFailure, call_embedding
+from documents.exceptions import EmbeddingProviderRequiredError
 from documents.ingestion_status import (
     set_status_after_embedding,
     set_status_after_indexing,
@@ -56,7 +57,9 @@ async def replay_failed_batches(
     `embedding_provider`, so an indexing-only replay can go without one."""
     stages = [stage] if stage else [IngestionStage.INDEXING, IngestionStage.EMBEDDING]
     if embedding_provider is None and IngestionStage.EMBEDDING in stages:
-        raise ValueError("Replaying embedding rows needs an embedding provider")
+        raise EmbeddingProviderRequiredError(
+            "Replaying embedding rows needs an embedding provider"
+        )
     row_ids: list[uuid.UUID] = []
     async with session_factory() as session:
         repository = DocumentsRepository(session)

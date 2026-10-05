@@ -13,6 +13,7 @@ from core.database import DatabaseSettings, create_engine, create_session_factor
 from documents.config import IngestionSettings
 from documents.dead_letter_replay import replay_failed_batches
 from documents.embed import embed_document
+from documents.exceptions import EmbeddingProviderRequiredError
 from documents.models import (
     Chunk,
     ChunkDeadLetter,
@@ -474,5 +475,5 @@ async def test_replaying_embedding_rows_without_a_provider_is_refused(
     session_factory: async_sessionmaker,
     search_index: FakeSearchIndex,
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(EmbeddingProviderRequiredError):
         await _replay(session_factory, search_index, None)
