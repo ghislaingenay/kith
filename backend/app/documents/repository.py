@@ -420,6 +420,24 @@ class DocumentsRepository:
         )
         return result.scalars().all()
 
+    async def list_documents_waiting_for_embedding(
+        self, *, document_id: uuid.UUID | None = None
+    ) -> Sequence[Document]:
+        """Documents waiting at `embedding` across every Tenant, optionally
+        only the one with `document_id`, oldest first."""
+        statement = (
+            select(Document)
+            .where(
+                Document.ingestion_status == IngestionStatus.PROCESSING,
+                Document.ingestion_stage == IngestionStage.EMBEDDING,
+            )
+            .order_by(Document.created_at, Document.id)
+        )
+        if document_id is not None:
+            statement = statement.where(Document.id == document_id)
+        result = await self.session.execute(statement)
+        return result.scalars().all()
+
     async def list_live_document_ids(self, *, tenant_id: uuid.UUID) -> list[uuid.UUID]:
         """The Tenant's non-deleted Documents: the only ones keyword search
         may return Chunks of."""
