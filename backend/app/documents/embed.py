@@ -8,7 +8,11 @@ recorded, not raised: its Chunks are marked `failed` and a dead-letter row is
 written, so the queue's own retry does not pile on top. The Document is then
 `partial` if any Chunk was made searchable and `failed` if none was. A failure
 outside the model (the database, the search store) is raised, and the queue
-retries the job."""
+retries the job.
+
+A Document deleted while the job runs is left alone (ADR-0014): the job
+re-reads it before recording a failure or setting its status, and stops once
+the search index no longer holds its Chunks."""
 
 from collections.abc import Sequence
 
@@ -23,7 +27,13 @@ from documents.ingestion_status import (
     set_status_after_embedding,
 )
 from documents.job_documents import load_document_for_job
-from documents.models import Chunk, ChunkDeadLetter, Document, IngestionStage
+from documents.models import (
+    Chunk,
+    ChunkDeadLetter,
+    Document,
+    IngestionStage,
+    IngestionStatus,
+)
 from documents.repository import DocumentsRepository
 
 logger = setup_logger(__name__)
@@ -70,6 +80,8 @@ async def embed_document(ctx: dict, *, document_id: str, tenant_id: str) -> None
             settings,
         )
 
+        if await _is_deleted(repository, document):
+            return
         set_status_after_embedding(document, await repository.list_chunks(document.id))
         await session.commit()
         logger.info(
@@ -95,7 +107,8 @@ async def _embed_chunks(
     vectors to the index and marking its Chunks embedded before the next one.
     A request that fails is recorded (see the module docstring) and the rest
     carry on. Returns the tokens the model reported. A Chunk the index no
-    longer holds is logged and left pending."""
+    longer holds is logged and left pending, and ends the job's work, as does
+    a failed request for a Document that has been deleted."""
     if not chunks:
         return 0
     token_counts = await embedding_provider.count_tokens(
@@ -116,6 +129,8 @@ async def _embed_chunks(
             ),
         )
         if isinstance(result, EmbeddingFailure):
+            if await _is_deleted(repository, document):
+                break
             await _record_failure(repository, document, batch, result)
             continue
         tokens_used += result.tokens_used
@@ -138,7 +153,20 @@ async def _embed_chunks(
             [chunk.id for chunk in batch if chunk.id not in missing_chunk_ids]
         )
         await repository.session.commit()
+        if missing_chunk_ids:
+            # The Document was deleted mid-job: the rest would be missing too.
+            break
     return tokens_used
+
+
+async def _is_deleted(repository: DocumentsRepository, document: Document) -> bool:
+    """Re-reads the Document, since a delete can land while the job waits on
+    the embedding model. Logged when it did."""
+    await repository.session.refresh(document)
+    if document.ingestion_status != IngestionStatus.DELETED:
+        return False
+    logger.warning("embed_document_deleted_mid_job", document_id=str(document.id))
+    return True
 
 
 async def _record_failure(
