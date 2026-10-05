@@ -27,8 +27,8 @@ from core.search.provider import ChunkDocument, SearchIndex
 from core.storage.provider import StorageProvider
 from documents.chunker import CHUNK_TOKENIZER, chunk_page
 from documents.config import IngestionSettings
-from documents.exceptions import DocumentNotFoundError
 from documents.ingestion_status import set_status_after_indexing
+from documents.job_documents import load_document_for_job
 from documents.models import (
     Chunk,
     ChunkDeadLetter,
@@ -67,22 +67,13 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
     retry_handler: RetryHandler = ctx["retry_handler"]
     async with session_factory() as session:
         repository = DocumentsRepository(session)
-        try:
-            document = await repository.get_document(uuid.UUID(document_id))
-        except DocumentNotFoundError:
-            # A stale job for a Document that no longer exists.
-            logger.warning(
-                "ingest_document_missing", document_id=document_id, tenant_id=tenant_id
-            )
-            return
-
-        if str(document.tenant_id) != tenant_id:
-            logger.warning(
-                "ingest_document_tenant_mismatch",
-                document_id=document_id,
-                tenant_id=tenant_id,
-                document_tenant_id=str(document.tenant_id),
-            )
+        document = await load_document_for_job(
+            repository,
+            job="ingest_document",
+            document_id=document_id,
+            tenant_id=tenant_id,
+        )
+        if document is None:
             return
 
         if document.ingestion_status != IngestionStatus.UPLOADED:

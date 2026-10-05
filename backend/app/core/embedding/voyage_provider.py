@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from core.embedding.config import EmbeddingSettings
 from core.embedding.exceptions import EmbeddingError, EmbeddingUnavailableError
 from core.embedding.provider import (
+    VECTOR_DIMENSION,
     EmbeddingInputType,
     EmbeddingProvider,
     EmbeddingResult,
@@ -14,7 +15,6 @@ from voyageai import error as voyage_error
 from voyageai.client_async import AsyncClient
 
 VOYAGE_MODEL = "voyage-4-large"
-VECTOR_DIMENSION = 1024
 
 _UNAVAILABLE_ERRORS = (
     voyage_error.Timeout,
@@ -37,8 +37,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         settings: EmbeddingSettings,
         client: AsyncClient | None = None,
     ) -> None:
-        # One attempt: retrying belongs to the application's retry handler,
-        # which also counts the attempts.
+        # One attempt: the application's retry handler does the retrying.
         self._client = client or AsyncClient(
             api_key=settings.voyage_api_key, max_retries=1
         )

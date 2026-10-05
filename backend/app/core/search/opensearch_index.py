@@ -18,8 +18,7 @@ from opensearchpy.exceptions import OpenSearchException, RequestError
 
 _MINIMUM_WORDS_MATCHED = "70%"
 
-# A routing value only picks a shard, and the index has one, so it does not
-# stop an update by id from reaching another Tenant's Chunk. The check does.
+# Routing cannot isolate Tenants on a one-shard index, so the script does.
 _SET_EMBEDDING_SCRIPT = (
     "if (ctx._source.tenant_id != params.tenant_id) { ctx.op = 'noop' } "
     "else { ctx._source.embedding = params.vector }"

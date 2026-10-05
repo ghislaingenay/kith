@@ -5,12 +5,11 @@ every request it receives."""
 from collections.abc import Sequence
 
 from core.embedding.provider import (
+    VECTOR_DIMENSION,
     EmbeddingInputType,
     EmbeddingProvider,
     EmbeddingResult,
 )
-
-VECTOR_DIMENSION = 1024
 
 
 def vector_for(text: str) -> list[float]:

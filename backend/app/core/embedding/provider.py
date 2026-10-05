@@ -5,6 +5,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
+VECTOR_DIMENSION = 1024
+"""Size of the vectors the model returns; the search index mapping uses it too."""
+
 
 class EmbeddingInputType(StrEnum):
     """Whether a text is stored for search or is a search Query; the model

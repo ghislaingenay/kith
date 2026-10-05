@@ -29,6 +29,16 @@ def set_status_after_indexing(document: Document, *, indexed: int, total: int) -
         )
 
 
+def is_waiting_for_vectors(document: Document) -> bool:
+    """Whether embedding has work to do for the Document: it waits at
+    `embedding`, or it is `partial` and its indexed Chunks still need
+    vectors."""
+    return document.ingestion_status == IngestionStatus.PARTIAL or (
+        document.ingestion_status == IngestionStatus.PROCESSING
+        and document.ingestion_stage == IngestionStage.EMBEDDING
+    )
+
+
 def set_status_after_embedding(document: Document, chunks: Sequence[Chunk]) -> None:
     """From both Chunk statuses: `ready` when every Chunk is indexed and
     embedded, `failed` when none was made searchable, `partial` when some
