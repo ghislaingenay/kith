@@ -3,7 +3,13 @@ whether it was the first attempt or a replay of failed batches."""
 
 from collections.abc import Sequence
 
-from documents.models import Chunk, ChunkStatus, Document, IngestionStage, IngestionStatus
+from documents.models import (
+    Chunk,
+    ChunkStatus,
+    Document,
+    IngestionStage,
+    IngestionStatus,
+)
 
 
 def set_status_after_indexing(document: Document, *, indexed: int, total: int) -> None:
