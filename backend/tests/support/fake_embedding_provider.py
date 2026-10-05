@@ -3,7 +3,7 @@ word, so a test sets how big a Chunk is by how many words it has. Records
 every request it receives, and can be scripted to fail the way an embedding
 model that is down or that rejects a text does."""
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 from core.embedding.exceptions import EmbeddingError, EmbeddingUnavailableError
 from core.embedding.provider import (
@@ -35,6 +35,9 @@ class FakeEmbeddingProvider(EmbeddingProvider):
         self.crash_with: Exception | None = None
         """Raised by `embed` instead of anything else, to stand for a failure
         that is not the model being unavailable or rejecting the request."""
+        self.after_embed: Callable[[], Awaitable[None]] | None = None
+        """Awaited once each `embed` call has its vectors ready, to stand for
+        something else happening while the job waits on the model."""
 
     async def count_tokens(self, texts: Sequence[str]) -> list[int]:
         return [len(text.split()) for text in texts]
@@ -52,6 +55,8 @@ class FakeEmbeddingProvider(EmbeddingProvider):
             raise EmbeddingUnavailableError("fake embedding model is down")
         self.requests.append(list(texts))
         self.input_types.append(input_type)
+        if self.after_embed is not None:
+            await self.after_embed()
         return EmbeddingResult(
             vectors=[vector_for(text) for text in texts],
             tokens_used=sum(await self.count_tokens(texts)),

@@ -6,6 +6,7 @@ breaker matters, the real breaker around it on a fake clock."""
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import pytest
 from core.circuit_breaker.breaker import CircuitBreaker
@@ -277,3 +278,33 @@ async def test_a_failure_outside_the_embedding_model_raises_and_leaves_the_chunk
     (chunk,) = await load_chunks(db_session, document_id)
     assert chunk.embedding_status == ChunkStatus.PENDING
     assert await _dead_letters(db_session, document_id) == []
+
+
+async def test_a_batch_that_fails_after_the_document_was_deleted_is_not_recorded(
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: FakeSearchIndex,
+    embedding_provider: FakeEmbeddingProvider,
+    embed_ctx: dict,
+) -> None:
+    document_id = await document_waiting_at_embedding(
+        db_session, search_index, caller, ["first chunk", "second chunk"]
+    )
+    embedding_provider.rejected_texts = {"second chunk"}
+
+    async def delete_document() -> None:
+        document = await load_document(db_session, document_id)
+        document.ingestion_status = IngestionStatus.DELETED
+        document.deleted_at = datetime.now(UTC)
+        await db_session.commit()
+
+    embedding_provider.after_embed = delete_document
+
+    await _embed(embed_ctx, caller, document_id)
+
+    assert await _dead_letters(db_session, document_id) == []
+    _, second = await load_chunks(db_session, document_id)
+    assert second.embedding_status == ChunkStatus.PENDING
+    assert (await load_document(db_session, document_id)).ingestion_status == (
+        IngestionStatus.DELETED
+    )

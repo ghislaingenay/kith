@@ -13,10 +13,12 @@ from core.embedding.provider import EmbeddingInputType
 from documents.config import IngestionSettings
 from documents.embed import embed_document
 from documents.models import (
+    ChunkDeadLetter,
     ChunkStatus,
     IngestionStage,
     IngestionStatus,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
@@ -282,6 +284,75 @@ async def test_a_chunk_missing_from_the_index_is_not_marked_embedded(
     assert gone.embedding_status == ChunkStatus.PENDING
     assert (await load_document(db_session, document_id)).ingestion_status == (
         IngestionStatus.PROCESSING
+    )
+
+
+async def test_a_document_deleted_while_embedding_is_logged_and_skipped_not_failed(
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: FakeSearchIndex,
+    embedding_provider: FakeEmbeddingProvider,
+    embed_ctx: dict,
+) -> None:
+    document_id = await document_waiting_at_embedding(
+        db_session, search_index, caller, ["first chunk", "second chunk"]
+    )
+
+    async def delete_document_while_the_model_works() -> None:
+        # What the delete and its purge leave behind: the Document marked
+        # deleted and its Chunks gone from the index.
+        document = await load_document(db_session, document_id)
+        document.ingestion_status = IngestionStatus.DELETED
+        document.deleted_at = datetime.now(UTC)
+        await db_session.commit()
+        search_index.indexed.clear()
+
+    embedding_provider.after_embed = delete_document_while_the_model_works
+
+    with capture_logs() as logs:
+        await _embed(embed_ctx, caller, document_id)
+
+    [warning] = [
+        log for log in logs if log["event"] == "embed_document_chunks_not_in_index"
+    ]
+    assert warning["log_level"] == "warning"
+    assert warning["document_id"] == str(document_id)
+    assert warning["chunks"] == 2
+    chunks = await load_chunks(db_session, document_id)
+    assert [chunk.embedding_status for chunk in chunks] == [ChunkStatus.PENDING] * 2
+    assert (
+        await db_session.execute(
+            select(ChunkDeadLetter).where(ChunkDeadLetter.document_id == document_id)
+        )
+    ).first() is None
+    assert (await load_document(db_session, document_id)).ingestion_status == (
+        IngestionStatus.DELETED
+    )
+
+
+async def test_a_document_deleted_after_its_last_vector_is_written_stays_deleted(
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: FakeSearchIndex,
+    embedding_provider: FakeEmbeddingProvider,
+    embed_ctx: dict,
+) -> None:
+    document_id = await document_waiting_at_embedding(
+        db_session, search_index, caller, ["only chunk"]
+    )
+
+    async def delete_document() -> None:
+        document = await load_document(db_session, document_id)
+        document.ingestion_status = IngestionStatus.DELETED
+        document.deleted_at = datetime.now(UTC)
+        await db_session.commit()
+
+    embedding_provider.after_embed = delete_document
+
+    await _embed(embed_ctx, caller, document_id)
+
+    assert (await load_document(db_session, document_id)).ingestion_status == (
+        IngestionStatus.DELETED
     )
 
 
