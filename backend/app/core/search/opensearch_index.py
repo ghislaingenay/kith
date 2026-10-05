@@ -1,7 +1,7 @@
 """`SearchIndex` backed by OpenSearch."""
 
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 
 from core.search.config import SearchSettings
@@ -17,6 +17,13 @@ from opensearchpy.exceptions import OpenSearchException, RequestError
 
 
 _MINIMUM_WORDS_MATCHED = "70%"
+
+# A routing value only picks a shard, and the index has one, so it does not
+# stop an update by id from reaching another Tenant's Chunk. The check does.
+_SET_EMBEDDING_SCRIPT = (
+    "if (ctx._source.tenant_id != params.tenant_id) { ctx.op = 'noop' } "
+    "else { ctx._source.embedding = params.vector }"
+)
 
 
 def _is_transient_status(status: object) -> bool:
@@ -114,6 +121,47 @@ class OpenSearchIndex(SearchIndex):
         # batch as indexed.
         with _store_errors("Bulk indexing"):
             await helpers.async_bulk(self._client, actions, refresh=True)
+
+    async def set_chunk_embeddings(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        embeddings: Mapping[uuid.UUID, Sequence[float]],
+    ) -> list[uuid.UUID]:
+        actions = [
+            {
+                "_op_type": "update",
+                "_index": INDEX_ALIAS,
+                "_id": str(chunk_id),
+                "routing": str(tenant_id),
+                "script": {
+                    "source": _SET_EMBEDDING_SCRIPT,
+                    "params": {
+                        "tenant_id": str(tenant_id),
+                        "vector": list(vector),
+                    },
+                },
+            }
+            for chunk_id, vector in embeddings.items()
+        ]
+        missing: list[uuid.UUID] = []
+        failures: list[dict] = []
+        with _store_errors("Writing embeddings"):
+            async for succeeded, item in helpers.async_streaming_bulk(
+                self._client, actions, raise_on_error=False, refresh=True
+            ):
+                outcome = item["update"]
+                if succeeded and outcome["result"] != "noop":
+                    continue
+                if succeeded or outcome["status"] == 404:
+                    missing.append(uuid.UUID(outcome["_id"]))
+                else:
+                    failures.append(item)
+            if failures:
+                raise helpers.BulkIndexError(
+                    f"{len(failures)} embeddings failed", failures
+                )
+        return missing
 
     async def search_chunks(
         self,

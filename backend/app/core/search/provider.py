@@ -2,7 +2,7 @@
 
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 
@@ -62,6 +62,19 @@ class SearchIndex(ABC):
         """Bulk-index one batch of Chunks under their ids; searchable once
         this returns. Raises `SearchUnavailableError` when the store cannot
         be reached or rejects any of them."""
+
+    @abstractmethod
+    async def set_chunk_embeddings(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        embeddings: Mapping[uuid.UUID, Sequence[float]],
+    ) -> list[uuid.UUID]:
+        """Adds each vector to the Tenant's Chunk of that id already in the
+        index, leaving its other fields untouched. Returns the ids the Tenant
+        has no Chunk for (deleted meanwhile, or another Tenant's); those are
+        reported, not raised. Raises `SearchUnavailableError` when the store
+        cannot be reached, and `SearchError` when it rejects a vector."""
 
     @abstractmethod
     async def search_chunks(

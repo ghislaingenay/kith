@@ -4,7 +4,7 @@ job and batch. The breaker is injected; the composition root decides which
 errors count as failures."""
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from core.circuit_breaker.breaker import CircuitBreaker
 from core.search.provider import ChunkDocument, ChunkHit, SearchIndex
@@ -36,6 +36,18 @@ class CircuitBreakerSearchIndex(SearchIndex):
 
     async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         await self._breaker.call(lambda: self._index.index_chunks(chunks))
+
+    async def set_chunk_embeddings(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        embeddings: Mapping[uuid.UUID, Sequence[float]],
+    ) -> list[uuid.UUID]:
+        return await self._breaker.call(
+            lambda: self._index.set_chunk_embeddings(
+                tenant_id=tenant_id, embeddings=embeddings
+            )
+        )
 
     async def search_chunks(
         self,
