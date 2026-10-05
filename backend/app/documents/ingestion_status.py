@@ -46,15 +46,38 @@ def is_ready_for_embedding(document: Document) -> bool:
 
 
 def set_status_after_embedding(document: Document, chunks: Sequence[Chunk]) -> None:
-    """From both Chunk statuses: `ready` when every Chunk is indexed and
-    embedded, `failed` when none was made searchable, `partial` when some
-    were not indexed. Indexed Chunks still waiting for a vector leave the
-    Document as it is, waiting at `embedding`."""
-    indexed = [chunk for chunk in chunks if chunk.indexing_status == ChunkStatus.DONE]
-    if not indexed or len(indexed) < len(chunks):
-        set_status_after_indexing(document, indexed=len(indexed), total=len(chunks))
+    """From both Chunk statuses. A Chunk is searchable once it is indexed and
+    embedded, so one that failed either step is not. `ready` when every Chunk
+    is, `failed` when none is, `partial` otherwise. Indexed Chunks still
+    waiting for a vector leave the Document as it is, waiting at
+    `embedding`."""
+    searchable = sum(
+        chunk.indexing_status == ChunkStatus.DONE
+        and chunk.embedding_status == ChunkStatus.DONE
+        for chunk in chunks
+    )
+    waiting_for_vector = any(
+        chunk.indexing_status == ChunkStatus.DONE
+        and chunk.embedding_status == ChunkStatus.PENDING
+        for chunk in chunks
+    )
+    if waiting_for_vector:
         return
-    if all(chunk.embedding_status == ChunkStatus.DONE for chunk in indexed):
+    total = len(chunks)
+    failed = total - searchable
+    if failed == 0:
         document.ingestion_status = IngestionStatus.READY
         document.ingestion_stage = IngestionStage.EMBEDDING
         document.ingestion_error = None
+    elif searchable == 0:
+        document.ingestion_status = IngestionStatus.FAILED
+        document.ingestion_error = (
+            "None of this document's text could be made searchable. "
+            "Please try again later."
+        )
+    else:
+        document.ingestion_status = IngestionStatus.PARTIAL
+        document.ingestion_error = (
+            f"{failed} of {total} passages of this document could not be "
+            "made searchable."
+        )

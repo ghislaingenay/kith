@@ -2,6 +2,8 @@
 Voyage API key must stop it with a message that names the variable (#66)."""
 
 import pytest
+from core.circuit_breaker.breaker import CircuitBreaker
+from core.embedding.circuit_breaker_provider import CircuitBreakerEmbeddingProvider
 from core.embedding.config import EmbeddingSettings
 from core.embedding.factory import EmbeddingProviderFactory
 from pydantic import ValidationError
@@ -26,11 +28,18 @@ def test_an_empty_api_key_is_refused_with_the_variable_name(
         EmbeddingSettings()
 
 
-def test_the_factory_builds_a_provider_from_a_key(
+def test_the_factory_builds_a_provider_behind_the_breaker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("VOYAGE_API_KEY", "test-key")
 
-    provider = EmbeddingProviderFactory.create(EmbeddingSettings())
+    breaker = CircuitBreaker(
+        name="embedding",
+        failure_threshold=5,
+        reset_timeout_seconds=30,
+        failure_types=(),
+    )
 
-    assert provider is not None
+    provider = EmbeddingProviderFactory.create(EmbeddingSettings(), breaker)
+
+    assert isinstance(provider, CircuitBreakerEmbeddingProvider)

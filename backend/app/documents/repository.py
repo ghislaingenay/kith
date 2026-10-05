@@ -357,6 +357,16 @@ class DocumentsRepository:
             .values(embedding_status=ChunkStatus.DONE, embedding_error=None)
         )
 
+    async def mark_chunks_embedding_failed(
+        self, chunk_ids: Sequence[uuid.UUID], *, error: str
+    ) -> None:
+        """Does not commit: the caller decides the transaction boundary."""
+        await self.session.execute(
+            update(Chunk)
+            .where(Chunk.id.in_(chunk_ids))
+            .values(embedding_status=ChunkStatus.FAILED, embedding_error=error)
+        )
+
     async def mark_chunks_indexing_failed(
         self, chunk_ids: Sequence[uuid.UUID], *, error: str
     ) -> None:
