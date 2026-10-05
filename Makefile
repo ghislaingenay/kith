@@ -1,4 +1,6 @@
-COMPOSE = docker compose -f infra/docker-compose.yml
+# Compose reads `.env` from the compose file's directory (infra/), so the
+# repo-root `.env` (VOYAGE_API_KEY, ...) is passed explicitly when it exists.
+COMPOSE = docker compose $(if $(wildcard .env),--env-file .env) -f infra/docker-compose.yml
 
 # --rm to create a temporary container for running alembic commands
 ALEMBIC = $(COMPOSE) run --rm app alembic
