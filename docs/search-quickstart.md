@@ -55,9 +55,9 @@ POST kith-chunks/_analyze
 
 You should see `resume` and `résumé` both, and `client's` with a straight apostrophe.
 
-## Replay failed indexing batches
+## Replay failed indexing and embedding batches
 
-When the search store is down or refuses a batch, ingestion does not retry forever: it marks those Chunks `failed`, records an `open` Chunk Dead Letter row, and leaves the Document `partial` (or `failed` if nothing was indexed). Once OpenSearch is healthy again, replay the open rows:
+When the search store is down or refuses a batch, ingestion does not retry forever: it marks those Chunks `failed`, records an `open` Chunk Dead Letter row, and leaves the Document `partial` (or `failed` if nothing was indexed). Embedding does the same when Voyage is down or rejects a batch, with a row for stage `embedding`. Once OpenSearch and Voyage are healthy again, replay the open rows:
 
 ```sh
 make search-replay
@@ -65,9 +65,13 @@ make search-replay
 
 Replay re-indexes only the failed Chunks, from the text kept in Postgres. It does not read the PDF or storage and does not re-chunk. For each row that works it marks the Chunks indexed, resolves the row, and recomputes the Document, which goes back to `processing` at the `embedding` stage once all its Chunks are indexed. A batch that fails again stays `open` and its attempt count goes up, so you can run replay again later. With no open rows it does nothing and succeeds.
 
-To limit a run to one Document or to the oldest few rows:
+Open `indexing` rows are replayed first, then open `embedding` ones. An embedding replay re-embeds exactly the row's Chunks from the text kept in Postgres, through the same provider and circuit breaker, and writes the vectors onto the existing index documents. For each row that works it marks the Chunks embedded and resolves the row, and the Document is worked out again: `ready` once every Chunk is indexed and embedded, `partial` while some are still failed. A row whose Document was deleted, or whose Chunks no longer exist, is resolved without calling Voyage. As with indexing, there is no cap on attempts (ADR-0014).
+
+To limit a run to one stage, one Document or to the oldest few rows:
 
 ```sh
+make search-replay stage=indexing
+make search-replay stage=embedding
 make search-replay document=<document-uuid>
 make search-replay limit=10
 ```
