@@ -35,6 +35,7 @@ from tests.documents.conftest import (
     make_text_pdf,
 )
 from tests.support.fake_search_index import FakeSearchIndex
+from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_storage import FakeStorageProvider
 
 _THREE_PAGES = make_text_pdf(["First page.", "Second page.", "Third page."])
@@ -73,6 +74,7 @@ async def ingest_ctx(
         ),
         "search_index": CircuitBreakerSearchIndex(fake_index, breaker),
         "retry_handler": fast_retry_handler(),
+        "job_queue": FakeJobQueue(),
     }
     await engine.dispose()
 

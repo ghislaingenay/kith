@@ -32,6 +32,7 @@ from tests.documents.conftest import (
     init_upload,
     make_text_pdf,
 )
+from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_storage import FakeStorageProvider
 
 
@@ -46,6 +47,7 @@ async def ingest_ctx(
         "ingestion_settings": IngestionSettings(),
         "search_index": search_index,
         "retry_handler": fast_retry_handler(),
+        "job_queue": FakeJobQueue(),
     }
     await engine.dispose()
 

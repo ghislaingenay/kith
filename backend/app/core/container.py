@@ -8,6 +8,8 @@ from core.cache.config import CacheSettings
 from core.cache.factory import CacheProviderFactory
 from core.cors import CorsSettings
 from core.database import DatabaseSettings, create_engine, create_session_factory
+from core.embedding.config import EmbeddingSettings
+from core.embedding.factory import EmbeddingProviderFactory
 from core.jobs.factory import JobQueueFactory
 from core.logging.config import LoggingSettings, configure_logging
 from core.mail.config import MailSettings
@@ -97,6 +99,15 @@ class Container(containers.DeclarativeContainer):
         SearchIndexFactory.create,
         settings=search_settings,
         breaker=search_circuit_breaker,
+    )
+
+    embedding_settings = providers.Singleton(EmbeddingSettings)
+
+    # Same eager-init note as storage_provider: call
+    # `container.embedding_provider()` during the ingest worker's startup so a
+    # missing VOYAGE_API_KEY fails fast instead of on the first embed job.
+    embedding_provider = providers.Singleton(
+        EmbeddingProviderFactory.create, settings=embedding_settings
     )
 
     upload_settings = providers.Singleton(UploadSettings)

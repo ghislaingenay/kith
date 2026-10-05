@@ -37,6 +37,7 @@ from tests.documents.conftest import (
     make_text_pdf,
 )
 from tests.support.fake_search_index import FakeSearchIndex
+from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_storage import FakeStorageProvider
 
 _THREE_PAGES = make_text_pdf(["Alpha page.", "Bravo page.", "Charlie page."])
@@ -78,6 +79,7 @@ async def _ingest_with_failed_batches(
             ),
             "search_index": failing_index,
             "retry_handler": fast_retry_handler(),
+            "job_queue": FakeJobQueue(),
         },
         document_id=str(document_id),
         tenant_id=str(caller.tenant_id),

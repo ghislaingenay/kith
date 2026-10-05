@@ -9,4 +9,4 @@ class EmbeddingSettings(BaseSettings):
 
     model_config = SettingsConfigDict(case_sensitive=False)
 
-    voyage_api_key: str = Field(validation_alias="VOYAGE_API_KEY")
+    voyage_api_key: str = Field(min_length=1, validation_alias="VOYAGE_API_KEY")

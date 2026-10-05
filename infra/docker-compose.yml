@@ -203,6 +203,9 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       REDIS_URL: redis://redis:6379/0
       SEARCH_URL: http://opensearch:9200
+      # Empty when unset, so the other services still start; the worker
+      # itself refuses an empty key at startup (ADR-0014).
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

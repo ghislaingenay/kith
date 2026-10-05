@@ -10,7 +10,7 @@ from core.logging import setup_logger
 from core.search.provider import SearchIndex
 from documents.config import IngestionSettings
 from documents.ingestion_status import (
-    is_waiting_for_vectors,
+    is_ready_for_embedding,
     set_status_after_embedding,
 )
 from documents.job_documents import load_document_for_job
@@ -36,7 +36,7 @@ async def embed_document(ctx: dict, *, document_id: str, tenant_id: str) -> None
         if document is None:
             return
 
-        if not is_waiting_for_vectors(document):
+        if not is_ready_for_embedding(document):
             logger.info(
                 "embed_document_skipped",
                 document_id=document_id,
