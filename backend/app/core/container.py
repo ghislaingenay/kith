@@ -9,6 +9,7 @@ from core.cache.factory import CacheProviderFactory
 from core.cors import CorsSettings
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.embedding.config import EmbeddingSettings
+from core.embedding.exceptions import EmbeddingUnavailableError
 from core.embedding.factory import EmbeddingProviderFactory
 from core.jobs.factory import JobQueueFactory
 from core.logging.config import LoggingSettings, configure_logging
@@ -103,11 +104,24 @@ class Container(containers.DeclarativeContainer):
 
     embedding_settings = providers.Singleton(EmbeddingSettings)
 
+    # Its own breaker, so a Voyage outage does not stop searching and an
+    # OpenSearch outage does not stop embedding (ADR-0014). Only an
+    # unavailable model counts; a request it rejects does not.
+    embedding_circuit_breaker = providers.Singleton(
+        CircuitBreaker,
+        name="embedding",
+        failure_threshold=circuit_breaker_settings.provided.failure_threshold,
+        reset_timeout_seconds=circuit_breaker_settings.provided.reset_timeout_seconds,
+        failure_types=(EmbeddingUnavailableError,),
+    )
+
     # Same eager-init note as storage_provider: call
     # `container.embedding_provider()` during the ingest worker's startup so a
     # missing VOYAGE_API_KEY fails fast instead of on the first embed job.
     embedding_provider = providers.Singleton(
-        EmbeddingProviderFactory.create, settings=embedding_settings
+        EmbeddingProviderFactory.create,
+        settings=embedding_settings,
+        breaker=embedding_circuit_breaker,
     )
 
     upload_settings = providers.Singleton(UploadSettings)

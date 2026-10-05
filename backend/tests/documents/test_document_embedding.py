@@ -3,29 +3,29 @@ vectors. Called directly as a job function, against real Postgres, a
 `FakeSearchIndex` and a `FakeEmbeddingProvider`; the provider is never the
 real Voyage API."""
 
-import hashlib
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.embedding.provider import EmbeddingInputType
-from core.search.provider import ChunkDocument
 from documents.config import IngestionSettings
 from documents.embed import embed_document
 from documents.models import (
-    Chunk,
     ChunkStatus,
-    Document,
     IngestionStage,
     IngestionStatus,
 )
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from tests.documents.conftest import Caller
+from tests.documents.conftest import Caller, fast_retry_handler
+from tests.documents.embedding_support import (
+    document_waiting_at_embedding,
+    load_chunks,
+    load_document,
+)
 from tests.support.fake_embedding_provider import FakeEmbeddingProvider, vector_for
 from tests.support.fake_search_index import FakeSearchIndex
 
@@ -58,79 +58,13 @@ def embed_ctx(
         "ingestion_settings": IngestionSettings(),
         "search_index": search_index,
         "embedding_provider": embedding_provider,
+        "retry_handler": fast_retry_handler(),
     }
-
-
-async def _document_waiting_at_embedding(
-    db_session: AsyncSession,
-    search_index: FakeSearchIndex,
-    caller: Caller,
-    chunk_texts: Sequence[str],
-) -> uuid.UUID:
-    """A Document whose Chunks are all indexed, as indexing leaves it."""
-    document = Document(
-        tenant_id=caller.tenant_id,
-        uploader_id=caller.user_id,
-        name="report.pdf",
-        size_bytes=1,
-        page_count=1,
-        content_hash=uuid.uuid4().hex,
-        storage_key="unused",
-        ingestion_status=IngestionStatus.PROCESSING,
-        ingestion_stage=IngestionStage.EMBEDDING,
-    )
-    db_session.add(document)
-    await db_session.flush()
-    for ordinal, text in enumerate(chunk_texts):
-        chunk = Chunk(
-            document_id=document.id,
-            tenant_id=caller.tenant_id,
-            page_number=1,
-            ordinal=ordinal,
-            text=text,
-            text_hash=hashlib.sha256(text.encode()).hexdigest(),
-            token_count=len(text.split()),
-            indexing_status=ChunkStatus.DONE,
-        )
-        db_session.add(chunk)
-        await db_session.flush()
-        search_index.indexed.append(
-            ChunkDocument(
-                id=chunk.id,
-                tenant_id=caller.tenant_id,
-                document_id=document.id,
-                page_number=1,
-                ordinal=ordinal,
-                text=text,
-            )
-        )
-    await db_session.commit()
-    return document.id
 
 
 async def _embed(ctx: dict, caller: Caller, document_id: uuid.UUID) -> None:
     await embed_document(
         ctx, document_id=str(document_id), tenant_id=str(caller.tenant_id)
-    )
-
-
-async def _document(db_session: AsyncSession, document_id: uuid.UUID) -> Document:
-    db_session.expire_all()
-    return (
-        await db_session.execute(select(Document).where(Document.id == document_id))
-    ).scalar_one()
-
-
-async def _chunks(db_session: AsyncSession, document_id: uuid.UUID) -> list[Chunk]:
-    db_session.expire_all()
-    return list(
-        (
-            await db_session.execute(
-                select(Chunk)
-                .where(Chunk.document_id == document_id)
-                .order_by(Chunk.ordinal)
-            )
-        ).scalars()
     )
 
 
@@ -141,18 +75,18 @@ async def test_embedding_a_document_waiting_at_embedding_makes_it_ready(
     embed_ctx: dict,
 ) -> None:
     texts = ["first chunk text", "second chunk text"]
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, texts
     )
 
     await _embed(embed_ctx, caller, document_id)
 
-    chunks = await _chunks(db_session, document_id)
+    chunks = await load_chunks(db_session, document_id)
     assert [chunk.embedding_status for chunk in chunks] == [ChunkStatus.DONE] * 2
     assert [search_index.embeddings[chunk.id] for chunk in chunks] == [
         vector_for(text) for text in texts
     ]
-    document = await _document(db_session, document_id)
+    document = await load_document(db_session, document_id)
     assert document.ingestion_status == IngestionStatus.READY
     assert document.ingestion_stage == IngestionStage.EMBEDDING
     assert document.ingestion_error is None
@@ -165,7 +99,7 @@ async def test_chunks_are_embedded_as_documents(
     embedding_provider: FakeEmbeddingProvider,
     embed_ctx: dict,
 ) -> None:
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["some text"]
     )
 
@@ -181,7 +115,7 @@ async def test_a_second_run_sends_nothing_to_the_provider(
     embedding_provider: FakeEmbeddingProvider,
     embed_ctx: dict,
 ) -> None:
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["first text", "second text"]
     )
     await _embed(embed_ctx, caller, document_id)
@@ -200,13 +134,13 @@ async def test_only_chunks_that_are_indexed_and_pending_embedding_are_sent(
     embedding_provider: FakeEmbeddingProvider,
     embed_ctx: dict,
 ) -> None:
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session,
         search_index,
         caller,
         ["already embedded", "pending text", "never indexed"],
     )
-    already_embedded, _, never_indexed = await _chunks(db_session, document_id)
+    already_embedded, _, never_indexed = await load_chunks(db_session, document_id)
     already_embedded.embedding_status = ChunkStatus.DONE
     never_indexed.indexing_status = ChunkStatus.FAILED
     await db_session.commit()
@@ -223,11 +157,11 @@ async def test_a_document_with_chunks_that_failed_indexing_ends_partial(
     embedding_provider: FakeEmbeddingProvider,
     embed_ctx: dict,
 ) -> None:
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["indexed text", "failed text"]
     )
-    document = await _document(db_session, document_id)
-    _, failed_chunk = await _chunks(db_session, document_id)
+    document = await load_document(db_session, document_id)
+    _, failed_chunk = await load_chunks(db_session, document_id)
     failed_chunk.indexing_status = ChunkStatus.FAILED
     document.ingestion_status = IngestionStatus.PARTIAL
     await db_session.commit()
@@ -235,7 +169,7 @@ async def test_a_document_with_chunks_that_failed_indexing_ends_partial(
     await _embed(embed_ctx, caller, document_id)
 
     assert embedding_provider.requests == [["indexed text"]]
-    assert (await _document(db_session, document_id)).ingestion_status == (
+    assert (await load_document(db_session, document_id)).ingestion_status == (
         IngestionStatus.PARTIAL
     )
 
@@ -250,7 +184,7 @@ async def test_chunks_over_the_token_cap_are_split_across_several_requests(
     embed_ctx["ingestion_settings"] = IngestionSettings.model_validate(
         {"INGESTION_EMBED_BATCH_TOKEN_CAP": 10}
     )
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session,
         search_index,
         caller,
@@ -265,12 +199,12 @@ async def test_chunks_over_the_token_cap_are_split_across_several_requests(
     await _embed(embed_ctx, caller, document_id)
 
     assert [len(request) for request in embedding_provider.requests] == [2, 2]
-    assert (await _document(db_session, document_id)).ingestion_status == (
+    assert (await load_document(db_session, document_id)).ingestion_status == (
         IngestionStatus.READY
     )
     assert all(
         chunk.embedding_status == ChunkStatus.DONE
-        for chunk in await _chunks(db_session, document_id)
+        for chunk in await load_chunks(db_session, document_id)
     )
 
 
@@ -284,7 +218,7 @@ async def test_a_chunk_over_the_cap_on_its_own_is_sent_alone(
     embed_ctx["ingestion_settings"] = IngestionSettings.model_validate(
         {"INGESTION_EMBED_BATCH_TOKEN_CAP": 3}
     )
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["a", "b c d e f", "g"]
     )
 
@@ -303,7 +237,7 @@ async def test_a_request_never_holds_more_chunks_than_the_limit(
     embed_ctx["ingestion_settings"] = IngestionSettings.model_validate(
         {"INGESTION_EMBED_BATCH_MAX_CHUNKS": 2}
     )
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["a", "b", "c"]
     )
 
@@ -318,7 +252,7 @@ async def test_the_tokens_used_are_logged_for_the_document(
     search_index: FakeSearchIndex,
     embed_ctx: dict,
 ) -> None:
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["one two three", "four five"]
     )
 
@@ -336,17 +270,17 @@ async def test_a_chunk_missing_from_the_index_is_not_marked_embedded(
     search_index: FakeSearchIndex,
     embed_ctx: dict,
 ) -> None:
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["still indexed", "gone"]
     )
     search_index.indexed = search_index.indexed[:1]
 
     await _embed(embed_ctx, caller, document_id)
 
-    still_indexed, gone = await _chunks(db_session, document_id)
+    still_indexed, gone = await load_chunks(db_session, document_id)
     assert still_indexed.embedding_status == ChunkStatus.DONE
     assert gone.embedding_status == ChunkStatus.PENDING
-    assert (await _document(db_session, document_id)).ingestion_status == (
+    assert (await load_document(db_session, document_id)).ingestion_status == (
         IngestionStatus.PROCESSING
     )
 
@@ -368,10 +302,10 @@ async def test_a_document_that_is_not_waiting_for_vectors_is_left_alone(
     status: IngestionStatus,
     stage: IngestionStage | None,
 ) -> None:
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["some text"]
     )
-    document = await _document(db_session, document_id)
+    document = await load_document(db_session, document_id)
     document.ingestion_status = status
     document.ingestion_stage = stage
     if status == IngestionStatus.DELETED:
@@ -381,7 +315,7 @@ async def test_a_document_that_is_not_waiting_for_vectors_is_left_alone(
     await _embed(embed_ctx, caller, document_id)
 
     assert embedding_provider.requests == []
-    assert (await _document(db_session, document_id)).ingestion_status == status
+    assert (await load_document(db_session, document_id)).ingestion_status == status
 
 
 async def test_a_job_for_another_tenants_document_does_nothing(
@@ -391,7 +325,7 @@ async def test_a_job_for_another_tenants_document_does_nothing(
     embedding_provider: FakeEmbeddingProvider,
     embed_ctx: dict,
 ) -> None:
-    document_id = await _document_waiting_at_embedding(
+    document_id = await document_waiting_at_embedding(
         db_session, search_index, caller, ["some text"]
     )
 
