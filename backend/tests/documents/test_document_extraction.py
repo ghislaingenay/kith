@@ -42,6 +42,7 @@ from tests.documents.conftest import (
     make_text_pdf,
     make_two_column_pdf,
 )
+from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_storage import FakeStorageProvider
 
 _ACCENTED_TEXT = "Café résumé naïve façade"
@@ -62,6 +63,7 @@ async def ingest_ctx(
         "ingestion_settings": IngestionSettings(),
         "search_index": search_index,
         "retry_handler": fast_retry_handler(),
+        "job_queue": FakeJobQueue(),
     }
     await engine.dispose()
 
@@ -364,6 +366,7 @@ async def test_an_infrastructure_failure_propagates_instead_of_being_swallowed(
         "ingestion_settings": IngestionSettings(),
         "search_index": None,
         "retry_handler": fast_retry_handler(),
+        "job_queue": FakeJobQueue(),
     }
 
     with pytest.raises(StorageError):

@@ -21,13 +21,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pypdfium2
+from core.jobs.provider import JobQueue
 from core.logging import setup_logger
 from core.retry.handler import RetryHandler
 from core.search.provider import ChunkDocument, SearchIndex
 from core.storage.provider import StorageProvider
 from documents.chunker import CHUNK_TOKENIZER, chunk_page
 from documents.config import IngestionSettings
-from documents.ingestion_status import set_status_after_indexing
+from documents.ingestion_status import (
+    is_ready_for_embedding,
+    set_status_after_indexing,
+)
 from documents.job_documents import load_document_for_job
 from documents.models import (
     Chunk,
@@ -48,6 +52,9 @@ logger = setup_logger(__name__)
 
 _PAGES_EXTRACTED_BATCH_SIZE = 5
 
+_INGEST_QUEUE = "ingest"
+_EMBED_FUNCTION = "embed_document"
+
 # PDFium objects are thread-affine (pypdfium2/PDFium isn't thread-safe);
 # `asyncio.to_thread` can hop across the default pool's threads between
 # calls, so every PDFium call instead runs on this one pinned thread.
@@ -65,6 +72,7 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
     settings: IngestionSettings = ctx["ingestion_settings"]
     search_index: SearchIndex = ctx["search_index"]
     retry_handler: RetryHandler = ctx["retry_handler"]
+    job_queue: JobQueue = ctx["job_queue"]
     async with session_factory() as session:
         repository = DocumentsRepository(session)
         document = await load_document_for_job(
@@ -180,6 +188,14 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
             document_id=document_id,
             ingestion_status=document.ingestion_status,
         )
+
+        if is_ready_for_embedding(document):
+            await job_queue.enqueue(
+                _INGEST_QUEUE,
+                _EMBED_FUNCTION,
+                {"document_id": document_id, "tenant_id": tenant_id},
+                job_id=f"embed:{document_id}",
+            )
 
 
 async def _index_chunks(
