@@ -3,7 +3,7 @@ COMPOSE = docker compose -f infra/docker-compose.yml
 # --rm to create a temporary container for running alembic commands
 ALEMBIC = $(COMPOSE) run --rm app alembic
 
-.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create search-replay
+.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create search-replay embed-documents
 
 up:
 	$(COMPOSE) up -d
@@ -47,3 +47,8 @@ search-index-create:
 # usage: make search-replay [document=<uuid>] [limit=<n>]
 search-replay:
 	$(COMPOSE) run --rm app python -m scripts.replay_failed_batches $(if $(document),--document-id $(document)) $(if $(limit),--limit $(limit))
+
+# enqueue embedding for Documents waiting at the embedding stage or partial; the worker does the work
+# usage: make embed-documents [document=<uuid>]
+embed-documents:
+	$(COMPOSE) run --rm app python -m scripts.embed_documents $(if $(document),--document-id $(document))

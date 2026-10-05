@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -418,6 +418,31 @@ class DocumentsRepository:
         result = await self.session.execute(
             select(Chunk).where(Chunk.id.in_(chunk_ids)).order_by(Chunk.ordinal)
         )
+        return result.scalars().all()
+
+    async def list_documents_waiting_for_embedding(
+        self, *, document_id: uuid.UUID | None = None
+    ) -> Sequence[Document]:
+        """Documents with embedding work to do, across every Tenant, optionally
+        only the one with `document_id`, oldest first: those waiting at
+        `embedding`, and `partial` ones whose indexed Chunks may still need
+        vectors (the same cases as `is_ready_for_embedding`)."""
+        statement = (
+            select(Document)
+            .where(
+                or_(
+                    Document.ingestion_status == IngestionStatus.PARTIAL,
+                    and_(
+                        Document.ingestion_status == IngestionStatus.PROCESSING,
+                        Document.ingestion_stage == IngestionStage.EMBEDDING,
+                    ),
+                )
+            )
+            .order_by(Document.created_at, Document.id)
+        )
+        if document_id is not None:
+            statement = statement.where(Document.id == document_id)
+        result = await self.session.execute(statement)
         return result.scalars().all()
 
     async def list_live_document_ids(self, *, tenant_id: uuid.UUID) -> list[uuid.UUID]:

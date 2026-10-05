@@ -28,6 +28,7 @@ from core.search.provider import ChunkDocument, SearchIndex
 from core.storage.provider import StorageProvider
 from documents.chunker import CHUNK_TOKENIZER, chunk_page
 from documents.config import IngestionSettings
+from documents.embed_jobs import enqueue_embed_document
 from documents.ingestion_status import (
     is_ready_for_embedding,
     set_status_after_indexing,
@@ -51,9 +52,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = setup_logger(__name__)
 
 _PAGES_EXTRACTED_BATCH_SIZE = 5
-
-_INGEST_QUEUE = "ingest"
-_EMBED_FUNCTION = "embed_document"
 
 # PDFium objects are thread-affine (pypdfium2/PDFium isn't thread-safe);
 # `asyncio.to_thread` can hop across the default pool's threads between
@@ -190,11 +188,8 @@ async def ingest_document(ctx: dict, *, document_id: str, tenant_id: str) -> Non
         )
 
         if is_ready_for_embedding(document):
-            await job_queue.enqueue(
-                _INGEST_QUEUE,
-                _EMBED_FUNCTION,
-                {"document_id": document_id, "tenant_id": tenant_id},
-                job_id=f"embed:{document_id}",
+            await enqueue_embed_document(
+                job_queue, document_id=document_id, tenant_id=tenant_id
             )
 
 
