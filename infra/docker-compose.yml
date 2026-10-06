@@ -156,6 +156,9 @@ services:
       MAIL_FROM_ADDRESS: noreply@kith.dev
       MAGIC_LINK_VERIFY_URL: http://localhost:3000/verify
       SESSION_COOKIE_SECURE: "false"
+      # Only `make search-replay` (embedding rows) and `make embed-documents`
+      # need it; empty when unset so the API still starts without it.
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
     healthcheck:
       test:
         [

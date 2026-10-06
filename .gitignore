@@ -12,3 +12,5 @@ frontend/**/.pnpm-store/
 frontend/node_modules/
 
 .vscode/*
+
+.env

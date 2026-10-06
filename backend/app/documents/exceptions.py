@@ -72,3 +72,8 @@ class DocumentNotFoundError(Exception):
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
+
+
+class EmbeddingProviderRequiredError(Exception):
+    """A replay that includes `embedding` rows was started without an
+    embedding provider."""

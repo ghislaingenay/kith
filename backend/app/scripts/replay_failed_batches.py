@@ -1,5 +1,5 @@
-"""Replays failed indexing batches. Run with `make search-replay`; see
-`docs/search-quickstart.md`."""
+"""Replays failed indexing and embedding batches. Run with `make search-replay`;
+see `docs/search-quickstart.md`."""
 
 import argparse
 import asyncio
@@ -7,10 +7,19 @@ import uuid
 
 from core.container import container
 from documents.dead_letter_replay import replay_failed_batches
+from documents.models import IngestionStage
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Replay failed indexing batches")
+    parser = argparse.ArgumentParser(
+        description="Replay failed indexing and embedding batches"
+    )
+    parser.add_argument(
+        "--stage",
+        type=IngestionStage,
+        choices=[IngestionStage.INDEXING, IngestionStage.EMBEDDING],
+        help="only this stage's rows (default: indexing, then embedding)",
+    )
     parser.add_argument("--document-id", type=uuid.UUID, help="only this Document")
     parser.add_argument("--limit", type=int, help="at most this many rows")
     args = parser.parse_args()
@@ -21,7 +30,12 @@ async def main() -> None:
         result = await replay_failed_batches(
             container.db_session_factory(),
             search_index,
+            # Indexing alone must not need the Voyage key.
+            None
+            if args.stage == IngestionStage.INDEXING
+            else container.embedding_provider(),
             container.retry_handler(),
+            stage=args.stage,
             document_id=args.document_id,
             limit=args.limit,
         )

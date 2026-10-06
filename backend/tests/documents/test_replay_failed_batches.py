@@ -37,6 +37,7 @@ from tests.documents.conftest import (
     init_upload,
     make_text_pdf,
 )
+from tests.support.fake_embedding_provider import FakeEmbeddingProvider
 from tests.support.fake_search_index import FakeSearchIndex
 from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_storage import FakeStorageProvider
@@ -148,7 +149,9 @@ async def test_replay_indexes_only_the_failed_chunks_and_resolves_their_rows(
         IngestionStatus.PARTIAL
     )
 
-    await replay_failed_batches(session_factory, search_index, fast_retry_handler())
+    await replay_failed_batches(
+        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+    )
 
     assert await _found_pages(db_session, search_index, caller, "page") == [2, 3]
     assert [c.indexing_status for c in await _chunks(db_session, document_id)] == [
@@ -175,7 +178,9 @@ async def test_after_replay_the_document_is_back_to_processing_at_embedding(
         client, storage, caller, session_factory, failing_index
     )
 
-    await replay_failed_batches(session_factory, search_index, fast_retry_handler())
+    await replay_failed_batches(
+        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+    )
 
     document = await _document(db_session, document_id)
     assert document.ingestion_status == IngestionStatus.PROCESSING
@@ -200,7 +205,9 @@ async def test_a_document_with_no_indexed_chunks_also_recovers(
         IngestionStatus.FAILED
     )
 
-    await replay_failed_batches(session_factory, search_index, fast_retry_handler())
+    await replay_failed_batches(
+        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+    )
 
     document = await _document(db_session, document_id)
     assert document.ingestion_status == IngestionStatus.PROCESSING
@@ -223,7 +230,9 @@ async def test_a_batch_that_fails_again_stays_open_with_more_attempts(
     still_down = FakeSearchIndex()
     still_down.down = True
 
-    await replay_failed_batches(session_factory, still_down, fast_retry_handler())
+    await replay_failed_batches(
+        session_factory, still_down, FakeEmbeddingProvider(), fast_retry_handler()
+    )
 
     after = await _dead_letters(db_session, document_id)
     assert [d.status for d in after] == [ChunkDeadLetterStatus.OPEN] * 2
@@ -253,7 +262,9 @@ async def test_a_repeat_failure_does_not_stop_the_other_rows(
     # Page 2's replay fails every attempt, page 3's works.
     flaky.index_outcomes = [False, False, False, True]
 
-    await replay_failed_batches(session_factory, flaky, fast_retry_handler())
+    await replay_failed_batches(
+        session_factory, flaky, FakeEmbeddingProvider(), fast_retry_handler()
+    )
 
     assert [d.status for d in await _dead_letters(db_session, document_id)] == [
         ChunkDeadLetterStatus.OPEN,
@@ -285,7 +296,11 @@ async def test_replay_can_be_limited_to_one_document(
     )
 
     await replay_failed_batches(
-        session_factory, search_index, fast_retry_handler(), document_id=second
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        document_id=second,
     )
 
     assert {d.status for d in await _dead_letters(db_session, first)} == {
@@ -310,7 +325,11 @@ async def test_replay_can_be_limited_to_a_number_of_rows_oldest_first(
     )
 
     await replay_failed_batches(
-        session_factory, search_index, fast_retry_handler(), limit=1
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        limit=1,
     )
 
     assert [d.status for d in await _dead_letters(db_session, document_id)] == [
@@ -337,7 +356,12 @@ async def test_replay_timestamps_are_taken_when_the_slow_call_returns(
     slow_store.delay_seconds = 0.3
     started = datetime.now(UTC)
 
-    await replay_failed_batches(session_factory, slow_store, fast_retry_handler())
+    await replay_failed_batches(
+        session_factory, 
+        slow_store,
+        FakeEmbeddingProvider(),
+        fast_retry_handler()
+    )
 
     # Two rows, one 0.3 s call each, so the second finishes 0.6 s in.
     done = started + timedelta(seconds=0.6)
@@ -356,7 +380,7 @@ async def test_replay_with_no_open_rows_does_nothing_and_succeeds(
     search_index: SearchIndex,
 ) -> None:
     result = await replay_failed_batches(
-        session_factory, search_index, fast_retry_handler()
+        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
     )
 
     assert (result.resolved, result.failed) == (0, 0)
@@ -376,7 +400,9 @@ async def test_a_deleted_document_is_not_brought_back_by_replay(
     )
     assert (await client.delete(f"/api/v1/documents/{document_id}")).is_success
 
-    await replay_failed_batches(session_factory, search_index, fast_retry_handler())
+    await replay_failed_batches(
+        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+    )
 
     assert (await _document(db_session, document_id)).ingestion_status == (
         IngestionStatus.DELETED

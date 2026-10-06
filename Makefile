@@ -1,4 +1,6 @@
-COMPOSE = docker compose -f infra/docker-compose.yml
+# Compose reads `.env` from the compose file's directory (infra/), so the
+# repo-root `.env` (VOYAGE_API_KEY, ...) is passed explicitly when it exists.
+COMPOSE = docker compose $(if $(wildcard .env),--env-file .env) -f infra/docker-compose.yml
 
 # --rm to create a temporary container for running alembic commands
 ALEMBIC = $(COMPOSE) run --rm app alembic
@@ -44,9 +46,9 @@ db-current:
 search-index-create:
 	$(COMPOSE) run --rm app python -m core.search.create_index
 
-# usage: make search-replay [document=<uuid>] [limit=<n>]
+# usage: make search-replay [stage=indexing|embedding] [document=<uuid>] [limit=<n>]
 search-replay:
-	$(COMPOSE) run --rm app python -m scripts.replay_failed_batches $(if $(document),--document-id $(document)) $(if $(limit),--limit $(limit))
+	$(COMPOSE) run --rm app python -m scripts.replay_failed_batches $(if $(stage),--stage $(stage)) $(if $(document),--document-id $(document)) $(if $(limit),--limit $(limit))
 
 # enqueue embedding for Documents waiting at the embedding stage or partial; the worker does the work
 # usage: make embed-documents [document=<uuid>]
