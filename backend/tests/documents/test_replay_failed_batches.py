@@ -356,7 +356,12 @@ async def test_replay_timestamps_are_taken_when_the_slow_call_returns(
     slow_store.delay_seconds = 0.3
     started = datetime.now(UTC)
 
-    await replay_failed_batches(session_factory, slow_store, fast_retry_handler())
+    await replay_failed_batches(
+        session_factory, 
+        slow_store,
+        FakeEmbeddingProvider(),
+        fast_retry_handler()
+    )
 
     # Two rows, one 0.3 s call each, so the second finishes 0.6 s in.
     done = started + timedelta(seconds=0.6)

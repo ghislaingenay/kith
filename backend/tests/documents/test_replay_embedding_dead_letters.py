@@ -24,6 +24,7 @@ from documents.models import (
 )
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 
 from tests.documents.conftest import Caller, fast_retry_handler
 from tests.documents.embedding_support import (
@@ -303,6 +304,52 @@ async def test_a_row_whose_chunks_no_longer_exist_is_resolved_without_calling_th
     assert {d.status for d in await _dead_letters(db_session, document_id)} == {
         ChunkDeadLetterStatus.RESOLVED
     }
+
+
+async def test_a_document_deleted_during_a_replay_resolves_the_row_and_stays_deleted(
+    caller: Caller,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker,
+    search_index: FakeSearchIndex,
+    embedding_provider: FakeEmbeddingProvider,
+) -> None:
+    document_id = await _document_with_failed_embedding(
+        db_session,
+        session_factory,
+        search_index,
+        embedding_provider,
+        caller,
+        _ONE_CHUNK,
+    )
+
+    async def delete_document_while_the_model_works() -> None:
+        # What the delete and its purge leave behind: the Document marked
+        # deleted and its Chunks gone from the index.
+        document = await load_document(db_session, document_id)
+        document.ingestion_status = IngestionStatus.DELETED
+        document.deleted_at = datetime.now(UTC)
+        await db_session.commit()
+        search_index.indexed.clear()
+
+    embedding_provider.after_embed = delete_document_while_the_model_works
+
+    with capture_logs() as logs:
+        await _replay(session_factory, search_index, embedding_provider)
+
+    [warning] = [
+        log for log in logs if log["event"] == "replay_embed_chunks_not_in_index"
+    ]
+    assert warning["log_level"] == "warning"
+    assert warning["document_id"] == str(document_id)
+    assert warning["chunks"] == 1
+    (dead_letter,) = await _dead_letters(db_session, document_id)
+    assert dead_letter.status == ChunkDeadLetterStatus.RESOLVED
+    assert search_index.embeddings == {}
+    (chunk,) = await load_chunks(db_session, document_id)
+    assert chunk.embedding_status == ChunkStatus.FAILED
+    assert (await load_document(db_session, document_id)).ingestion_status == (
+        IngestionStatus.DELETED
+    )
 
 
 async def _document_with_failed_indexing(
