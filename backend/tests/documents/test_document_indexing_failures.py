@@ -5,6 +5,7 @@ where the breaker matters, the real breaker around it on a fake clock."""
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from core.circuit_breaker.breaker import CircuitBreaker
@@ -16,9 +17,9 @@ from documents.ingest import ingest_document
 from documents.keys import pending_upload_key
 from documents.models import (
     Chunk,
-    ChunkStatus,
     ChunkDeadLetter,
     ChunkDeadLetterStatus,
+    ChunkStatus,
     Document,
     IngestionStage,
     IngestionStatus,
@@ -320,3 +321,28 @@ async def test_a_batch_the_store_rejects_is_recorded_without_retries_and_without
     assert (await _document(db_session, document_id)).ingestion_status == (
         IngestionStatus.FAILED
     )
+
+
+async def test_failures_are_timestamped_when_they_happen_not_when_the_slow_call_began(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    ingest_ctx: dict,
+    fake_index: FakeSearchIndex,
+) -> None:
+    document_id = await _upload(
+        client, storage, caller, make_text_pdf(["Known page text."])
+    )
+    fake_index.down = True
+    fake_index.delay_seconds = 0.3
+    started = datetime.now(UTC)
+
+    await _ingest(ingest_ctx, caller, document_id)
+
+    # Three attempts of 0.3 s each came before the failure was written.
+    slow = started + timedelta(seconds=0.9)
+    (chunk,) = await _chunks(db_session, document_id)
+    assert chunk.updated_at >= slow
+    (chunk_dead_letter,) = await _dead_letters(db_session, document_id)
+    assert chunk_dead_letter.created_at >= slow

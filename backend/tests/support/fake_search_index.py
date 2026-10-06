@@ -2,6 +2,7 @@
 alias were created, and can be scripted to fail the way a search store that
 is down does."""
 
+import asyncio
 import uuid
 from collections.abc import Mapping, Sequence
 
@@ -23,6 +24,9 @@ class FakeSearchIndex:
         raises. Once used up, `down` decides."""
         self.down = False
         self.delete_down = False
+        self.delay_seconds = 0.0
+        """How long `delete_document_chunks` and `index_chunks` take before
+        they answer, as a slow store does."""
         self.crash_with: Exception | None = None
         """Raised by `index_chunks` instead of anything else, to stand for a
         failure that is not the search store being unavailable."""
@@ -42,12 +46,14 @@ class FakeSearchIndex:
         self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
     ) -> None:
         self.delete_calls += 1
+        await asyncio.sleep(self.delay_seconds)
         if self.delete_down:
             raise SearchUnavailableError("fake search store is down")
         self.indexed = [c for c in self.indexed if c.document_id != document_id]
 
     async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         self.index_calls += 1
+        await asyncio.sleep(self.delay_seconds)
         if self.crash_with is not None:
             raise self.crash_with
         works = self.index_outcomes.pop(0) if self.index_outcomes else not self.down

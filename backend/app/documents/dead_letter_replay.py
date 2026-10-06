@@ -123,6 +123,9 @@ async def _replay_indexing_row(
         else await repository.list_chunks_by_ids(row.chunk_ids)
     )
     if chunks:
+        # End the read's transaction before the search call, so the timestamps
+        # written after it are not the start of the call (see `_index_chunks`).
+        await session.commit()
         failure = await call_search(
             retry_handler,
             lambda: search_index.index_chunks(
