@@ -26,6 +26,7 @@ async def main() -> None:
 
     container.logging_configured()
     search_index = container.search_index()
+    job_queue = container.job_queue()
     try:
         result = await replay_failed_batches(
             container.db_session_factory(),
@@ -35,12 +36,14 @@ async def main() -> None:
             if args.stage == IngestionStage.INDEXING
             else container.embedding_provider(),
             container.retry_handler(),
+            job_queue,
             stage=args.stage,
             document_id=args.document_id,
             limit=args.limit,
         )
     finally:
         await search_index.close()
+        await job_queue.close()
         await container.db_engine().dispose()
     print(f"Replay: {result.resolved} resolved, {result.failed} still open")
 

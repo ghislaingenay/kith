@@ -33,6 +33,7 @@ from tests.documents.embedding_support import (
     load_document,
 )
 from tests.support.fake_embedding_provider import FakeEmbeddingProvider, vector_for
+from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_search_index import FakeSearchIndex
 
 _TEXTS = ["first chunk", "second chunk"]
@@ -69,6 +70,7 @@ async def _replay(
         search_index,
         embedding_provider,
         fast_retry_handler(),
+        FakeJobQueue(),
         stage=stage,
         limit=limit,
     )
