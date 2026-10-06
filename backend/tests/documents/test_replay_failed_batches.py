@@ -14,6 +14,7 @@ from core.search.provider import SearchIndex
 from documents.chunk_search_service import ChunkSearchService
 from documents.config import IngestionSettings
 from documents.dead_letter_replay import replay_failed_batches
+from documents.embed import embed_document
 from documents.ingest import ingest_document
 from documents.keys import pending_upload_key
 from documents.models import (
@@ -27,7 +28,7 @@ from documents.models import (
 )
 from documents.repository import DocumentsRepository
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tests.documents.conftest import (
@@ -37,9 +38,9 @@ from tests.documents.conftest import (
     init_upload,
     make_text_pdf,
 )
-from tests.support.fake_embedding_provider import FakeEmbeddingProvider
-from tests.support.fake_search_index import FakeSearchIndex
+from tests.support.fake_embedding_provider import FakeEmbeddingProvider, vector_for
 from tests.support.fake_job_queue import FakeJobQueue
+from tests.support.fake_search_index import FakeSearchIndex
 from tests.support.fake_storage import FakeStorageProvider
 
 _THREE_PAGES = make_text_pdf(["Alpha page.", "Bravo page.", "Charlie page."])
@@ -141,6 +142,7 @@ async def test_replay_indexes_only_the_failed_chunks_and_resolves_their_rows(
     session_factory: async_sessionmaker,
     failing_index: FakeSearchIndex,
     search_index: SearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     document_id = await _ingest_with_failed_batches(
         client, storage, caller, session_factory, failing_index
@@ -150,7 +152,11 @@ async def test_replay_indexes_only_the_failed_chunks_and_resolves_their_rows(
     )
 
     await replay_failed_batches(
-        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
     )
 
     assert await _found_pages(db_session, search_index, caller, "page") == [2, 3]
@@ -173,13 +179,18 @@ async def test_after_replay_the_document_is_back_to_processing_at_embedding(
     session_factory: async_sessionmaker,
     failing_index: FakeSearchIndex,
     search_index: SearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     document_id = await _ingest_with_failed_batches(
         client, storage, caller, session_factory, failing_index
     )
 
     await replay_failed_batches(
-        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
     )
 
     document = await _document(db_session, document_id)
@@ -195,6 +206,7 @@ async def test_a_document_with_no_indexed_chunks_also_recovers(
     db_session: AsyncSession,
     session_factory: async_sessionmaker,
     search_index: SearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     down = FakeSearchIndex()
     down.down = True
@@ -206,7 +218,11 @@ async def test_a_document_with_no_indexed_chunks_also_recovers(
     )
 
     await replay_failed_batches(
-        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
     )
 
     document = await _document(db_session, document_id)
@@ -222,6 +238,7 @@ async def test_a_batch_that_fails_again_stays_open_with_more_attempts(
     db_session: AsyncSession,
     session_factory: async_sessionmaker,
     failing_index: FakeSearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     document_id = await _ingest_with_failed_batches(
         client, storage, caller, session_factory, failing_index
@@ -231,7 +248,11 @@ async def test_a_batch_that_fails_again_stays_open_with_more_attempts(
     still_down.down = True
 
     await replay_failed_batches(
-        session_factory, still_down, FakeEmbeddingProvider(), fast_retry_handler()
+        session_factory,
+        still_down,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
     )
 
     after = await _dead_letters(db_session, document_id)
@@ -254,6 +275,7 @@ async def test_a_repeat_failure_does_not_stop_the_other_rows(
     db_session: AsyncSession,
     session_factory: async_sessionmaker,
     failing_index: FakeSearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     document_id = await _ingest_with_failed_batches(
         client, storage, caller, session_factory, failing_index
@@ -263,7 +285,7 @@ async def test_a_repeat_failure_does_not_stop_the_other_rows(
     flaky.index_outcomes = [False, False, False, True]
 
     await replay_failed_batches(
-        session_factory, flaky, FakeEmbeddingProvider(), fast_retry_handler()
+        session_factory, flaky, FakeEmbeddingProvider(), fast_retry_handler(), job_queue
     )
 
     assert [d.status for d in await _dead_letters(db_session, document_id)] == [
@@ -282,6 +304,7 @@ async def test_replay_can_be_limited_to_one_document(
     db_session: AsyncSession,
     session_factory: async_sessionmaker,
     search_index: SearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     first = await _ingest_with_failed_batches(
         client, storage, caller, session_factory, _always_down()
@@ -300,6 +323,7 @@ async def test_replay_can_be_limited_to_one_document(
         search_index,
         FakeEmbeddingProvider(),
         fast_retry_handler(),
+        job_queue,
         document_id=second,
     )
 
@@ -319,6 +343,7 @@ async def test_replay_can_be_limited_to_a_number_of_rows_oldest_first(
     session_factory: async_sessionmaker,
     failing_index: FakeSearchIndex,
     search_index: SearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     document_id = await _ingest_with_failed_batches(
         client, storage, caller, session_factory, failing_index
@@ -329,6 +354,7 @@ async def test_replay_can_be_limited_to_a_number_of_rows_oldest_first(
         search_index,
         FakeEmbeddingProvider(),
         fast_retry_handler(),
+        job_queue,
         limit=1,
     )
 
@@ -348,6 +374,7 @@ async def test_replay_timestamps_are_taken_when_the_slow_call_returns(
     db_session: AsyncSession,
     session_factory: async_sessionmaker,
     failing_index: FakeSearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     document_id = await _ingest_with_failed_batches(
         client, storage, caller, session_factory, failing_index
@@ -357,10 +384,11 @@ async def test_replay_timestamps_are_taken_when_the_slow_call_returns(
     started = datetime.now(UTC)
 
     await replay_failed_batches(
-        session_factory, 
+        session_factory,
         slow_store,
         FakeEmbeddingProvider(),
-        fast_retry_handler()
+        fast_retry_handler(),
+        job_queue,
     )
 
     # Two rows, one 0.3 s call each, so the second finishes 0.6 s in.
@@ -378,9 +406,14 @@ async def test_replay_with_no_open_rows_does_nothing_and_succeeds(
     caller: Caller,
     session_factory: async_sessionmaker,
     search_index: SearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     result = await replay_failed_batches(
-        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
     )
 
     assert (result.resolved, result.failed) == (0, 0)
@@ -394,6 +427,7 @@ async def test_a_deleted_document_is_not_brought_back_by_replay(
     session_factory: async_sessionmaker,
     failing_index: FakeSearchIndex,
     search_index: SearchIndex,
+    job_queue: FakeJobQueue,
 ) -> None:
     document_id = await _ingest_with_failed_batches(
         client, storage, caller, session_factory, failing_index
@@ -401,7 +435,11 @@ async def test_a_deleted_document_is_not_brought_back_by_replay(
     assert (await client.delete(f"/api/v1/documents/{document_id}")).is_success
 
     await replay_failed_batches(
-        session_factory, search_index, FakeEmbeddingProvider(), fast_retry_handler()
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
     )
 
     assert (await _document(db_session, document_id)).ingestion_status == (
@@ -411,6 +449,157 @@ async def test_a_deleted_document_is_not_brought_back_by_replay(
     assert {d.status for d in await _dead_letters(db_session, document_id)} == {
         ChunkDeadLetterStatus.RESOLVED
     }
+
+
+def _embed_job_ids(job_queue: FakeJobQueue) -> list[str]:
+    return [j.job_id for j in job_queue.jobs if j.function == "embed_document"]
+
+
+async def test_a_successful_indexing_replay_enqueues_embedding_for_the_document(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    session_factory: async_sessionmaker,
+    failing_index: FakeSearchIndex,
+    search_index: SearchIndex,
+    job_queue: FakeJobQueue,
+) -> None:
+    document_id = await _ingest_with_failed_batches(
+        client, storage, caller, session_factory, failing_index
+    )
+
+    await replay_failed_batches(
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
+    )
+
+    # Two rows resolved for one Document: one job, thanks to the job id.
+    assert job_queue.jobs[0].queue == "ingest"
+    assert job_queue.jobs[0].payload == {
+        "document_id": str(document_id),
+        "tenant_id": str(caller.tenant_id),
+    }
+    assert _embed_job_ids(job_queue) == [f"embed:{document_id}"]
+
+
+async def test_an_indexing_replay_that_fails_again_enqueues_no_embedding(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    session_factory: async_sessionmaker,
+    failing_index: FakeSearchIndex,
+    job_queue: FakeJobQueue,
+) -> None:
+    await _ingest_with_failed_batches(
+        client, storage, caller, session_factory, failing_index
+    )
+
+    await replay_failed_batches(
+        session_factory,
+        _always_down(),
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
+    )
+
+    assert _embed_job_ids(job_queue) == []
+
+
+async def test_a_row_resolved_for_a_deleted_document_enqueues_no_embedding(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    session_factory: async_sessionmaker,
+    failing_index: FakeSearchIndex,
+    search_index: SearchIndex,
+    job_queue: FakeJobQueue,
+) -> None:
+    document_id = await _ingest_with_failed_batches(
+        client, storage, caller, session_factory, failing_index
+    )
+    assert (await client.delete(f"/api/v1/documents/{document_id}")).is_success
+
+    await replay_failed_batches(
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
+    )
+
+    assert _embed_job_ids(job_queue) == []
+
+
+async def test_a_row_whose_chunks_no_longer_exist_enqueues_no_embedding(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    session_factory: async_sessionmaker,
+    failing_index: FakeSearchIndex,
+    search_index: SearchIndex,
+    job_queue: FakeJobQueue,
+) -> None:
+    document_id = await _ingest_with_failed_batches(
+        client, storage, caller, session_factory, failing_index
+    )
+    # The Document was chunked again, so the rows' Chunks are gone.
+    async with session_factory() as session:
+        await session.execute(delete(Chunk).where(Chunk.document_id == document_id))
+        await session.commit()
+
+    await replay_failed_batches(
+        session_factory,
+        search_index,
+        FakeEmbeddingProvider(),
+        fast_retry_handler(),
+        job_queue,
+    )
+
+    assert _embed_job_ids(job_queue) == []
+
+
+async def test_a_replayed_document_gets_vectors_and_a_status_for_both_stages(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker,
+    job_queue: FakeJobQueue,
+) -> None:
+    document_id = await _ingest_with_failed_batches(
+        client, storage, caller, session_factory, _always_down()
+    )
+    healthy_index = FakeSearchIndex()
+    embedding_provider = FakeEmbeddingProvider()
+    retry_handler = fast_retry_handler()
+
+    await replay_failed_batches(
+        session_factory, healthy_index, embedding_provider, retry_handler, job_queue
+    )
+    # What the worker does with the job the replay queued.
+    await embed_document(
+        {
+            "db_session_factory": session_factory,
+            "ingestion_settings": IngestionSettings(),
+            "search_index": healthy_index,
+            "embedding_provider": embedding_provider,
+            "retry_handler": retry_handler,
+        },
+        document_id=str(document_id),
+        tenant_id=str(caller.tenant_id),
+    )
+
+    chunks = await _chunks(db_session, document_id)
+    assert [c.embedding_status for c in chunks] == [ChunkStatus.DONE] * 3
+    assert [healthy_index.embeddings[c.id] for c in chunks] == [
+        vector_for(c.text) for c in chunks
+    ]
+    document = await _document(db_session, document_id)
+    assert document.ingestion_status == IngestionStatus.READY
+    assert document.ingestion_error is None
 
 
 def _always_down() -> FakeSearchIndex:

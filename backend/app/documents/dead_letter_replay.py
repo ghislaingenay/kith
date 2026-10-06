@@ -9,9 +9,11 @@ import uuid
 from dataclasses import dataclass
 
 from core.embedding.provider import EmbeddingInputType, EmbeddingProvider
+from core.jobs.provider import JobQueue
 from core.logging import setup_logger
 from core.retry.handler import RetryHandler
 from core.search.provider import ChunkDocument, SearchIndex
+from documents.embed_jobs import enqueue_embed_document
 from documents.embedding_calls import EmbeddingFailure, call_embedding
 from documents.exceptions import EmbeddingProviderRequiredError
 from documents.ingestion_status import (
@@ -45,6 +47,7 @@ async def replay_failed_batches(
     search_index: SearchIndex,
     embedding_provider: EmbeddingProvider | None,
     retry_handler: RetryHandler,
+    job_queue: JobQueue,
     *,
     stage: IngestionStage | None = None,
     document_id: uuid.UUID | None = None,
@@ -54,7 +57,9 @@ async def replay_failed_batches(
     within a stage, optionally only one stage's or one Document's and at most
     `limit` of them. Each row is its own transaction, so a row that fails
     again does not hold up the rest. Only embedding rows need the
-    `embedding_provider`, so an indexing-only replay can go without one."""
+    `embedding_provider`, so an indexing-only replay can go without one. An
+    indexing row that is resolved queues `embed_document` for its Document,
+    so the Chunks it made searchable get vectors (ADR-0014)."""
     stages = [stage] if stage else [IngestionStage.INDEXING, IngestionStage.EMBEDDING]
     if embedding_provider is None and IngestionStage.EMBEDDING in stages:
         raise EmbeddingProviderRequiredError(
@@ -88,7 +93,7 @@ async def replay_failed_batches(
                 )
             else:
                 is_resolved = await _replay_indexing_row(
-                    repository, row, search_index, retry_handler
+                    repository, row, search_index, retry_handler, job_queue
                 )
             if is_resolved:
                 resolved += 1
@@ -111,6 +116,7 @@ async def _replay_indexing_row(
     row: ChunkDeadLetter,
     search_index: SearchIndex,
     retry_handler: RetryHandler,
+    job_queue: JobQueue,
 ) -> bool:
     """Returns whether the row is resolved."""
     session = repository.session
@@ -174,6 +180,12 @@ async def _replay_indexing_row(
         document_id=str(row.document_id),
         chunks=len(chunks),
     )
+    if chunks:
+        # After the commit, so the job reads the Chunks as indexed. If this
+        # enqueue fails, `make embed-documents` still finds the Document.
+        await enqueue_embed_document(
+            job_queue, document_id=document.id, tenant_id=document.tenant_id
+        )
     return True
 
 
