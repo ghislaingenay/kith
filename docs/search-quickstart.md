@@ -40,14 +40,25 @@ The same applies to the ingest worker (`make service-refresh service=worker-inge
 
 ### After the mapping changes
 
-While the project is in development, a field added to the mapping (the `deleted` flag on Chunks was the last) does not bump the mapping version, and `make search-index-create` does nothing when the alias already exists. An index built before the change keeps the old mapping and rejects the new field, so delete it and create it again, then re-ingest your Documents:
+While the project is in development, a field added to the mapping (the `deleted` flag on Chunks was the last) does not bump the mapping version, and `make search-index-create` does nothing when the alias already exists. An index built before the change keeps the old mapping and rejects the new field. Add the field to it, keeping its Chunks:
 
 ```sh
-curl -X DELETE 'http://localhost:9200/kith-chunks-*'
-make search-index-create
+make refresh-index
 ```
 
-Check the result with `GET kith-chunks/_mapping`: it should list `deleted` as `boolean`.
+Running it again changes nothing. Chunks indexed before the field existed simply do not have it; for `deleted` that reads as not deleted. Check the result with `GET kith-chunks/_mapping`: it should list `deleted` as `boolean`.
+
+To start again from nothing, see the next section.
+
+## Start again with no Documents
+
+For development only, and it cannot be undone:
+
+```sh
+make clean-documents
+```
+
+It asks you to type `yes` first (`make clean-documents yes=1` skips that). It then deletes every Document, Chunk and Upload in every Tenant, including their pages and dead letters, deletes their files from storage, deletes the search index with all its versions and creates it again empty. It deletes only the files the Documents and Uploads point to, never the bucket or anything else in it. If it stops part-way, run it again.
 
 ## Look at Chunks in Dashboards
 

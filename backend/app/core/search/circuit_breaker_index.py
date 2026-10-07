@@ -22,6 +22,12 @@ class CircuitBreakerSearchIndex(SearchIndex):
     async def ensure_index(self) -> None:
         await self._index.ensure_index()
 
+    async def recreate_index(self) -> None:
+        await self._index.recreate_index()
+
+    async def update_mapping(self) -> None:
+        await self._index.update_mapping()
+
     async def alias_exists(self) -> bool:
         return await self._index.alias_exists()
 

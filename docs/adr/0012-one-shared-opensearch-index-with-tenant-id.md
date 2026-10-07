@@ -26,7 +26,7 @@ Isolation now rests on a filter, not on structure. One search-index interface is
 - A script (`make search-index-create`) creates the index and alias if absent; running it twice changes nothing.
 - The API checks at startup that the alias exists and refuses to start if it does not, naming the script to run. Tenant creation does not touch OpenSearch.
 - Deleting a Document flags its Chunks `deleted` in the index at once (by `document_id`, scoped by `tenant_id`), so searches skip them; the purge job then deletes them. Purging a Tenant deletes by `tenant_id`. (Amended 2026-10-07, ADR-0015: this was deletion only, with no flag.)
-- A change to the embedding model or the mapping means a new versioned index and a reindex job, never an in-place edit. (Amended 2026-10-07: while the project is in development the `deleted` field was added to version 2 without a bump. An index built before it is deleted and created again; once there is data worth keeping, the rule applies again.)
+- A change to the embedding model or the mapping means a new versioned index and a reindex job, never an in-place edit. (Amended 2026-10-07: while the project is in development the `deleted` field was added to version 2 without a bump. An index built before it is brought up to date with `make refresh-index`; once there is data worth keeping, the rule applies again.)
 
 ## Consequences
 

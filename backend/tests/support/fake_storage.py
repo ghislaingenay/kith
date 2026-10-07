@@ -15,6 +15,7 @@ class FakeStorageProvider:
         self.keys: set[str] = set()
         self.objects: dict[str, bytes] = {}
         self.presigned_puts: list[dict] = []
+        self.presigned_gets: list[dict] = []
 
     def put_object(self, key: str, data: bytes) -> None:
         """Stand in for a browser PUT straight to storage."""
@@ -78,6 +79,8 @@ class FakeStorageProvider:
         return f"https://cdn.example.com/{key}?signature=fake&method=PUT"
 
     async def generate_presigned_url(self, key, method, ttl):
+        if method == "GET":
+            self.presigned_gets.append({"key": key, "ttl": ttl})
         return f"https://cdn.example.com/{key}?signature=fake&method={method}"
 
 

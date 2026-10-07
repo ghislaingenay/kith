@@ -115,3 +115,18 @@ async def test_spanish_text_is_searchable_through_the_same_chain(
 
     assert await _search_text(client, "informacion") == 1
     assert await _search_text(client, "NINO") == 1
+
+
+async def test_recreating_the_index_empties_it_and_keeps_the_alias(
+    search_index: OpenSearchIndex, client: AsyncOpenSearch
+) -> None:
+    await search_index.ensure_index()
+    await _index_text(client, "Please send your résumé")
+
+    await search_index.recreate_index()
+
+    assert await search_index.alias_exists() is True
+    assert await _search_text(client, "resume") == 0
+    assert list(await client.indices.get(index="kith-chunks-*")) == [_VERSIONED_INDEX]
+    mapping = (await client.indices.get_mapping(index=_ALIAS))[_VERSIONED_INDEX]
+    assert mapping["mappings"]["properties"]["deleted"]["type"] == "boolean"

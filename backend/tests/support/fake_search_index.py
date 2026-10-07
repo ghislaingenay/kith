@@ -16,6 +16,7 @@ class FakeSearchIndex:
         self.ensure_calls = 0
         self.index_calls = 0
         self.delete_calls = 0
+        self.recreate_calls = 0
         self.indexed: list[ChunkDocument] = []
         self.embeddings: dict[uuid.UUID, list[float]] = {}
         """The vector written onto each indexed Chunk."""
@@ -41,6 +42,13 @@ class FakeSearchIndex:
 
     async def ensure_index(self) -> None:
         self.ensure_calls += 1
+        self.index_exists = True
+
+    async def recreate_index(self) -> None:
+        self.recreate_calls += 1
+        self.indexed = []
+        self.embeddings = {}
+        self.deleted_document_ids = set()
         self.index_exists = True
 
     async def alias_exists(self) -> bool:

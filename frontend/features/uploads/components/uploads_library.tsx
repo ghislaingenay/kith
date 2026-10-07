@@ -14,6 +14,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { DocumentViewerDialog } from "@/features/document-viewer";
 
 import {
   useDeleteDocuments,
@@ -34,9 +36,16 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
   const deletion = useDeleteDocuments(tenantId);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [nameFilter, setNameFilter] = useState("");
+  const [previewed, setPreviewed] = useState<LibraryDocument | null>(null);
 
-  const selected =
-    documents.data?.filter((document) => selectedIds.has(document.id)) ?? [];
+  // The library is unpaginated and capped, so the browser filters what it
+  // already holds; this moves to the server once that Limit is lifted.
+  const shown = (documents.data ?? []).filter((document) =>
+    document.name.toLowerCase().includes(nameFilter.toLowerCase()),
+  );
+  // Only what is shown can be deleted, so a hidden row is never lost by surprise.
+  const selected = shown.filter((document) => selectedIds.has(document.id));
 
   const toggle = (id: string) =>
     setSelectedIds((current) => {
@@ -62,7 +71,11 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
         toast.error(count === 1 ? "Could not delete document" : "Could not delete documents");
       },
     });
-    setSelectedIds(new Set());
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const { id } of selected) next.delete(id);
+      return next;
+    });
     setConfirmingDelete(false);
   };
 
@@ -82,7 +95,14 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
           <EmptyState />
         ) : (
           <>
-            <div className="mb-2 flex justify-end">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <Input
+                aria-label="Filter by name"
+                placeholder="Filter by name…"
+                className="max-w-64"
+                value={nameFilter}
+                onChange={(event) => setNameFilter(event.target.value)}
+              />
               <AlertDialog open={confirmingDelete} onOpenChange={setConfirmingDelete}>
                 <Button
                   type="button"
@@ -116,13 +136,29 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
             {deletion.data && deletion.data.length > 0 && (
               <RefusedDeletions refused={deletion.data} />
             )}
-            <DocumentsTable
-              documents={documents.data}
-              selectedIds={selectedIds}
-              onToggle={toggle}
-            />
+            {shown.length === 0 ? (
+              <NoNameMatch filter={nameFilter} />
+            ) : (
+              <DocumentsTable
+                documents={shown}
+                selectedIds={selectedIds}
+                onToggle={toggle}
+                onPreview={setPreviewed}
+              />
+            )}
           </>
         ))}
+      {previewed && (
+        <DocumentViewerDialog
+          tenantId={tenantId}
+          documentId={previewed.id}
+          documentName={previewed.name}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPreviewed(null);
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -152,6 +188,14 @@ function EmptyState() {
   );
 }
 
+function NoNameMatch({ filter }: { readonly filter: string }) {
+  return (
+    <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+      No document matches “{filter}”.
+    </p>
+  );
+}
+
 function RefusedDeletions({
   refused,
 }: {
@@ -175,10 +219,12 @@ function DocumentsTable({
   documents,
   selectedIds,
   onToggle,
+  onPreview,
 }: {
   readonly documents: readonly LibraryDocument[];
   readonly selectedIds: ReadonlySet<string>;
   readonly onToggle: (id: string) => void;
+  readonly onPreview: (document: LibraryDocument) => void;
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border">
@@ -202,6 +248,7 @@ function DocumentsTable({
               document={document}
               isSelected={selectedIds.has(document.id)}
               onToggle={() => onToggle(document.id)}
+              onPreview={() => onPreview(document)}
             />
           ))}
         </tbody>
@@ -214,10 +261,12 @@ function DocumentRow({
   document,
   isSelected,
   onToggle,
+  onPreview,
 }: {
   readonly document: LibraryDocument;
   readonly isSelected: boolean;
   readonly onToggle: () => void;
+  readonly onPreview: () => void;
 }) {
   const { ingestion_stage, pages_extracted, page_count } = document;
 
@@ -231,7 +280,15 @@ function DocumentRow({
           onChange={onToggle}
         />
       </td>
-      <td className="max-w-64 truncate px-4 py-3">{document.name}</td>
+      <td className="max-w-64 truncate px-4 py-3">
+        <button
+          type="button"
+          className="max-w-full truncate text-left underline-offset-4 hover:underline"
+          onClick={onPreview}
+        >
+          {document.name}
+        </button>
+      </td>
       <td className="whitespace-nowrap px-4 py-3">
         {formatFileSize(document.size_bytes)}
       </td>

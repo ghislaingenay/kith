@@ -107,3 +107,16 @@ class RetrievalSettings(BaseSettings):
         if self.fetch_size < self.result_limit:
             raise ValueError("fetch size must be at least the result limit")
         return self
+
+
+class PreviewSettings(BaseSettings):
+    """Env-driven rules for previewing a Document's PDF in the browser."""
+
+    model_config = SettingsConfigDict(case_sensitive=False)
+
+    preview_url_ttl_seconds: int = Field(
+        default=5 * 60,
+        gt=0,
+        description="How long the presigned link the browser reads a Document's PDF from stays valid",
+        validation_alias="PREVIEW_URL_TTL_SECONDS",
+    )
