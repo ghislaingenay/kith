@@ -458,3 +458,22 @@ class DocumentsRepository:
             )
         )
         return {document.id: document for document in result.scalars()}
+
+    async def list_every_document_storage_key(self) -> list[str]:
+        """The file of every Document in every Tenant, deleted ones too."""
+        result = await self.session.execute(select(Document.storage_key))
+        return list(result.scalars())
+
+    async def list_every_upload_reference(self) -> list[tuple[uuid.UUID, uuid.UUID]]:
+        """`(tenant_id, upload_id)` of every Upload, whatever its status."""
+        result = await self.session.execute(select(Upload.tenant_id, Upload.id))
+        return [(tenant_id, upload_id) for tenant_id, upload_id in result.all()]
+
+    async def delete_every_upload_and_document(self) -> tuple[int, int]:
+        """Deletes all Uploads and Documents in every Tenant, and with the
+        Documents their pages, Chunks and dead letters (they cascade). Returns
+        how many Documents and Uploads there were."""
+        uploads = await self.session.execute(delete(Upload))
+        documents = await self.session.execute(delete(Document))
+        await self.session.commit()
+        return documents.rowcount, uploads.rowcount

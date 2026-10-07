@@ -48,12 +48,17 @@ make refresh-index
 
 Running it again changes nothing. Chunks indexed before the field existed simply do not have it; for `deleted` that reads as not deleted. Check the result with `GET kith-chunks/_mapping`: it should list `deleted` as `boolean`.
 
-To start from an empty index instead, delete it and create it again (then upload your Documents again):
+To start again from nothing, see the next section.
+
+## Start again with no Documents
+
+For development only, and it cannot be undone:
 
 ```sh
-curl -X DELETE 'http://localhost:9200/kith-chunks-*'
-make search-index-create
+make clean-documents
 ```
+
+It asks you to type `yes` first (`make clean-documents yes=1` skips that). It then deletes every Document, Chunk and Upload in every Tenant, including their pages and dead letters, deletes their files from storage, deletes the search index with all its versions and creates it again empty. It deletes only the files the Documents and Uploads point to, never the bucket or anything else in it. If it stops part-way, run it again.
 
 ## Look at Chunks in Dashboards
 

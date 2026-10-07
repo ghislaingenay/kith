@@ -79,6 +79,11 @@ class OpenSearchIndex(SearchIndex):
             if error.error != ALREADY_EXISTS_ERROR:
                 raise
 
+    async def recreate_index(self) -> None:
+        with _store_errors("Deleting the index"):
+            await self._client.indices.delete(index=f"{INDEX_ALIAS}-*", ignore=[404])
+        await self.ensure_index()
+
     async def update_mapping(self) -> None:
         with _store_errors("Updating the mapping"):
             await self._client.indices.put_mapping(

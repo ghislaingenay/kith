@@ -49,6 +49,11 @@ class SearchIndex(ABC):
         Calling it again changes nothing."""
 
     @abstractmethod
+    async def recreate_index(self) -> None:
+        """Delete every Chunk by deleting the index with all its versions, then
+        create it and its alias again, empty. For development."""
+
+    @abstractmethod
     async def update_mapping(self) -> None:
         """Add to the existing index every field the current mapping has and
         the index lacks, keeping its Chunks. For development, when a field is
