@@ -16,6 +16,7 @@ from auth.exceptions import AuthenticationError, MagicLinkTokenInvalidError
 from core.logging import setup_logger
 from core.mail.exceptions import MailError
 from core.ratelimit.exception_handlers import register_ratelimit_exception_handlers
+from core.search.exceptions import SearchUnavailableError
 from core.security.exception_handlers import register_security_exception_handlers
 from core.storage.exceptions import StorageError
 from documents.exception_handlers import register_document_exception_handlers
@@ -38,6 +39,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     # See note in upload/exception_handlers.py on this ignore.
     app.add_exception_handler(StorageError, _handle_storage_error)  # type: ignore[arg-type]
     app.add_exception_handler(MailError, _handle_mail_error)  # type: ignore[arg-type]
+    app.add_exception_handler(
+        SearchUnavailableError, _handle_search_unavailable
+    )  # type: ignore[arg-type]
     app.add_exception_handler(TimeoutError, _handle_db_timeout_error)  # type: ignore[arg-type]
     # Connection/auth failures (e.g. asyncpg's InvalidPasswordError).
     app.add_exception_handler(OperationalError, _handle_db_operational_error)  # type: ignore[arg-type]
@@ -80,6 +84,20 @@ async def _handle_mail_error(_: Request, __: MailError) -> JSONResponse:
         content={
             "error": "mail_unavailable",
             "message": "Mail provider is temporarily unavailable",
+        },
+    )
+
+
+async def _handle_search_unavailable(
+    _: Request, __: SearchUnavailableError
+) -> JSONResponse:
+    # Also what a Query gets while the search circuit breaker is open: the
+    # retrieval service raises this for it.
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "error": "search_unavailable",
+            "message": "Search is temporarily unavailable",
         },
     )
 

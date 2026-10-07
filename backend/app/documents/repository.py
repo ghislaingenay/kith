@@ -445,13 +445,16 @@ class DocumentsRepository:
         result = await self.session.execute(statement)
         return result.scalars().all()
 
-    async def list_live_document_ids(self, *, tenant_id: uuid.UUID) -> list[uuid.UUID]:
-        """The Tenant's non-deleted Documents: the only ones keyword search
-        may return Chunks of."""
+    async def list_live_documents_by_ids(
+        self, *, tenant_id: uuid.UUID, document_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, Document]:
+        """The Tenant's non-deleted Documents among `document_ids`, by id:
+        what Postgres says is deleted decides what Retrieval may show."""
         result = await self.session.execute(
-            select(Document.id).where(
+            select(Document).where(
                 Document.tenant_id == tenant_id,
+                Document.id.in_(document_ids),
                 Document.ingestion_status != IngestionStatus.DELETED,
             )
         )
-        return list(result.scalars())
+        return {document.id: document for document in result.scalars()}

@@ -53,16 +53,16 @@ class CircuitBreakerSearchIndex(SearchIndex):
         self,
         *,
         tenant_id: uuid.UUID,
-        document_ids: Sequence[uuid.UUID],
         query: str,
-        limit: int,
+        query_vector: Sequence[float] | None = None,
+        size: int,
     ) -> list[ChunkHit]:
         return await self._breaker.call(
             lambda: self._index.search_chunks(
                 tenant_id=tenant_id,
-                document_ids=document_ids,
                 query=query,
-                limit=limit,
+                query_vector=query_vector,
+                size=size,
             )
         )
 

@@ -10,12 +10,15 @@ from core.container import container
 from core.database import get_session
 from core.jobs.dependencies import get_job_queue
 from core.jobs.provider import JobQueue
+from core.search.dependencies import get_search_index
+from core.search.provider import SearchIndex
 from core.storage.dependencies import get_storage_provider
 from core.storage.provider import StorageProvider
-from documents.config import UploadSettings
+from documents.config import RetrievalSettings, UploadSettings
 from documents.deletion_service import DocumentDeletionService
 from documents.library_service import DocumentLibraryService
 from documents.repository import DocumentsRepository
+from documents.retrieval_service import RetrievalService
 from documents.service import DocumentUploadService
 
 
@@ -26,6 +29,10 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 
 def get_upload_settings() -> UploadSettings:
     return container.upload_settings()
+
+
+def get_retrieval_settings() -> RetrievalSettings:
+    return container.retrieval_settings()
 
 
 def get_documents_repository(
@@ -54,3 +61,11 @@ def get_deletion_service(
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> DocumentDeletionService:
     return DocumentDeletionService(repository, job_queue)
+
+
+def get_retrieval_service(
+    repository: Annotated[DocumentsRepository, Depends(get_documents_repository)],
+    search_index: Annotated[SearchIndex, Depends(get_search_index)],
+    settings: Annotated[RetrievalSettings, Depends(get_retrieval_settings)],
+) -> RetrievalService:
+    return RetrievalService(repository, search_index, settings)

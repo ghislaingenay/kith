@@ -1,5 +1,6 @@
 """`SearchIndex` backed by OpenSearch."""
 
+import logging
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -17,6 +18,8 @@ from opensearchpy.exceptions import OpenSearchException, RequestError
 
 
 _MINIMUM_WORDS_MATCHED = "70%"
+_HIGHLIGHT_OPEN = "<mark>"
+_HIGHLIGHT_CLOSE = "</mark>"
 
 # Routing cannot isolate Tenants on a one-shard index, so the script does.
 _SET_EMBEDDING_SCRIPT = (
@@ -60,6 +63,9 @@ def _store_errors(action: str) -> Iterator[None]:
 
 class OpenSearchIndex(SearchIndex):
     def __init__(self, settings: SearchSettings) -> None:
+        # The client's trace logger writes every request body at INFO, which
+        # would put each Query text in the logs.
+        logging.getLogger("opensearchpy.trace").setLevel(logging.WARNING)
         self._client = AsyncOpenSearch(hosts=[settings.search_url])
         self._index_name = versioned_index_name(settings.embedding_model_id)
 
@@ -166,18 +172,18 @@ class OpenSearchIndex(SearchIndex):
         self,
         *,
         tenant_id: uuid.UUID,
-        document_ids: Sequence[uuid.UUID],
         query: str,
-        limit: int,
+        query_vector: Sequence[float] | None = None,
+        size: int,
     ) -> list[ChunkHit]:
-        if not document_ids:
-            return []
+        if query_vector is not None:
+            raise NotImplementedError("The meaning leg of Retrieval is not built yet.")
         with _store_errors("Searching Chunks"):
             response = await self._client.search(
                 index=INDEX_ALIAS,
                 routing=str(tenant_id),
                 body={
-                    "size": limit,
+                    "size": size,
                     "query": {
                         "bool": {
                             # Most of the words must match, in any order...
@@ -193,15 +199,16 @@ class OpenSearchIndex(SearchIndex):
                             ],
                             # ...and the exact phrase ranks higher.
                             "should": [{"match_phrase": {"text": query}}],
-                            "filter": [
-                                {"term": {"tenant_id": str(tenant_id)}},
-                                {
-                                    "terms": {
-                                        "document_id": [str(document_id) for document_id in document_ids]
-                                    }
-                                },
-                            ],
+                            "filter": [{"term": {"tenant_id": str(tenant_id)}}],
                         }
+                    },
+                    "highlight": {
+                        "fields": {"text": {}},
+                        "pre_tags": [_HIGHLIGHT_OPEN],
+                        "post_tags": [_HIGHLIGHT_CLOSE],
+                        # Escapes the Chunk's own markup, so the only tags in
+                        # a fragment are the match markers.
+                        "encoder": "html",
                     },
                 },
             )
@@ -213,6 +220,7 @@ class OpenSearchIndex(SearchIndex):
                 ordinal=hit["_source"]["ordinal"],
                 text=hit["_source"]["text"],
                 score=hit["_score"],
+                highlights=hit.get("highlight", {}).get("text", []),
             )
             for hit in response["hits"]["hits"]
         ]

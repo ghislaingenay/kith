@@ -12,6 +12,7 @@ from core.migrations import warn_if_schema_out_of_date
 from core.search.startup import require_search_index
 from documents.router import library_router
 from documents.router import router as uploads_router
+from documents.router import search_router
 from tenants.router import router as tenants_router
 from users.router import router as users_router
 
@@ -60,6 +61,7 @@ app.include_router(tenants_router, prefix=set_api_version())
 app.include_router(users_router, prefix=set_api_version())
 app.include_router(uploads_router, prefix=set_api_version())
 app.include_router(library_router, prefix=set_api_version())
+app.include_router(search_router, prefix=set_api_version())
 
 
 @app.get("/health")

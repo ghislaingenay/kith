@@ -24,6 +24,7 @@ class FakeSearchIndex:
         raises. Once used up, `down` decides."""
         self.down = False
         self.delete_down = False
+        self.search_down = False
         self.delay_seconds = 0.0
         """How long `delete_document_chunks` and `index_chunks` take before
         they answer, as a slow store does."""
@@ -78,11 +79,30 @@ class FakeSearchIndex:
         self,
         *,
         tenant_id: uuid.UUID,
-        document_ids: Sequence[uuid.UUID],
         query: str,
-        limit: int,
+        query_vector: Sequence[float] | None = None,
+        size: int,
     ) -> list[ChunkHit]:
-        raise NotImplementedError
+        """Chunks of the Tenant containing any word of the Query, in the order
+        they were indexed. A stand-in for ranking, which tests of real
+        relevance leave to OpenSearch."""
+        if self.search_down:
+            raise SearchUnavailableError("fake search store is down")
+        words = query.lower().split()
+        return [
+            ChunkHit(
+                chunk_id=chunk.id,
+                document_id=chunk.document_id,
+                page_number=chunk.page_number,
+                ordinal=chunk.ordinal,
+                text=chunk.text,
+                score=1.0,
+                highlights=[chunk.text],
+            )
+            for chunk in self.indexed
+            if chunk.tenant_id == tenant_id
+            and any(word in chunk.text.lower() for word in words)
+        ][:size]
 
     async def close(self) -> None:
         pass

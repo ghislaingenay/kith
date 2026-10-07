@@ -7,20 +7,25 @@ from fastapi import APIRouter, Depends, status
 
 from auth.dependencies import get_current_tenant, get_current_user
 from auth.schemas import AuthenticatedUser, TenantContext
+from core.ratelimit.dependencies import RateLimitDependency
 from core.security.dependencies import require_allowed_origin
 from documents.deletion_service import DocumentDeletionService
 from documents.dependencies import (
     get_deletion_service,
     get_library_service,
+    get_retrieval_service,
     get_upload_service,
 )
 from documents.library_service import DocumentLibraryService
+from documents.retrieval_service import RetrievalService
 from documents.schemas import (
     DocumentResponse,
     InitUploadRequest,
     InitUploadResponse,
     LibraryDocumentResponse,
     LibrarySummaryResponse,
+    SearchRequest,
+    SearchResponse,
 )
 from documents.service import DocumentUploadService
 from tenants.dependencies import require_permission
@@ -113,4 +118,36 @@ async def delete_document(
         user_id=user.id,
         role=tenant.role,
         document_id=document_id,
+    )
+
+
+_SEARCHES_PER_MINUTE = 60
+# The minute budget already caps an hour at this.
+_SEARCHES_PER_HOUR = 60 * 60
+
+search_router = APIRouter(
+    prefix="/search",
+    tags=["search"],
+    dependencies=[
+        Depends(require_permission(Action.SEARCH)),
+        Depends(
+            RateLimitDependency(
+                per_minute=_SEARCHES_PER_MINUTE, per_hour=_SEARCHES_PER_HOUR
+            )
+        ),
+    ],
+)
+
+
+@search_router.post("", response_model=SearchResponse)
+async def search(
+    data: SearchRequest,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    service: Annotated[RetrievalService, Depends(get_retrieval_service)],
+) -> SearchResponse:
+    """Up to 20 ranked Chunks of the Tenant's Documents that match the Query,
+    each with its Document and the matching passages highlighted."""
+    return await service.search(
+        tenant_id=tenant.tenant_id, user_id=user.id, query=data.query
     )

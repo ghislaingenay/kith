@@ -74,6 +74,13 @@ class DocumentNotFoundError(Exception):
         super().__init__(message)
 
 
+class BlankQueryError(Exception):
+    """The Query has no text left once it is cleaned."""
+
+    def __init__(self) -> None:
+        super().__init__("Enter some text to search for.")
+
+
 class EmbeddingProviderRequiredError(Exception):
     """A replay that includes `embedding` rows was started without an
     embedding provider."""

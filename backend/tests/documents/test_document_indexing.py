@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 import pytest
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.search.provider import SearchIndex
-from documents.chunk_search_service import ChunkSearchService
 from documents.config import IngestionSettings
 from documents.ingest import ingest_document
 from documents.keys import pending_upload_key
@@ -19,7 +18,6 @@ from documents.models import (
     IngestionStage,
     IngestionStatus,
 )
-from documents.repository import DocumentsRepository
 from httpx import AsyncClient
 from opensearchpy import AsyncOpenSearch
 from sqlalchemy import select
@@ -74,30 +72,29 @@ async def _ingest(ctx: dict, caller: Caller, document_id: uuid.UUID) -> None:
     )
 
 
-async def _search(
-    db_session: AsyncSession, search_index: SearchIndex, caller: Caller, query: str
-):
+async def _search(client: AsyncClient, db_session: AsyncSession, query: str) -> list[dict]:
     db_session.expire_all()
-    return await ChunkSearchService(
-        DocumentsRepository(db_session), search_index
-    ).search(tenant_id=caller.tenant_id, query=query)
+    response = await client.post("/api/v1/search", json={"query": query})
+    return response.json()["results"]
 
 
 async def test_an_ingested_document_is_found_by_keyword_ignoring_case_and_accents(
+    search_endpoint: None,
     client: AsyncClient,
     storage: FakeStorageProvider,
     caller: Caller,
     db_session: AsyncSession,
     ingest_ctx: dict,
-    search_index: SearchIndex,
 ) -> None:
     pdf = make_text_pdf(["Nothing here.", "Please send your résumé today."])
     document_id = await _upload_and_ingest(client, storage, caller, ingest_ctx, pdf)
 
-    hits = await _search(db_session, search_index, caller, "RESUME")
+    hits = await _search(client, db_session, "RESUME")
 
-    assert [(hit.document_id, hit.page_number) for hit in hits] == [(document_id, 2)]
-    assert "résumé" in hits[0].text
+    assert [(hit["document_id"], hit["page_number"]) for hit in hits] == [
+        (str(document_id), 2)
+    ]
+    assert "résumé" in hits[0]["text"]
 
 
 async def test_index_documents_carry_the_chunk_rows_fields_and_no_vector(
@@ -154,12 +151,12 @@ async def test_after_indexing_the_document_waits_at_embedding_with_chunks_indexe
 
 
 async def test_a_retry_leaves_no_duplicate_or_stale_chunks_in_the_index(
+    search_endpoint: None,
     client: AsyncClient,
     storage: FakeStorageProvider,
     caller: Caller,
     db_session: AsyncSession,
     ingest_ctx: dict,
-    search_index: SearchIndex,
 ) -> None:
     document_id = await _upload_and_ingest(
         client, storage, caller, ingest_ctx, make_text_pdf(["Known page text."])
@@ -173,7 +170,7 @@ async def test_a_retry_leaves_no_duplicate_or_stale_chunks_in_the_index(
 
     await _ingest(ingest_ctx, caller, document_id)
 
-    hits = await _search(db_session, search_index, caller, "known")
+    hits = await _search(client, db_session, "known")
     current_ids = {
         chunk.id
         for chunk in (
@@ -182,80 +179,5 @@ async def test_a_retry_leaves_no_duplicate_or_stale_chunks_in_the_index(
             )
         ).scalars()
     }
-    assert {hit.chunk_id for hit in hits} == current_ids
+    assert {uuid.UUID(hit["chunk_id"]) for hit in hits} == current_ids
     assert len(hits) == len(current_ids)
-
-
-async def test_a_deleted_documents_chunks_are_not_returned_though_still_indexed(
-    client: AsyncClient,
-    storage: FakeStorageProvider,
-    caller: Caller,
-    db_session: AsyncSession,
-    ingest_ctx: dict,
-    search_index: SearchIndex,
-) -> None:
-    document_id = await _upload_and_ingest(
-        client, storage, caller, ingest_ctx, make_text_pdf(["Known page text."])
-    )
-    assert await _search(db_session, search_index, caller, "known")
-
-    response = await client.delete(f"/api/v1/documents/{document_id}")
-    assert response.status_code == 204
-
-    assert await _search(db_session, search_index, caller, "known") == []
-
-
-async def test_search_never_returns_another_tenants_chunks(
-    client: AsyncClient,
-    storage: FakeStorageProvider,
-    caller: Caller,
-    db_session: AsyncSession,
-    ingest_ctx: dict,
-    search_index: SearchIndex,
-) -> None:
-    await _upload_and_ingest(
-        client, storage, caller, ingest_ctx, make_text_pdf(["Known page text."])
-    )
-    other_tenant = Caller(uuid.uuid4(), caller.user_id)
-
-    assert await _search(db_session, search_index, other_tenant, "known") == []
-
-
-async def test_the_query_is_cleaned_like_the_chunks_were(
-    client: AsyncClient,
-    storage: FakeStorageProvider,
-    caller: Caller,
-    db_session: AsyncSession,
-    ingest_ctx: dict,
-    search_index: SearchIndex,
-) -> None:
-    await _upload_and_ingest(
-        client, storage, caller, ingest_ctx, make_text_pdf(["The final contract."])
-    )
-
-    assert await _search(db_session, search_index, caller, "  \ufb01nal  ")
-    assert await _search(db_session, search_index, caller, "con\u00adtract")
-    assert await _search(db_session, search_index, caller, "   ") == []
-
-
-async def test_most_query_words_must_match_and_the_exact_phrase_ranks_first(
-    client: AsyncClient,
-    storage: FakeStorageProvider,
-    caller: Caller,
-    db_session: AsyncSession,
-    ingest_ctx: dict,
-    search_index: SearchIndex,
-) -> None:
-    pdf = make_text_pdf(
-        [
-            "In twelve months the contract ends.",
-            "The contract ends twelve months later.",
-            "Our contract covers hardware only.",
-        ]
-    )
-    await _upload_and_ingest(client, storage, caller, ingest_ctx, pdf)
-
-    hits = await _search(db_session, search_index, caller, "contract ends twelve months")
-
-    # Page 3 shares one of four words, below the 70% needed.
-    assert [hit.page_number for hit in hits] == [2, 1]

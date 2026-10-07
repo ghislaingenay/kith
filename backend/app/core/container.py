@@ -23,7 +23,7 @@ from core.search.exceptions import SearchUnavailableError
 from core.search.factory import SearchIndexFactory
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
-from documents.config import IngestionSettings, UploadSettings
+from documents.config import IngestionSettings, RetrievalSettings, UploadSettings
 
 
 def _configure_logging_once(settings: LoggingSettings) -> bool:
@@ -127,6 +127,8 @@ class Container(containers.DeclarativeContainer):
     upload_settings = providers.Singleton(UploadSettings)
 
     ingestion_settings = providers.Singleton(IngestionSettings)
+
+    retrieval_settings = providers.Singleton(RetrievalSettings)
 
     database_settings = providers.Singleton(DatabaseSettings)
 

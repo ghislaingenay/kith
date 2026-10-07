@@ -5,7 +5,7 @@ identity, storage and the job queue replaced."""
 import hashlib
 import io
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import pypdfium2
 import pytest
@@ -20,12 +20,15 @@ from opensearchpy import AsyncOpenSearch
 from auth.dependencies import get_current_tenant, get_current_user
 from auth.schemas import AuthenticatedUser, TenantContext
 from core.jobs.dependencies import get_job_queue
+from core.ratelimit.dependencies import get_rate_limiter
+from core.ratelimit.limiter import Decision, MultiWindowLimiter
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.storage.dependencies import get_storage_provider
 from documents.dependencies import get_db_session
 from main import app
 from core.search.config import SearchSettings
+from core.search.dependencies import get_search_index
 from core.search.opensearch_index import OpenSearchIndex
 from tenants.models import Tenant
 from tenants.permissions import Role
@@ -77,6 +80,32 @@ async def search_index(_opensearch_url: str) -> AsyncIterator[OpenSearchIndex]:
     await index.close()
     async with AsyncOpenSearch(hosts=[_opensearch_url]) as client:
         await client.indices.delete(index="kith-chunks-*", ignore=[404])
+
+
+class _UnlimitedLimiter(MultiWindowLimiter):
+    async def allow_both(
+        self,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        minute_limit: int,
+        hour_limit: int,
+    ) -> tuple[Decision, Decision]:
+        allowed = Decision(True, minute_limit, minute_limit, None)
+        return allowed, allowed
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def search_endpoint(search_index: OpenSearchIndex) -> Iterator[None]:
+    """Makes `POST /api/v1/search` use the real OpenSearch container, with no
+    rate limit unless a test brings its own limiter."""
+    app.dependency_overrides[get_search_index] = lambda: search_index
+    app.dependency_overrides[get_rate_limiter] = _UnlimitedLimiter
+    yield
+    app.dependency_overrides.pop(get_search_index, None)
+    app.dependency_overrides.pop(get_rate_limiter, None)
 
 
 @pytest.fixture

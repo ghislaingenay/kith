@@ -70,10 +70,7 @@ async def test_a_vector_lands_on_the_existing_chunk_and_it_stays_keyword_searcha
     assert stored["tenant_id"] == str(_TENANT_ID)
     assert stored["document_id"] == str(chunk.document_id)
     hits = await search_index.search_chunks(
-        tenant_id=_TENANT_ID,
-        document_ids=[chunk.document_id],
-        query="revenue",
-        limit=10,
+        tenant_id=_TENANT_ID, query="revenue", size=10
     )
     assert [hit.chunk_id for hit in hits] == [chunk.id]
 

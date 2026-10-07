@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from core.search.provider import SearchIndex
-from documents.chunk_search_service import ChunkSearchService
 from documents.config import IngestionSettings
 from documents.dead_letter_replay import replay_failed_batches
 from documents.embed import embed_document
@@ -26,7 +25,6 @@ from documents.models import (
     IngestionStage,
     IngestionStatus,
 )
-from documents.repository import DocumentsRepository
 from httpx import AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -126,15 +124,15 @@ async def _dead_letters(
 
 
 async def _found_pages(
-    db_session: AsyncSession, search_index: SearchIndex, caller: Caller, query: str
+    client: AsyncClient, db_session: AsyncSession, query: str
 ) -> list[int]:
-    hits = await ChunkSearchService(
-        DocumentsRepository(db_session), search_index
-    ).search(tenant_id=caller.tenant_id, query=query)
-    return [hit.page_number for hit in hits]
+    db_session.expire_all()
+    response = await client.post("/api/v1/search", json={"query": query})
+    return [result["page_number"] for result in response.json()["results"]]
 
 
 async def test_replay_indexes_only_the_failed_chunks_and_resolves_their_rows(
+    search_endpoint: None,
     client: AsyncClient,
     storage: FakeStorageProvider,
     caller: Caller,
@@ -159,7 +157,7 @@ async def test_replay_indexes_only_the_failed_chunks_and_resolves_their_rows(
         job_queue,
     )
 
-    assert await _found_pages(db_session, search_index, caller, "page") == [2, 3]
+    assert await _found_pages(client, db_session, "page") == [2, 3]
     assert [c.indexing_status for c in await _chunks(db_session, document_id)] == [
         ChunkStatus.DONE
     ] * 3
@@ -420,6 +418,7 @@ async def test_replay_with_no_open_rows_does_nothing_and_succeeds(
 
 
 async def test_a_deleted_document_is_not_brought_back_by_replay(
+    search_endpoint: None,
     client: AsyncClient,
     storage: FakeStorageProvider,
     caller: Caller,
@@ -445,7 +444,7 @@ async def test_a_deleted_document_is_not_brought_back_by_replay(
     assert (await _document(db_session, document_id)).ingestion_status == (
         IngestionStatus.DELETED
     )
-    assert await _found_pages(db_session, search_index, caller, "page") == []
+    assert await _found_pages(client, db_session, "page") == []
     assert {d.status for d in await _dead_letters(db_session, document_id)} == {
         ChunkDeadLetterStatus.RESOLVED
     }
