@@ -12,13 +12,16 @@ from core.security.dependencies import require_allowed_origin
 from documents.deletion_service import DocumentDeletionService
 from documents.dependencies import (
     get_deletion_service,
+    get_file_service,
     get_library_service,
     get_retrieval_service,
     get_upload_service,
 )
+from documents.file_service import DocumentFileService
 from documents.library_service import DocumentLibraryService
 from documents.retrieval_service import RetrievalService
 from documents.schemas import (
+    DocumentFileUrlResponse,
     DocumentResponse,
     InitUploadRequest,
     InitUploadResponse,
@@ -95,6 +98,18 @@ async def summarize_documents(
 ) -> LibrarySummaryResponse:
     """Counts of in-progress and failed Documents, for the Uploads banner."""
     return await service.summarize(tenant_id=tenant.tenant_id)
+
+
+@library_router.get("/{document_id}/file-url", response_model=DocumentFileUrlResponse)
+async def get_document_file_url(
+    document_id: uuid.UUID,
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    service: Annotated[DocumentFileService, Depends(get_file_service)],
+) -> DocumentFileUrlResponse:
+    """A short-lived presigned link to the Document's PDF, for the preview."""
+    return await service.get_file_url(
+        tenant_id=tenant.tenant_id, document_id=document_id
+    )
 
 
 @library_router.delete(

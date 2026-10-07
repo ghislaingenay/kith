@@ -52,6 +52,13 @@ class LibraryDocumentResponse(BaseModel):
     page_count: int
 
 
+class DocumentFileUrlResponse(BaseModel):
+    """A short-lived presigned GET the browser reads a Document's PDF from."""
+
+    url: str
+    expires_in: int
+
+
 class LibrarySummaryResponse(BaseModel):
     """What the Uploads Library banner needs: Documents still being ingested
     (`uploaded` or `processing`) and Documents whose ingestion `failed`."""

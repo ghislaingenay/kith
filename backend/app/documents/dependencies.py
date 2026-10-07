@@ -14,8 +14,9 @@ from core.search.dependencies import get_search_index
 from core.search.provider import SearchIndex
 from core.storage.dependencies import get_storage_provider
 from core.storage.provider import StorageProvider
-from documents.config import RetrievalSettings, UploadSettings
+from documents.config import PreviewSettings, RetrievalSettings, UploadSettings
 from documents.deletion_service import DocumentDeletionService
+from documents.file_service import DocumentFileService
 from documents.library_service import DocumentLibraryService
 from documents.repository import DocumentsRepository
 from documents.retrieval_service import RetrievalService
@@ -33,6 +34,10 @@ def get_upload_settings() -> UploadSettings:
 
 def get_retrieval_settings() -> RetrievalSettings:
     return container.retrieval_settings()
+
+
+def get_preview_settings() -> PreviewSettings:
+    return container.preview_settings()
 
 
 def get_documents_repository(
@@ -54,6 +59,14 @@ def get_library_service(
     repository: Annotated[DocumentsRepository, Depends(get_documents_repository)],
 ) -> DocumentLibraryService:
     return DocumentLibraryService(repository)
+
+
+def get_file_service(
+    repository: Annotated[DocumentsRepository, Depends(get_documents_repository)],
+    storage: Annotated[StorageProvider, Depends(get_storage_provider)],
+    settings: Annotated[PreviewSettings, Depends(get_preview_settings)],
+) -> DocumentFileService:
+    return DocumentFileService(repository, storage, settings)
 
 
 def get_deletion_service(

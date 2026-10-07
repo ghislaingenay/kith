@@ -39,6 +39,9 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # The browser PUTs uploads to MinIO and GETs PDFs for the preview
+      # straight from it, so the web origin must be allowed cross-origin.
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:3000
     volumes:
       - minio-data:/data
     healthcheck:

@@ -212,6 +212,19 @@ class DocumentsRepository:
             raise DocumentNotFoundError(f"Document with ID {document_id} not found.")
         return document
 
+    async def get_live_document(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> Document | None:
+        """The Tenant's non-deleted Document, or None."""
+        result = await self.session.execute(
+            select(Document).where(
+                Document.id == document_id,
+                Document.tenant_id == tenant_id,
+                Document.ingestion_status != IngestionStatus.DELETED,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_live_document_for_update(
         self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
     ) -> Document | None:

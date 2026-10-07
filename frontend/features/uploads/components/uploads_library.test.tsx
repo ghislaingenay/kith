@@ -8,6 +8,8 @@ import { renderWithProviders } from "@/test/render_with_providers";
 
 import { UploadsLibrary } from "./uploads_library";
 
+vi.mock("react-pdf", () => import("@/test/stub_react_pdf"));
+
 const API_URL = "http://localhost:8000/api/v1";
 const TENANT_ID = "0b8e6f0e-6f6e-4c1c-9d55-4a0a4a3b1a10";
 
@@ -248,6 +250,135 @@ describe("UploadsLibrary", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "nope",
     );
+  });
+
+  describe("filtering by name", () => {
+    const NAMES = ["Annual Report.pdf", "invoice-march.pdf", "report-draft.pdf"];
+
+    function mockNamedLibrary() {
+      mockLibraryApi(
+        NAMES.map((name, index) =>
+          apiDocument({ id: `${index}`.padStart(8, "0"), name }),
+        ),
+      );
+    }
+
+    it("narrows the list as the User types, ignoring case", async () => {
+      mockNamedLibrary();
+      const user = userEvent.setup();
+      renderLibrary();
+      await screen.findByText("invoice-march.pdf");
+
+      await user.type(screen.getByRole("textbox", { name: "Filter by name" }), "RePoRt");
+
+      const table = screen.getByRole("table");
+      expect(within(table).getByText("Annual Report.pdf")).toBeInTheDocument();
+      expect(within(table).getByText("report-draft.pdf")).toBeInTheDocument();
+      expect(within(table).queryByText("invoice-march.pdf")).not.toBeInTheDocument();
+    });
+
+    it("lists every Document again once the filter is cleared", async () => {
+      mockNamedLibrary();
+      const user = userEvent.setup();
+      renderLibrary();
+      await screen.findByText("invoice-march.pdf");
+      const filter = screen.getByRole("textbox", { name: "Filter by name" });
+
+      await user.type(filter, "invoice");
+      await user.clear(filter);
+
+      for (const name of NAMES) {
+        expect(screen.getByText(name)).toBeInTheDocument();
+      }
+    });
+
+    it("says so when no Document name matches", async () => {
+      mockNamedLibrary();
+      const user = userEvent.setup();
+      renderLibrary();
+      await screen.findByText("invoice-march.pdf");
+
+      await user.type(screen.getByRole("textbox", { name: "Filter by name" }), "zebra");
+
+      expect(screen.getByText("No document matches “zebra”.")).toBeInTheDocument();
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    });
+
+    it("only deletes the selected Documents that are still shown", async () => {
+      const seen: string[] = [];
+      server.use(
+        http.get(`${API_URL}/documents`, () =>
+          HttpResponse.json([
+            apiDocument({ id: "11111111-1111-4111-8111-111111111111", name: "keep.pdf" }),
+            apiDocument({ id: "22222222-2222-4222-8222-222222222222", name: "drop.pdf" }),
+          ]),
+        ),
+        http.get(`${API_URL}/documents/summary`, () =>
+          HttpResponse.json({ in_progress: 0, failed: 0 }),
+        ),
+        http.delete(`${API_URL}/documents/:id`, ({ params }) => {
+          seen.push(params.id as string);
+          return new HttpResponse(null, { status: 204 });
+        }),
+      );
+      const user = userEvent.setup();
+      renderLibrary();
+      await screen.findByText("keep.pdf");
+
+      await user.click(screen.getByRole("checkbox", { name: "Select keep.pdf" }));
+      await user.click(screen.getByRole("checkbox", { name: "Select drop.pdf" }));
+      await user.type(screen.getByRole("textbox", { name: "Filter by name" }), "drop");
+      await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+      await user.click(await screen.findByRole("button", { name: "Delete" }));
+
+      await waitFor(() =>
+        expect(seen).toEqual(["22222222-2222-4222-8222-222222222222"]),
+      );
+    });
+  });
+
+  describe("previewing", () => {
+    const DOC_ID = "9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f";
+    const FILE_URL = "http://localhost:9000/kith-dev/report.pdf?signature=abc";
+
+    it("opens the Document's PDF at page 1 when its name is clicked", async () => {
+      mockLibraryApi([apiDocument({ id: DOC_ID })]);
+      const seen: (string | null)[] = [];
+      server.use(
+        http.get(`${API_URL}/documents/${DOC_ID}/file-url`, ({ request }) => {
+          seen.push(request.headers.get("x-tenant-id"));
+          return HttpResponse.json({ url: FILE_URL, expires_in: 300 });
+        }),
+      );
+      const user = userEvent.setup();
+      renderLibrary();
+
+      await user.click(await screen.findByRole("button", { name: "report.pdf" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "report.pdf" });
+      expect(await within(dialog).findByText("PDF page 1")).toBeInTheDocument();
+      expect(within(dialog).getByText("Page 1 of 3")).toBeInTheDocument();
+      expect(seen).toEqual([TENANT_ID]);
+    });
+
+    it("closes the preview and goes back to the list", async () => {
+      mockLibraryApi([apiDocument({ id: DOC_ID })]);
+      server.use(
+        http.get(`${API_URL}/documents/${DOC_ID}/file-url`, () =>
+          HttpResponse.json({ url: FILE_URL, expires_in: 300 }),
+        ),
+      );
+      const user = userEvent.setup();
+      renderLibrary();
+      await user.click(await screen.findByRole("button", { name: "report.pdf" }));
+      await screen.findByRole("dialog", { name: "report.pdf" });
+
+      await user.click(screen.getByRole("button", { name: "Close" }));
+
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+    });
   });
 
   describe("deleting", () => {
