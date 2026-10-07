@@ -40,14 +40,20 @@ The same applies to the ingest worker (`make service-refresh service=worker-inge
 
 ### After the mapping changes
 
-While the project is in development, a field added to the mapping (the `deleted` flag on Chunks was the last) does not bump the mapping version, and `make search-index-create` does nothing when the alias already exists. An index built before the change keeps the old mapping and rejects the new field, so delete it and create it again, then re-ingest your Documents:
+While the project is in development, a field added to the mapping (the `deleted` flag on Chunks was the last) does not bump the mapping version, and `make search-index-create` does nothing when the alias already exists. An index built before the change keeps the old mapping and rejects the new field. Add the field to it, keeping its Chunks:
+
+```sh
+make refresh-index
+```
+
+Running it again changes nothing. Chunks indexed before the field existed simply do not have it; for `deleted` that reads as not deleted. Check the result with `GET kith-chunks/_mapping`: it should list `deleted` as `boolean`.
+
+To start from an empty index instead, delete it and create it again (then upload your Documents again):
 
 ```sh
 curl -X DELETE 'http://localhost:9200/kith-chunks-*'
 make search-index-create
 ```
-
-Check the result with `GET kith-chunks/_mapping`: it should list `deleted` as `boolean`.
 
 ## Look at Chunks in Dashboards
 

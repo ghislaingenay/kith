@@ -116,8 +116,8 @@ def index_body() -> dict:
                 "document_id": {"type": "keyword"},
                 # Set when the Chunk's Document is deleted, and absent (read as
                 # not deleted) until then. Added without a `MAPPING_VERSION`
-                # bump during development: an index built before it must be
-                # recreated.
+                # bump during development: an index built before it is brought up
+                # to date with `make refresh-index`.
                 "deleted": {"type": "boolean"},
                 # A number, so a Citation can be sorted and filtered by page.
                 "page_number": {"type": "integer"},

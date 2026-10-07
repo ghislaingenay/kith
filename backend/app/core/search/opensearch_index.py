@@ -79,6 +79,13 @@ class OpenSearchIndex(SearchIndex):
             if error.error != ALREADY_EXISTS_ERROR:
                 raise
 
+    async def update_mapping(self) -> None:
+        with _store_errors("Updating the mapping"):
+            await self._client.indices.put_mapping(
+                index=INDEX_ALIAS,
+                body={"properties": index_body()["mappings"]["properties"]},
+            )
+
     async def alias_exists(self) -> bool:
         return await self._client.indices.exists_alias(name=INDEX_ALIAS)
 

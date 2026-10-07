@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 from core.search.config import SearchSettings
+from core.search.mapping import index_body, versioned_index_name
 from core.search.opensearch_index import OpenSearchIndex
 from core.search.provider import ChunkDocument
 from opensearchpy import AsyncOpenSearch
@@ -86,3 +87,32 @@ async def test_a_vector_written_after_flagging_does_not_bring_the_chunk_back(
     )
 
     assert await _found_ids(search_index, _TENANT_ID) == set()
+
+
+async def test_updating_the_mapping_adds_the_flag_to_an_older_index_and_keeps_its_chunks(
+    _opensearch_url: str,
+) -> None:
+    index = OpenSearchIndex(SearchSettings(search_url=_opensearch_url))
+    older_body = index_body()
+    del older_body["mappings"]["properties"]["deleted"]
+    async with AsyncOpenSearch(hosts=[_opensearch_url]) as client:
+        await client.indices.create(
+            index=versioned_index_name("voyage-4-large-1024"), body=older_body
+        )
+        document_id = uuid.uuid4()
+        chunk = _chunk(_TENANT_ID, document_id, "termination clause")
+        await index.index_chunks([chunk])
+
+        await index.update_mapping()
+        await index.update_mapping()
+        await index.mark_document_chunks_deleted(
+            tenant_id=_TENANT_ID, document_id=document_id
+        )
+
+        mapping = (await client.indices.get_mapping(index="kith-chunks")).popitem()[1]
+        assert mapping["mappings"]["properties"]["deleted"]["type"] == "boolean"
+        assert await _found_ids(index, _TENANT_ID) == set()
+        stored = await client.get(index="kith-chunks", id=str(chunk.id))
+        assert stored["_source"]["text"] == "termination clause"
+        await client.indices.delete(index="kith-chunks-*", ignore=[404])
+    await index.close()
