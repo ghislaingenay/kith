@@ -43,21 +43,25 @@ class RetrievalService:
             )
         except CircuitOpenError as error:
             raise SearchUnavailableError(str(error)) from error
-        documents = await self.repository.list_live_documents_by_ids(
-            tenant_id=tenant_id, document_ids=[hit.document_id for hit in hits]
+        documents = (
+            await self.repository.list_live_documents_by_ids(
+                tenant_id=tenant_id, document_ids=[hit.document_id for hit in hits]
+            )
+            if hits
+            else {}
         )
         results = [
             SearchResultResponse(
                 chunk_id=hit.chunk_id,
                 document_id=hit.document_id,
-                document_name=documents[hit.document_id].name,
-                document_status=documents[hit.document_id].ingestion_status,
+                document_name=document.name,
+                document_status=document.ingestion_status,
                 page_number=hit.page_number,
                 text=hit.text,
                 highlights=hit.highlights,
             )
             for hit in hits
-            if hit.document_id in documents
+            if (document := documents.get(hit.document_id))
         ][: self.settings.result_limit]
         logger.info(
             "search_completed",

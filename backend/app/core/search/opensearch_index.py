@@ -1,6 +1,5 @@
 """`SearchIndex` backed by OpenSearch."""
 
-import logging
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -63,9 +62,6 @@ def _store_errors(action: str) -> Iterator[None]:
 
 class OpenSearchIndex(SearchIndex):
     def __init__(self, settings: SearchSettings) -> None:
-        # The client's trace logger writes every request body at INFO, which
-        # would put each Query text in the logs.
-        logging.getLogger("opensearchpy.trace").setLevel(logging.WARNING)
         self._client = AsyncOpenSearch(hosts=[settings.search_url])
         self._index_name = versioned_index_name(settings.embedding_model_id)
 

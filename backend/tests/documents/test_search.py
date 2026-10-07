@@ -9,6 +9,7 @@ import pytest
 import structlog
 from arq.connections import RedisSettings
 from core.circuit_breaker.breaker import CircuitBreaker
+from core.logging.config import LoggingSettings, configure_logging
 from core.ratelimit.dependencies import get_rate_limiter
 from core.ratelimit.limiter import SlidingWindowLimiter
 from core.search.circuit_breaker_index import CircuitBreakerSearchIndex
@@ -339,6 +340,7 @@ async def test_the_query_text_is_never_logged(
 ) -> None:
     document = await _seed_document(db_session, tenant_id=caller.tenant_id)
     await _index_chunk(search_index, document, "A confidential merger plan.")
+    configure_logging(LoggingSettings())
     caplog.set_level(logging.INFO)
 
     with structlog.testing.capture_logs() as structured_logs:
