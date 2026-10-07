@@ -109,11 +109,15 @@ The text a User submits to search. One Query produces one Search Result.
 _Avoid_: Search term, prompt, question
 
 **Filename Search**:
-Matching a Query against Document names by keyword. Returns Documents, not Chunks.
+Narrowing the Document list by name. Returns Documents, not Chunks, each linking to its Document. It is not a Query: it is not logged and does not go through Retrieval.
 
 **Retrieval**:
-Finding the Chunks most relevant to a Query. Returns ranked Chunks with highlights and a link to their Document.
-_Avoid_: Semantic search, vector search (these are mechanisms, not the concept)
+Finding the Chunks most relevant to a Query, by matching both its words and its meaning, merged into one ranking. Returns ranked Chunks with highlights and a link to their Document. Search and Ask use the same Retrieval.
+_Avoid_: Semantic search, vector search, keyword search (these are mechanisms, not the concept)
+
+**Search**:
+A Query for which the User wants the retrieved Chunks only, with no Answer. Every Role can Search. Not counted in Usage.
+_Avoid_: Semantic search, keyword search, normal search
 
 **Answer**:
 Text written by a language model from the retrieved Chunks in response to a Query, with Citations.
