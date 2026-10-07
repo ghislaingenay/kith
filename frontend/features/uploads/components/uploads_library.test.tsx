@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
@@ -414,6 +415,22 @@ describe("UploadsLibrary", () => {
       );
       return seen;
     }
+
+    it("invalidates the Tenant's Search queries after a delete", async () => {
+      mockDeletingApi([apiDocument({ id: OWN_ID, name: "mine.pdf" })], []);
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      client.setQueryData(["search", TENANT_ID, "cat"], { degraded: false, results: [] });
+      const user = userEvent.setup();
+      renderWithProviders(<UploadsLibrary tenantId={TENANT_ID} />, client);
+
+      await user.click(await screen.findByRole("checkbox", { name: "Select mine.pdf" }));
+      await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+      await user.click(await screen.findByRole("button", { name: "Delete" }));
+
+      await waitFor(() =>
+        expect(client.getQueryState(["search", TENANT_ID, "cat"])?.isInvalidated).toBe(true),
+      );
+    });
 
     it("deletes the selected Documents it may and lists the ones it was refused", async () => {
       const seen = mockDeletingApi(

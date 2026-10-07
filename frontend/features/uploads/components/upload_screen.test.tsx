@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
@@ -78,6 +79,22 @@ async function choose(file: File) {
 }
 
 describe("UploadScreen", () => {
+  it("invalidates the Tenant's Search queries after a successful upload", async () => {
+    mockUploadApi();
+    const client = new QueryClient();
+    client.setQueryData(["search", TENANT_ID, "cat"], { degraded: false, results: [] });
+    client.setQueryData(["search", "other-tenant", "cat"], { degraded: false, results: [] });
+    const user = userEvent.setup({ applyAccept: false });
+    renderWithProviders(<UploadScreen tenantId={TENANT_ID} />, client);
+
+    await user.upload(screen.getByLabelText("PDF file"), pdfFile());
+
+    await waitFor(() =>
+      expect(client.getQueryState(["search", TENANT_ID, "cat"])?.isInvalidated).toBe(true),
+    );
+    expect(client.getQueryState(["search", "other-tenant", "cat"])?.isInvalidated).toBe(false);
+  });
+
   it("tells the person what can be uploaded", () => {
     renderWithProviders(<UploadScreen tenantId={TENANT_ID} />);
 

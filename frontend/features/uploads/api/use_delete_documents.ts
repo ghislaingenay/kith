@@ -2,6 +2,8 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import { searchQueryKey } from "@/features/search";
+
 import type { LibraryDocument } from "../types";
 import { describeDeleteFailure } from "../utils/describe_delete_failure";
 import { deleteDocument } from "./delete_document";
@@ -34,6 +36,9 @@ export function useDeleteDocuments(tenantId: string) {
       );
     },
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: libraryQueryKey(tenantId) }),
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: libraryQueryKey(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: searchQueryKey(tenantId) }),
+      ]),
   });
 }
