@@ -101,6 +101,27 @@ class OpenSearchIndex(SearchIndex):
                 routing=str(tenant_id),
             )
 
+    async def mark_document_chunks_deleted(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        with _store_errors("Marking Chunks deleted"):
+            await self._client.update_by_query(
+                index=INDEX_ALIAS,
+                body={
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                {"term": {"tenant_id": str(tenant_id)}},
+                                {"term": {"document_id": str(document_id)}},
+                            ]
+                        }
+                    },
+                    "script": {"source": "ctx._source.deleted = true"},
+                },
+                routing=str(tenant_id),
+                refresh=True,
+            )
+
     async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         actions = [
             {
@@ -196,6 +217,8 @@ class OpenSearchIndex(SearchIndex):
                             # ...and the exact phrase ranks higher.
                             "should": [{"match_phrase": {"text": query}}],
                             "filter": [{"term": {"tenant_id": str(tenant_id)}}],
+                            # A Chunk with no flag is not deleted.
+                            "must_not": [{"term": {"deleted": True}}],
                         }
                     },
                     "highlight": {

@@ -38,12 +38,23 @@ make service-refresh service=app
 
 The same applies to the ingest worker (`make service-refresh service=worker-ingest`) if it needed the index.
 
+### After the mapping changes
+
+While the project is in development, a field added to the mapping (the `deleted` flag on Chunks was the last) does not bump the mapping version, and `make search-index-create` does nothing when the alias already exists. An index built before the change keeps the old mapping and rejects the new field, so delete it and create it again, then re-ingest your Documents:
+
+```sh
+curl -X DELETE 'http://localhost:9200/kith-chunks-*'
+make search-index-create
+```
+
+Check the result with `GET kith-chunks/_mapping`: it should list `deleted` as `boolean`.
+
 ## Look at Chunks in Dashboards
 
 1. Open http://localhost:5601 and choose **Dev Tools** from the menu.
 2. List the indices: `GET _cat/indices/kith-chunks-*?v`
 3. See the mapping: `GET kith-chunks/_mapping`
-4. Look at some Chunks: `GET kith-chunks/_search` (the vector field is empty until the embedding phase).
+4. Look at some Chunks: `GET kith-chunks/_search` (the vector field is empty until the embedding phase; `deleted` is `true` once the Chunk's Document is deleted, and missing before).
 5. To browse them as a table, create an index pattern named `kith-chunks*` under **Stack Management** and open **Discover**.
 
 To check the keyword analysis, ask OpenSearch how it reads a text:

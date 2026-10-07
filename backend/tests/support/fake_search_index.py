@@ -25,6 +25,9 @@ class FakeSearchIndex:
         self.down = False
         self.delete_down = False
         self.search_down = False
+        self.mark_deleted_down = False
+        self.deleted_document_ids: set[uuid.UUID] = set()
+        """Documents whose Chunks `search_chunks` leaves out."""
         self.delay_seconds = 0.0
         """How long `delete_document_chunks` and `index_chunks` take before
         they answer, as a slow store does."""
@@ -51,6 +54,13 @@ class FakeSearchIndex:
         if self.delete_down:
             raise SearchUnavailableError("fake search store is down")
         self.indexed = [c for c in self.indexed if c.document_id != document_id]
+
+    async def mark_document_chunks_deleted(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        if self.mark_deleted_down:
+            raise SearchUnavailableError("fake search store is down")
+        self.deleted_document_ids.add(document_id)
 
     async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         self.index_calls += 1
@@ -101,6 +111,7 @@ class FakeSearchIndex:
             )
             for chunk in self.indexed
             if chunk.tenant_id == tenant_id
+            and chunk.document_id not in self.deleted_document_ids
             and any(word in chunk.text.lower() for word in words)
         ][:size]
 

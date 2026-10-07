@@ -61,6 +61,15 @@ class SearchIndex(ABC):
         `SearchUnavailableError` when the store cannot be reached."""
 
     @abstractmethod
+    async def mark_document_chunks_deleted(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        """Flags every Chunk the index holds for the Document as deleted, so
+        `search_chunks` stops returning them at once; the purge removes them
+        later. Raises `SearchUnavailableError` when the store cannot be
+        reached."""
+
+    @abstractmethod
     async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         """Bulk-index one batch of Chunks under their ids; searchable once
         this returns. Raises `SearchUnavailableError` when the store cannot
@@ -89,8 +98,9 @@ class SearchIndex(ABC):
         size: int,
     ) -> list[ChunkHit]:
         """The Tenant's best-matching Chunks for the Query, best first, at
-        most `size`. Only `tenant_id` filters the search (ADR-0015): the
-        caller drops hits whose Document is deleted, which Postgres decides.
+        most `size`. Only Chunks flagged as deleted are left out, besides the
+        Tenant filter (ADR-0015); the caller still drops hits whose Document
+        Postgres says is deleted, for the moment before the flag is set.
         Matches by keyword; `query_vector`, the Query's embedding, is for the
         meaning leg and not supported yet. Raises `SearchUnavailableError`
         when the store cannot be reached."""

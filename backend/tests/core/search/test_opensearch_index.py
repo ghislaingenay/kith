@@ -65,6 +65,7 @@ async def test_ensure_index_creates_the_versioned_index_behind_the_alias(
     assert mapping["properties"]["embedding"]["method"]["name"] == "hnsw"
     assert mapping["properties"]["embedding"]["method"]["engine"] == "faiss"
     assert mapping["properties"]["embedding"]["space_type"] == "cosinesimil"
+    assert mapping["properties"]["deleted"]["type"] == "boolean"
 
 
 async def test_ensure_index_twice_changes_nothing(

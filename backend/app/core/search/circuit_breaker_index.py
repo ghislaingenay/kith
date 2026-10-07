@@ -34,6 +34,15 @@ class CircuitBreakerSearchIndex(SearchIndex):
             )
         )
 
+    async def mark_document_chunks_deleted(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        await self._breaker.call(
+            lambda: self._index.mark_document_chunks_deleted(
+                tenant_id=tenant_id, document_id=document_id
+            )
+        )
+
     async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         await self._breaker.call(lambda: self._index.index_chunks(chunks))
 

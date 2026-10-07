@@ -160,6 +160,29 @@ async def test_a_deleted_documents_chunks_are_not_returned_while_still_indexed(
     ]
 
 
+async def test_a_document_deleted_through_the_api_is_no_longer_searched(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: SearchIndex,
+) -> None:
+    document = await _seed_document(db_session, tenant_id=caller.tenant_id)
+    document.uploader_id = caller.user_id
+    await db_session.commit()
+    await _index_chunk(search_index, document, "The termination clause.")
+
+    assert (await client.delete(f"/api/v1/documents/{document.id}")).status_code == 204
+
+    response = await _search(client, "termination")
+    assert response.json()["results"] == []
+    assert (
+        await search_index.search_chunks(
+            tenant_id=caller.tenant_id, query="termination", size=10
+        )
+        == []
+    )
+
+
 async def test_deleted_documents_do_not_use_up_the_results(
     client: AsyncClient,
     caller: Caller,

@@ -59,8 +59,9 @@ def get_library_service(
 def get_deletion_service(
     repository: Annotated[DocumentsRepository, Depends(get_documents_repository)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
+    search_index: Annotated[SearchIndex, Depends(get_search_index)],
 ) -> DocumentDeletionService:
-    return DocumentDeletionService(repository, job_queue)
+    return DocumentDeletionService(repository, job_queue, search_index)
 
 
 def get_retrieval_service(
