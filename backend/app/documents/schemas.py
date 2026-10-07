@@ -58,3 +58,28 @@ class LibrarySummaryResponse(BaseModel):
 
     in_progress: int
     failed: int
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(max_length=1000)
+
+
+class SearchResultResponse(BaseModel):
+    """One retrieved Chunk with its Document. `highlights` are fragments of
+    `text`, HTML-escaped, with each match wrapped in `<mark>`."""
+
+    chunk_id: uuid.UUID
+    document_id: uuid.UUID
+    document_name: str
+    document_status: str
+    page_number: int
+    text: str
+    highlights: list[str]
+
+
+class SearchResponse(BaseModel):
+    """`degraded` is true when Retrieval fell back to fewer legs than usual
+    (ADR-0015)."""
+
+    degraded: bool
+    results: list[SearchResultResponse]

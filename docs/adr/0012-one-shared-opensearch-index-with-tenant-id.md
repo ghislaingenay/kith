@@ -11,7 +11,7 @@ All Tenants' Chunks live in one OpenSearch index, and every Chunk carries its `t
 ## Index shape
 
 - **Name and alias.** The index is `kith-chunks-{model_id}-v{mapping_version}` (model id lowercase letters, digits and hyphens, e.g. `kith-chunks-voyage-4-large-1024-v2`). The version is in the name so a reindex for a mapping change can build the new index beside the old one and swap the alias. The application only talks to the alias `kith-chunks`. `mapping_version` is also stored in the index's `_meta`.
-- **Fields.** `text` (analyzed with the ADR-0011 chain, same analyzer for indexing and searching), `embedding` (`knn_vector`, 1024, `cosinesimil`, HNSW on Faiss, `m` 16, `ef_construction` 100, default `ef_search`), `tenant_id` (keyword), `document_id` (keyword), `page_number` (integer), `ordinal` (integer, the Chunk's position in its Document). The document id is the Chunk's Postgres id (ADR-0002). Filename, upload time and tags are joined from Postgres, because a field repeated on every Chunk cannot change without a reindex and nothing in the MVP searches or filters on it.
+- **Fields.** `text` (analyzed with the ADR-0011 chain, same analyzer for indexing and searching), `embedding` (`knn_vector`, 1024, `cosinesimil`, HNSW on Faiss, `m` 16, `ef_construction` 100, default `ef_search`), `tenant_id` (keyword), `document_id` (keyword), `page_number` (integer), `ordinal` (integer, the Chunk's position in its Document), `deleted` (boolean, set when the Chunk's Document is deleted; absent means not deleted, see ADR-0015). The document id is the Chunk's Postgres id (ADR-0002). Filename, upload time and tags are joined from Postgres, because a field repeated on every Chunk cannot change without a reindex and nothing in the MVP searches or filters on it.
 - **Strict.** `dynamic` is `strict`; adding a field is a new mapping version.
 - **Vectors stay in `_source`**, so a reindex is a plain `_reindex` call and does not pay for embeddings again, at the cost of storage.
 - **Settings.** `knn: true`, 1 shard, 0 replicas in development (replicas are a deploy-time setting), default refresh interval. The worker refreshes once when a Document's indexing finishes. Documents are indexed with `routing` set to the Tenant id, so a Tenant's Chunks stay on one shard if shards are added.
@@ -25,8 +25,8 @@ Isolation now rests on a filter, not on structure. One search-index interface is
 
 - A script (`make search-index-create`) creates the index and alias if absent; running it twice changes nothing.
 - The API checks at startup that the alias exists and refuses to start if it does not, naming the script to run. Tenant creation does not touch OpenSearch.
-- Deleting a Document deletes its Chunks from the index by `document_id` (scoped by `tenant_id`) rather than flagging them. Purging a Tenant deletes by `tenant_id`.
-- A change to the embedding model or the mapping means a new versioned index and a reindex job, never an in-place edit.
+- Deleting a Document flags its Chunks `deleted` in the index at once (by `document_id`, scoped by `tenant_id`), so searches skip them; the purge job then deletes them. Purging a Tenant deletes by `tenant_id`. (Amended 2026-10-07, ADR-0015: this was deletion only, with no flag.)
+- A change to the embedding model or the mapping means a new versioned index and a reindex job, never an in-place edit. (Amended 2026-10-07: while the project is in development the `deleted` field was added to version 2 without a bump. An index built before it is deleted and created again; once there is data worth keeping, the rule applies again.)
 
 ## Consequences
 

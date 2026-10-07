@@ -114,6 +114,11 @@ def index_body() -> dict:
                 # filters, grouping and deleting by value.
                 "tenant_id": {"type": "keyword"},
                 "document_id": {"type": "keyword"},
+                # Set when the Chunk's Document is deleted, and absent (read as
+                # not deleted) until then. Added without a `MAPPING_VERSION`
+                # bump during development: an index built before it must be
+                # recreated.
+                "deleted": {"type": "boolean"},
                 # A number, so a Citation can be sorted and filtered by page.
                 "page_number": {"type": "integer"},
                 # The Chunk's position in its Document, to order hits.

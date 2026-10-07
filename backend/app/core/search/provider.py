@@ -21,7 +21,9 @@ class ChunkDocument:
 
 @dataclass(frozen=True)
 class ChunkHit:
-    """One keyword-search result: enough to link to its Document and page."""
+    """One search result: enough to link to its Document and page, with the
+    passages that matched. `highlights` are fragments of `text`, HTML-escaped,
+    with each match wrapped in `<mark>`; empty when the store found none."""
 
     chunk_id: uuid.UUID
     document_id: uuid.UUID
@@ -29,6 +31,7 @@ class ChunkHit:
     ordinal: int
     text: str
     score: float
+    highlights: list[str]
 
 
 class SearchIndex(ABC):
@@ -58,6 +61,15 @@ class SearchIndex(ABC):
         `SearchUnavailableError` when the store cannot be reached."""
 
     @abstractmethod
+    async def mark_document_chunks_deleted(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        """Flags every Chunk the index holds for the Document as deleted, so
+        `search_chunks` stops returning them at once; the purge removes them
+        later. Raises `SearchUnavailableError` when the store cannot be
+        reached."""
+
+    @abstractmethod
     async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         """Bulk-index one batch of Chunks under their ids; searchable once
         this returns. Raises `SearchUnavailableError` when the store cannot
@@ -81,14 +93,17 @@ class SearchIndex(ABC):
         self,
         *,
         tenant_id: uuid.UUID,
-        document_ids: Sequence[uuid.UUID],
         query: str,
-        limit: int,
+        query_vector: Sequence[float] | None = None,
+        size: int,
     ) -> list[ChunkHit]:
-        """Keyword search over the Tenant's Chunks, restricted to the given
-        Documents. The caller passes the Tenant's live Document ids, so a
-        deleted Document's Chunks never appear even though they stay in the
-        index."""
+        """The Tenant's best-matching Chunks for the Query, best first, at
+        most `size`. Only Chunks flagged as deleted are left out, besides the
+        Tenant filter (ADR-0015); the caller still drops hits whose Document
+        Postgres says is deleted, for the moment before the flag is set.
+        Matches by keyword; `query_vector`, the Query's embedding, is for the
+        meaning leg and not supported yet. Raises `SearchUnavailableError`
+        when the store cannot be reached."""
 
     @abstractmethod
     async def close(self) -> None:

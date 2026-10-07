@@ -5,7 +5,7 @@ identity, storage and the job queue replaced."""
 import hashlib
 import io
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import pypdfium2
 import pytest
@@ -20,16 +20,20 @@ from opensearchpy import AsyncOpenSearch
 from auth.dependencies import get_current_tenant, get_current_user
 from auth.schemas import AuthenticatedUser, TenantContext
 from core.jobs.dependencies import get_job_queue
+from core.ratelimit.dependencies import get_rate_limiter
+from core.ratelimit.limiter import Decision, MultiWindowLimiter
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.storage.dependencies import get_storage_provider
 from documents.dependencies import get_db_session
 from main import app
 from core.search.config import SearchSettings
+from core.search.dependencies import get_search_index
 from core.search.opensearch_index import OpenSearchIndex
 from tenants.models import Tenant
 from tenants.permissions import Role
 from tests.support.fake_job_queue import FakeJobQueue
+from tests.support.fake_search_index import FakeSearchIndex
 from tests.support.fake_storage import FakeStorageProvider
 from users.models import User
 
@@ -79,9 +83,40 @@ async def search_index(_opensearch_url: str) -> AsyncIterator[OpenSearchIndex]:
         await client.indices.delete(index="kith-chunks-*", ignore=[404])
 
 
+class _UnlimitedLimiter(MultiWindowLimiter):
+    async def allow_both(
+        self,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        minute_limit: int,
+        hour_limit: int,
+    ) -> tuple[Decision, Decision]:
+        allowed = Decision(True, minute_limit, minute_limit, None)
+        return allowed, allowed
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def search_endpoint(client: AsyncClient, search_index: OpenSearchIndex) -> Iterator[None]:
+    """Makes the API use the real OpenSearch container instead of the fake,
+    with no rate limit on search unless a test brings its own limiter."""
+    app.dependency_overrides[get_search_index] = lambda: search_index
+    app.dependency_overrides[get_rate_limiter] = _UnlimitedLimiter
+    yield
+    app.dependency_overrides.pop(get_search_index, None)
+    app.dependency_overrides.pop(get_rate_limiter, None)
+
+
 @pytest.fixture
 def job_queue() -> FakeJobQueue:
     return FakeJobQueue()
+
+
+@pytest.fixture
+def fake_search_index() -> FakeSearchIndex:
+    return FakeSearchIndex()
 
 
 @pytest.fixture
@@ -94,6 +129,7 @@ async def client(
     db_session: AsyncSession,
     storage: FakeStorageProvider,
     job_queue: FakeJobQueue,
+    fake_search_index: FakeSearchIndex,
     caller: Caller,
 ) -> AsyncIterator[AsyncClient]:
     async def _db_session() -> AsyncIterator[AsyncSession]:
@@ -102,6 +138,7 @@ async def client(
     app.dependency_overrides[get_db_session] = _db_session
     app.dependency_overrides[get_storage_provider] = lambda: storage
     app.dependency_overrides[get_job_queue] = lambda: job_queue
+    app.dependency_overrides[get_search_index] = lambda: fake_search_index
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
         id=caller.user_id,
         email="jane@example.com",

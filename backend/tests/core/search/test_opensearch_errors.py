@@ -63,12 +63,7 @@ async def test_an_unreachable_or_overloaded_store_is_unavailable(
             tenant_id=_CHUNK.tenant_id, document_id=_CHUNK.document_id
         )
     with pytest.raises(SearchUnavailableError):
-        await index.search_chunks(
-            tenant_id=_CHUNK.tenant_id,
-            document_ids=[_CHUNK.document_id],
-            query="x",
-            limit=1,
-        )
+        await index.search_chunks(tenant_id=_CHUNK.tenant_id, query="x", size=1)
 
 
 async def test_a_rejected_request_is_a_search_error_that_is_not_unavailable() -> None:
@@ -114,3 +109,12 @@ async def test_bulk_items_the_store_rejected_are_not_unavailable(
         await index.index_chunks([_CHUNK])
 
     assert not isinstance(raised.value, SearchUnavailableError)
+
+
+async def test_a_query_vector_is_refused_until_the_meaning_leg_exists() -> None:
+    index = _index_failing_with(Exception())
+
+    with pytest.raises(NotImplementedError):
+        await index.search_chunks(
+            tenant_id=_CHUNK.tenant_id, query="x", query_vector=[0.1], size=1
+        )

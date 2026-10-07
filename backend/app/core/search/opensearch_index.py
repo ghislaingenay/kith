@@ -17,6 +17,8 @@ from opensearchpy.exceptions import OpenSearchException, RequestError
 
 
 _MINIMUM_WORDS_MATCHED = "70%"
+_HIGHLIGHT_OPEN = "<mark>"
+_HIGHLIGHT_CLOSE = "</mark>"
 
 # Routing cannot isolate Tenants on a one-shard index, so the script does.
 _SET_EMBEDDING_SCRIPT = (
@@ -99,6 +101,27 @@ class OpenSearchIndex(SearchIndex):
                 routing=str(tenant_id),
             )
 
+    async def mark_document_chunks_deleted(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        with _store_errors("Marking Chunks deleted"):
+            await self._client.update_by_query(
+                index=INDEX_ALIAS,
+                body={
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                {"term": {"tenant_id": str(tenant_id)}},
+                                {"term": {"document_id": str(document_id)}},
+                            ]
+                        }
+                    },
+                    "script": {"source": "ctx._source.deleted = true"},
+                },
+                routing=str(tenant_id),
+                refresh=True,
+            )
+
     async def index_chunks(self, chunks: Sequence[ChunkDocument]) -> None:
         actions = [
             {
@@ -166,18 +189,18 @@ class OpenSearchIndex(SearchIndex):
         self,
         *,
         tenant_id: uuid.UUID,
-        document_ids: Sequence[uuid.UUID],
         query: str,
-        limit: int,
+        query_vector: Sequence[float] | None = None,
+        size: int,
     ) -> list[ChunkHit]:
-        if not document_ids:
-            return []
+        if query_vector is not None:
+            raise NotImplementedError("The meaning leg of Retrieval is not built yet.")
         with _store_errors("Searching Chunks"):
             response = await self._client.search(
                 index=INDEX_ALIAS,
                 routing=str(tenant_id),
                 body={
-                    "size": limit,
+                    "size": size,
                     "query": {
                         "bool": {
                             # Most of the words must match, in any order...
@@ -193,15 +216,18 @@ class OpenSearchIndex(SearchIndex):
                             ],
                             # ...and the exact phrase ranks higher.
                             "should": [{"match_phrase": {"text": query}}],
-                            "filter": [
-                                {"term": {"tenant_id": str(tenant_id)}},
-                                {
-                                    "terms": {
-                                        "document_id": [str(document_id) for document_id in document_ids]
-                                    }
-                                },
-                            ],
+                            "filter": [{"term": {"tenant_id": str(tenant_id)}}],
+                            # A Chunk with no flag is not deleted.
+                            "must_not": [{"term": {"deleted": True}}],
                         }
+                    },
+                    "highlight": {
+                        "fields": {"text": {}},
+                        "pre_tags": [_HIGHLIGHT_OPEN],
+                        "post_tags": [_HIGHLIGHT_CLOSE],
+                        # Escapes the Chunk's own markup, so the only tags in
+                        # a fragment are the match markers.
+                        "encoder": "html",
                     },
                 },
             )
@@ -213,6 +239,7 @@ class OpenSearchIndex(SearchIndex):
                 ordinal=hit["_source"]["ordinal"],
                 text=hit["_source"]["text"],
                 score=hit["_score"],
+                highlights=hit.get("highlight", {}).get("text", []),
             )
             for hit in response["hits"]["hits"]
         ]

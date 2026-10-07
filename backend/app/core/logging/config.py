@@ -65,6 +65,10 @@ def configure_logging(settings: LoggingSettings) -> None:
     statement made within a request's async context, satisfying FR-2's
     "Logged: Included in every log statement".
     """
+    # The OpenSearch client's trace logger writes every request body at INFO,
+    # which would put each search Query text in the logs.
+    logging.getLogger("opensearchpy.trace").setLevel(logging.WARNING)
+
     renderer = (
         structlog.dev.ConsoleRenderer()
         if settings.format == "console"

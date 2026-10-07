@@ -82,3 +82,28 @@ class IngestionSettings(BaseSettings):
         if self.chunk_overlap_tokens >= self.chunk_size_tokens:
             raise ValueError("chunk overlap must be smaller than chunk size")
         return self
+
+
+class RetrievalSettings(BaseSettings):
+    """Env-driven Retrieval limits (ADR-0015)."""
+
+    model_config = SettingsConfigDict(case_sensitive=False)
+
+    fetch_size: int = Field(
+        default=30,
+        gt=0,
+        description="Hits asked of the search store, more than are shown so deleted Documents' Chunks can be dropped",
+        validation_alias="RETRIEVAL_FETCH_SIZE",
+    )
+    result_limit: int = Field(
+        default=20,
+        gt=0,
+        description="Chunks kept after deleted Documents are dropped",
+        validation_alias="RETRIEVAL_RESULT_LIMIT",
+    )
+
+    @model_validator(mode="after")
+    def _fetch_at_least_result_limit(self) -> "RetrievalSettings":
+        if self.fetch_size < self.result_limit:
+            raise ValueError("fetch size must be at least the result limit")
+        return self

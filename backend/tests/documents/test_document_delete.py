@@ -24,6 +24,7 @@ from tests.documents.conftest import (
     sha256_hex,
 )
 from tests.support.fake_job_queue import EnqueuedJob, FakeJobQueue
+from tests.support.fake_search_index import FakeSearchIndex
 
 LIST_URL = "/api/v1/documents"
 
@@ -188,6 +189,41 @@ async def test_deleting_queues_a_purge_job_on_the_tasks_queue(
             job_id=f"purge:{document.id}",
         )
     ]
+
+
+async def test_deleting_flags_the_documents_chunks_in_the_search_index(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    caller: Caller,
+    fake_search_index: FakeSearchIndex,
+) -> None:
+    document = await _seed(
+        db_session, tenant_id=caller.tenant_id, uploader_id=caller.user_id
+    )
+
+    await client.delete(_document_url(document.id))
+
+    assert fake_search_index.deleted_document_ids == {document.id}
+
+
+async def test_deleting_still_succeeds_when_the_search_store_is_down(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    caller: Caller,
+    fake_search_index: FakeSearchIndex,
+    job_queue: FakeJobQueue,
+) -> None:
+    fake_search_index.mark_deleted_down = True
+    document = await _seed(
+        db_session, tenant_id=caller.tenant_id, uploader_id=caller.user_id
+    )
+
+    response = await client.delete(_document_url(document.id))
+
+    assert response.status_code == 204
+    await db_session.refresh(document)
+    assert document.ingestion_status == IngestionStatus.DELETED
+    assert len(job_queue.jobs) == 1
 
 
 @pytest.mark.parametrize("role", [Role.ADMIN, Role.OWNER])
