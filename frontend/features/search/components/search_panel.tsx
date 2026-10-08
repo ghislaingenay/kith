@@ -61,6 +61,7 @@ function ActiveSearch({
   const search = useSearch(tenantId, query);
   return (
     <SearchResults
+      tenantId={tenantId}
       query={query}
       isPending={search.isFetching && !search.data}
       error={search.error}

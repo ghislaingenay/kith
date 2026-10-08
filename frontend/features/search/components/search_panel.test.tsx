@@ -8,6 +8,8 @@ import { server } from "@/test/mocks/server";
 
 import { SearchPanel } from "./search_panel";
 
+vi.mock("react-pdf", () => import("@/test/stub_react_pdf"));
+
 const navigation = vi.hoisted(() => ({
   url: "",
   push: vi.fn(),
@@ -149,6 +151,34 @@ describe("SearchPanel", () => {
     renderPanel();
     await screen.findByRole("list", { name: "Search results" });
     expect(screen.queryByText(/keyword matches only/i)).not.toBeInTheDocument();
+  });
+
+  it("opens the Document preview at the row's page and closes back to the results", async () => {
+    navigation.url = "q=cat&type=search";
+    const seen = mockSearch([
+      apiResult({ chunk_id: "c0", document_id: "d0", document_name: "other.pdf", page_number: 1 }),
+      apiResult({ page_number: 2 }),
+    ]);
+    server.use(
+      http.get(`${API_URL}/documents/d1/file-url`, () =>
+        HttpResponse.json({
+          url: "http://localhost:9000/kith-dev/report.pdf?signature=abc",
+          expires_in: 300,
+        }),
+      ),
+    );
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: /report\.pdf/ }));
+
+    expect(await screen.findByRole("dialog", { name: "report.pdf" })).toBeInTheDocument();
+    expect(await screen.findByText("PDF page 2")).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Search results" })).toBeInTheDocument();
+    expect(seen.queries).toEqual(["cat"]);
+    expect(navigation.push).not.toHaveBeenCalled();
   });
 
   it("shows skeleton rows while loading", async () => {
