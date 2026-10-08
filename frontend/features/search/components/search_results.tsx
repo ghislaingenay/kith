@@ -1,3 +1,6 @@
+import { useState } from "react";
+
+import { DocumentViewerDialog } from "@/features/document-viewer";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api_client";
@@ -7,18 +10,23 @@ import { parseHighlight } from "../utils/parse_highlights";
 
 /** The Search's states: loading, error, no match, or the ranked passages. */
 export function SearchResults({
+  tenantId,
   query,
   isPending,
   error,
   data,
   onRetry,
 }: {
+  readonly tenantId: string;
   readonly query: string;
   readonly isPending: boolean;
   readonly error: Error | null;
   readonly data: SearchResponse | undefined;
   readonly onRetry: () => void;
 }) {
+  // Local state, so closing the viewer leaves the URL and results untouched.
+  const [opened, setOpened] = useState<SearchResult | null>(null);
+
   if (isPending) return <LoadingRows />;
   if (error) return <SearchFailure error={error} onRetry={onRetry} />;
   if (!data) return null;
@@ -36,11 +44,29 @@ export function SearchResults({
       ) : (
         <ol aria-label="Search results" className="divide-y rounded-lg border">
           {data.results.map((result) => (
-            <li key={result.chunk_id} className="px-4 py-3">
-              <ResultRow result={result} />
+            <li key={result.chunk_id}>
+              <button
+                type="button"
+                onClick={() => setOpened(result)}
+                className="w-full cursor-pointer px-4 py-3 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              >
+                <ResultRow result={result} />
+              </button>
             </li>
           ))}
         </ol>
+      )}
+      {opened && (
+        <DocumentViewerDialog
+          tenantId={tenantId}
+          documentId={opened.document_id}
+          documentName={opened.document_name}
+          initialPage={opened.page_number}
+          open
+          onOpenChange={(open) => {
+            if (!open) setOpened(null);
+          }}
+        />
       )}
     </div>
   );
