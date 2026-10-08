@@ -36,13 +36,10 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         self,
         settings: EmbeddingSettings,
         client: AsyncClient | None = None,
-        timeout: float | None = None,
     ) -> None:
         # One attempt: the application's retry handler does the retrying.
-        # `timeout` caps each request; without it the client waits as long as
-        # its default.
         self._client = client or AsyncClient(
-            api_key=settings.voyage_api_key, max_retries=1, timeout=timeout
+            api_key=settings.voyage_api_key, max_retries=1
         )
 
     async def count_tokens(self, texts: Sequence[str]) -> list[int]:

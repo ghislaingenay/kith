@@ -12,11 +12,8 @@ class EmbeddingProviderFactory:
 
     @staticmethod
     def create(
-        settings: EmbeddingSettings,
-        breaker: CircuitBreaker,
-        timeout: float | None = None,
+        settings: EmbeddingSettings, breaker: CircuitBreaker
     ) -> EmbeddingProvider:
-        """`timeout` caps each request to the model, in seconds."""
         return CircuitBreakerEmbeddingProvider(
-            VoyageEmbeddingProvider(settings, timeout=timeout), breaker
+            VoyageEmbeddingProvider(settings), breaker
         )
