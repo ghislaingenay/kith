@@ -35,7 +35,7 @@ function apiResult(overrides = {}) {
   };
 }
 
-function mockSearch(results = [apiResult()]) {
+function mockSearch(results = [apiResult()], degraded = false) {
   const seen: { queries: string[]; tenantIds: (string | null)[] } = {
     queries: [],
     tenantIds: [],
@@ -44,7 +44,7 @@ function mockSearch(results = [apiResult()]) {
     http.post(`${API_URL}/search`, async ({ request }) => {
       seen.queries.push(((await request.json()) as { query: string }).query);
       seen.tenantIds.push(request.headers.get("x-tenant-id"));
-      return HttpResponse.json({ degraded: false, results });
+      return HttpResponse.json({ degraded, results });
     }),
   );
   return seen;
@@ -133,6 +133,22 @@ describe("SearchPanel", () => {
     const row = (await screen.findByText("report.pdf")).closest("li")!;
     expect(row).toHaveTextContent("Line one of the passage");
     expect(row.querySelector("mark")).toBeNull();
+  });
+
+  it("notes quietly that only keyword matches are shown when degraded", async () => {
+    navigation.url = "q=cat&type=search";
+    mockSearch([apiResult()], true);
+    renderPanel();
+    expect(await screen.findByText("Showing keyword matches only")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Search results" })).toBeInTheDocument();
+  });
+
+  it("shows no keyword-only note when the Search is not degraded", async () => {
+    navigation.url = "q=cat&type=search";
+    mockSearch();
+    renderPanel();
+    await screen.findByRole("list", { name: "Search results" });
+    expect(screen.queryByText(/keyword matches only/i)).not.toBeInTheDocument();
   });
 
   it("shows skeleton rows while loading", async () => {

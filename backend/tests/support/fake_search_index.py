@@ -13,6 +13,7 @@ from core.search.provider import ChunkDocument, ChunkHit
 class FakeSearchIndex:
     def __init__(self, *, index_exists: bool = False) -> None:
         self.index_exists = index_exists
+        self.pipeline_exists = index_exists
         self.ensure_calls = 0
         self.index_calls = 0
         self.delete_calls = 0
@@ -43,6 +44,7 @@ class FakeSearchIndex:
     async def ensure_index(self) -> None:
         self.ensure_calls += 1
         self.index_exists = True
+        self.pipeline_exists = True
 
     async def recreate_index(self) -> None:
         self.recreate_calls += 1
@@ -53,6 +55,9 @@ class FakeSearchIndex:
 
     async def alias_exists(self) -> bool:
         return self.index_exists
+
+    async def search_pipeline_exists(self) -> bool:
+        return self.pipeline_exists
 
     async def delete_document_chunks(
         self, *, tenant_id: uuid.UUID, document_id: uuid.UUID

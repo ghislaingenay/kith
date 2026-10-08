@@ -45,8 +45,9 @@ class SearchIndex(ABC):
 
     @abstractmethod
     async def ensure_index(self) -> None:
-        """Create the versioned index and its alias if they do not exist.
-        Calling it again changes nothing."""
+        """Create the versioned index and its alias if they do not exist, and
+        create or update the search pipeline. Calling it again changes
+        nothing."""
 
     @abstractmethod
     async def recreate_index(self) -> None:
@@ -63,6 +64,12 @@ class SearchIndex(ABC):
     @abstractmethod
     async def alias_exists(self) -> bool:
         """Whether the alias exists, without creating anything."""
+
+    @abstractmethod
+    async def search_pipeline_exists(self) -> bool:
+        """Whether the search pipeline that merges the keyword and meaning
+        legs by reciprocal rank fusion exists (ADR-0015), without creating
+        anything."""
 
     @abstractmethod
     async def delete_document_chunks(
@@ -113,9 +120,10 @@ class SearchIndex(ABC):
         most `size`. Only Chunks flagged as deleted are left out, besides the
         Tenant filter (ADR-0015); the caller still drops hits whose Document
         Postgres says is deleted, for the moment before the flag is set.
-        Matches by keyword; `query_vector`, the Query's embedding, is for the
-        meaning leg and not supported yet. Raises `SearchUnavailableError`
-        when the store cannot be reached."""
+        Matches by keyword alone, or, given `query_vector` (the Query's
+        embedding), by keyword and by meaning merged by reciprocal rank
+        fusion; a Chunk found only by meaning has no highlights. Raises
+        `SearchUnavailableError` when the store cannot be reached."""
 
     @abstractmethod
     async def close(self) -> None:

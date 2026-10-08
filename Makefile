@@ -42,7 +42,7 @@ db-current:
 
 # ── search ──────────────────────────────────────────────────────────────────
 
-# create the OpenSearch index and alias; the API refuses to start without them
+# create the OpenSearch index, alias and RRF search pipeline (or update the pipeline); the API refuses to start without them
 search-index-create:
 	$(COMPOSE) run --rm app python -m core.search.create_index
 

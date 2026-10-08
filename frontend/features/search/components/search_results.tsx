@@ -22,21 +22,27 @@ export function SearchResults({
   if (isPending) return <LoadingRows />;
   if (error) return <SearchFailure error={error} onRetry={onRetry} />;
   if (!data) return null;
-  if (data.results.length === 0) {
-    return (
-      <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-        No passages match “{query}”.
-      </p>
-    );
-  }
   return (
-    <ol aria-label="Search results" className="divide-y rounded-lg border">
-      {data.results.map((result) => (
-        <li key={result.chunk_id} className="px-4 py-3">
-          <ResultRow result={result} />
-        </li>
-      ))}
-    </ol>
+    <div className="space-y-2">
+      {data.degraded && (
+        <p role="status" className="text-xs text-muted-foreground">
+          Showing keyword matches only
+        </p>
+      )}
+      {data.results.length === 0 ? (
+        <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          No passages match “{query}”.
+        </p>
+      ) : (
+        <ol aria-label="Search results" className="divide-y rounded-lg border">
+          {data.results.map((result) => (
+            <li key={result.chunk_id} className="px-4 py-3">
+              <ResultRow result={result} />
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 

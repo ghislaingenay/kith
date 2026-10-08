@@ -31,6 +31,9 @@ class CircuitBreakerSearchIndex(SearchIndex):
     async def alias_exists(self) -> bool:
         return await self._index.alias_exists()
 
+    async def search_pipeline_exists(self) -> bool:
+        return await self._index.search_pipeline_exists()
+
     async def delete_document_chunks(
         self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
     ) -> None:

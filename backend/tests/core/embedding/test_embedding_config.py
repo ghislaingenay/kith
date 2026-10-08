@@ -43,3 +43,49 @@ def test_the_factory_builds_a_provider_behind_the_breaker(
     provider = EmbeddingProviderFactory.create(EmbeddingSettings(), breaker)
 
     assert isinstance(provider, CircuitBreakerEmbeddingProvider)
+
+
+def test_the_query_factory_gives_no_provider_without_an_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOYAGE_API_KEY", "")
+    breaker = CircuitBreaker(
+        name="embedding",
+        failure_threshold=5,
+        reset_timeout_seconds=30,
+        failure_types=(),
+    )
+
+    assert EmbeddingProviderFactory.create_for_queries(breaker) is None
+
+
+def test_the_query_factory_builds_a_provider_behind_the_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOYAGE_API_KEY", "test-key")
+    breaker = CircuitBreaker(
+        name="embedding",
+        failure_threshold=5,
+        reset_timeout_seconds=30,
+        failure_types=(),
+    )
+
+    provider = EmbeddingProviderFactory.create_for_queries(breaker)
+
+    assert isinstance(provider, CircuitBreakerEmbeddingProvider)
+
+
+def test_the_query_factory_still_refuses_a_bad_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOYAGE_API_KEY", "")
+    monkeypatch.setenv("EMBEDDING_QUERY_TIMEOUT_SECONDS", "0")
+    breaker = CircuitBreaker(
+        name="embedding",
+        failure_threshold=5,
+        reset_timeout_seconds=30,
+        failure_types=(),
+    )
+
+    with pytest.raises(ValidationError, match="EMBEDDING_QUERY_TIMEOUT_SECONDS"):
+        EmbeddingProviderFactory.create_for_queries(breaker)

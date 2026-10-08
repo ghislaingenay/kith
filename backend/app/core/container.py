@@ -129,6 +129,14 @@ class Container(containers.DeclarativeContainer):
         breaker=embedding_circuit_breaker,
     )
 
+    # The API's provider, with a short timeout; `None` without a Voyage key,
+    # and then every Search runs keyword only. `Singleton` does not cache a
+    # `None`, which only costs rebuilding the settings on each access.
+    query_embedding_provider = providers.Singleton(
+        EmbeddingProviderFactory.create_for_queries,
+        breaker=embedding_circuit_breaker,
+    )
+
     upload_settings = providers.Singleton(UploadSettings)
 
     ingestion_settings = providers.Singleton(IngestionSettings)

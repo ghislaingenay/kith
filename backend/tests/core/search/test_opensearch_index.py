@@ -18,6 +18,9 @@ async def client(_opensearch_url: str) -> AsyncIterator[AsyncOpenSearch]:
     async with AsyncOpenSearch(hosts=[_opensearch_url]) as opensearch_client:
         yield opensearch_client
         await opensearch_client.indices.delete(index="kith-chunks-*", ignore=[404])
+        await opensearch_client.transport.perform_request(
+            "DELETE", "/_search/pipeline/kith-rrf", params={"ignore": "404"}
+        )
 
 
 @pytest.fixture
@@ -66,6 +69,23 @@ async def test_ensure_index_creates_the_versioned_index_behind_the_alias(
     assert mapping["properties"]["embedding"]["method"]["engine"] == "faiss"
     assert mapping["properties"]["embedding"]["space_type"] == "cosinesimil"
     assert mapping["properties"]["deleted"]["type"] == "boolean"
+
+
+async def test_ensure_index_creates_the_rrf_search_pipeline(
+    search_index: OpenSearchIndex, client: AsyncOpenSearch
+) -> None:
+    assert await search_index.search_pipeline_exists() is False
+
+    await search_index.ensure_index()
+    await search_index.ensure_index()
+
+    assert await search_index.search_pipeline_exists() is True
+    pipeline = await client.transport.perform_request(
+        "GET", "/_search/pipeline/kith-rrf"
+    )
+    assert pipeline["kith-rrf"]["phase_results_processors"] == [
+        {"score-ranker-processor": {"combination": {"technique": "rrf"}}}
+    ]
 
 
 async def test_ensure_index_twice_changes_nothing(

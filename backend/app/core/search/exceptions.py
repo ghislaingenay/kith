@@ -19,6 +19,18 @@ class SearchIndexMissingError(SearchError):
         self.alias = alias
 
 
+class SearchPipelineMissingError(SearchError):
+    """The search pipeline that merges the keyword and meaning legs does not
+    exist yet."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"Search pipeline {name!r} does not exist. "
+            "Create it with `make search-index-create`."
+        )
+        self.name = name
+
+
 class SearchUnavailableError(SearchError):
     """The search store could not be reached or refused the request. The only
     failure the retry handler retries and the circuit breaker counts."""

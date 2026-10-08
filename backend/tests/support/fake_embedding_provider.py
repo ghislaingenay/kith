@@ -20,6 +20,13 @@ def vector_for(text: str) -> list[float]:
     return [float(len(text))] * VECTOR_DIMENSION
 
 
+def axis_vector(axis: int) -> list[float]:
+    """A unit vector along one axis: two texts given the same axis are
+    identical in meaning to the search, and two given different axes are
+    unrelated."""
+    return [1.0 if i == axis else 0.0 for i in range(VECTOR_DIMENSION)]
+
+
 class FakeEmbeddingProvider(EmbeddingProvider):
     def __init__(self) -> None:
         self.requests: list[list[str]] = []
@@ -29,6 +36,9 @@ class FakeEmbeddingProvider(EmbeddingProvider):
         """What each `embed` call does, in order: `True` works, `False` raises
         `EmbeddingUnavailableError`. Once used up, `is_down` decides."""
         self.is_down = False
+        self.vectors: dict[str, Sequence[float]] = {}
+        """Vectors for specific texts, so a test can make a Query and a Chunk
+        close in meaning; any other text gets `vector_for`."""
         self.rejected_texts: set[str] = set()
         """A request containing one of these texts raises `EmbeddingError`, as
         the model does for a text it refuses."""
@@ -58,6 +68,6 @@ class FakeEmbeddingProvider(EmbeddingProvider):
         if self.after_embed is not None:
             await self.after_embed()
         return EmbeddingResult(
-            vectors=[vector_for(text) for text in texts],
+            vectors=[self.vectors.get(text) or vector_for(text) for text in texts],
             tokens_used=sum(await self.count_tokens(texts)),
         )
