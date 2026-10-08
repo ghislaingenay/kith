@@ -52,7 +52,21 @@ function mockSearch(results = [apiResult()], degraded = false) {
   return seen;
 }
 
-function mockLibrary(documents: object[] = [{ id: "d1" }]) {
+function mockLibrary(
+  documents: object[] = [
+    {
+      id: "d1",
+      name: "report.pdf",
+      size_bytes: 1024,
+      uploader: "alice",
+      created_at: "2024-01-01T00:00:00Z",
+      ingestion_status: "ready",
+      ingestion_stage: null,
+      pages_extracted: null,
+      page_count: 1,
+    },
+  ],
+) {
   server.use(http.get(`${API_URL}/documents`, () => HttpResponse.json(documents)));
 }
 
