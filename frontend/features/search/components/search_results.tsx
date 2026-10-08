@@ -47,6 +47,7 @@ export function SearchResults({
             <li key={result.chunk_id}>
               <button
                 type="button"
+                aria-label={`Open ${result.document_name} at page ${result.page_number}`}
                 onClick={() => setOpened(result)}
                 className="w-full cursor-pointer px-4 py-3 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
               >
