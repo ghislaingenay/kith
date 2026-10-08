@@ -1,11 +1,14 @@
 """Retrieval: the Chunks most relevant to a Query, within one Tenant (ADR-0015)."""
 
 import uuid
+from dataclasses import dataclass
 
 from core.circuit_breaker.exceptions import CircuitOpenError
 from core.embedding.exceptions import EmbeddingError
 from core.embedding.provider import EmbeddingInputType, EmbeddingProvider
 from core.logging import setup_logger
+from core.rerank.config import RerankSettings
+from core.rerank.provider import Reranker
 from core.search.exceptions import SearchUnavailableError
 from core.search.provider import SearchIndex
 from documents.config import RetrievalSettings
@@ -17,6 +20,33 @@ from documents.text_cleaner import clean_text
 logger = setup_logger(__name__)
 
 
+@dataclass(frozen=True)
+class RetrievedChunk:
+    result: SearchResultResponse
+    rerank_score: float | None
+    """`None` when the Chunk was not reranked."""
+
+
+@dataclass(frozen=True)
+class AskRetrieval:
+    """The Chunks an Ask cites, best first. Internal, not an HTTP contract."""
+
+    chunks: list[RetrievedChunk]
+    degraded: bool
+    """Retrieval fell back to keyword alone (ADR-0015)."""
+    is_reranked: bool
+
+
+def _clean_query(query: str) -> str:
+    """The same cleanup the Chunks went through, so the Query takes the same
+    form as the stored text (NFKC, invisible characters, spacing). Raises
+    `BlankQueryError` when nothing is left."""
+    query = clean_text(query)
+    if not query:
+        raise BlankQueryError()
+    return query
+
+
 class RetrievalService:
     def __init__(
         self,
@@ -24,11 +54,15 @@ class RetrievalService:
         search_index: SearchIndex,
         embedding_provider: EmbeddingProvider | None,
         settings: RetrievalSettings,
+        reranker: Reranker | None,
+        rerank_settings: RerankSettings,
     ) -> None:
         self.repository = repository
         self.search_index = search_index
         self.embedding_provider = embedding_provider
         self.settings = settings
+        self.reranker = reranker
+        self.rerank_settings = rerank_settings
 
     async def search(
         self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, query: str
@@ -38,19 +72,91 @@ class RetrievalService:
         keyword and by meaning; without an embedding of the Query (no provider,
         or it failed) it matches by keyword alone and says so with `degraded`.
         The Query text is never logged."""
-        # The same cleanup the Chunks went through, so the Query takes the
-        # same form as the stored text (NFKC, invisible characters, spacing).
-        query = clean_text(query)
-        if not query:
-            raise BlankQueryError()
+        query = _clean_query(query)
         query_vector = await self._embed_query(query)
         degraded = query_vector is None
+        results = await self._find_live_chunks(
+            tenant_id=tenant_id,
+            query=query,
+            query_vector=query_vector,
+            size=self.settings.fetch_size,
+        )
+        results = results[: self.settings.result_limit]
+        logger.info(
+            "search_completed",
+            tenant_id=str(tenant_id),
+            user_id=str(user_id),
+            result_count=len(results),
+            degraded=degraded,
+        )
+        return SearchResponse(degraded=degraded, results=results)
+
+    async def retrieve_for_ask(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, query: str
+    ) -> AskRetrieval:
+        """Like `search`, from more candidates, which the reranker narrows to
+        the few an Ask cites. Without a reranker (switched off, or no Voyage
+        key) the top ones are kept in Retrieval's order, unscored. The Query
+        text is never logged, and Rerank tokens are not Usage."""
+        query = _clean_query(query)
+        query_vector = await self._embed_query(query)
+        degraded = query_vector is None
+        candidates = await self._find_live_chunks(
+            tenant_id=tenant_id,
+            query=query,
+            query_vector=query_vector,
+            size=self.rerank_settings.fetch_size,
+        )
+        limit = self.rerank_settings.result_limit
+        rerank_tokens = 0
+        is_reranked = False
+        if self.reranker is None or not candidates:
+            chunks = [RetrievedChunk(result, None) for result in candidates[:limit]]
+        else:
+            is_reranked = True
+            reranked = await self.reranker.rerank(
+                query, [candidate.text for candidate in candidates]
+            )
+            rerank_tokens = reranked.tokens_used
+            chunks = [
+                RetrievedChunk(candidates[ranked.index], ranked.relevance_score)
+                for ranked in reranked.ranking[:limit]
+            ]
+        logger.info(
+            "ask_retrieval_completed",
+            tenant_id=str(tenant_id),
+            user_id=str(user_id),
+            result_count=len(chunks),
+            is_reranked=is_reranked,
+            rerank_model=self.rerank_settings.model,
+            rerank_tokens=rerank_tokens,
+            degraded=degraded,
+        )
+        if is_reranked:
+            logger.debug(
+                "ask_retrieval_rerank_scores",
+                tenant_id=str(tenant_id),
+                rerank_scores=[chunk.rerank_score for chunk in chunks],
+            )
+        return AskRetrieval(chunks=chunks, degraded=degraded, is_reranked=is_reranked)
+
+    async def _find_live_chunks(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        query: str,
+        query_vector: list[float] | None,
+        size: int,
+    ) -> list[SearchResultResponse]:
+        """The Tenant's `size` best hits, best first, less those of deleted
+        Documents, whose Chunks may still be in the index, each joined to its
+        Document's name and status."""
         try:
             hits = await self.search_index.search_chunks(
                 tenant_id=tenant_id,
                 query=query,
                 query_vector=query_vector,
-                size=self.settings.fetch_size,
+                size=size,
             )
         except CircuitOpenError as error:
             raise SearchUnavailableError(str(error)) from error
@@ -61,7 +167,7 @@ class RetrievalService:
             if hits
             else {}
         )
-        results = [
+        return [
             SearchResultResponse(
                 chunk_id=hit.chunk_id,
                 document_id=hit.document_id,
@@ -73,15 +179,7 @@ class RetrievalService:
             )
             for hit in hits
             if (document := documents.get(hit.document_id))
-        ][: self.settings.result_limit]
-        logger.info(
-            "search_completed",
-            tenant_id=str(tenant_id),
-            user_id=str(user_id),
-            result_count=len(results),
-            degraded=degraded,
-        )
-        return SearchResponse(degraded=degraded, results=results)
+        ]
 
     async def _embed_query(self, query: str) -> list[float] | None:
         """The Query's vector, or `None` when it cannot be had: no provider,

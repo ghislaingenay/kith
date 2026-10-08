@@ -16,6 +16,8 @@ from core.logging.config import LoggingSettings, configure_logging
 from core.mail.config import MailSettings
 from core.mail.factory import MailerFactory
 from core.ratelimit.factory import RateLimiterFactory
+from core.rerank.config import RerankSettings
+from core.rerank.factory import create_reranker
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.search.config import SearchSettings
@@ -137,6 +139,11 @@ class Container(containers.DeclarativeContainer):
         create_query_embedding_provider,
         breaker=embedding_circuit_breaker,
     )
+
+    rerank_settings = providers.Singleton(RerankSettings)
+
+    # `None` when Rerank is switched off or there is no Voyage key.
+    reranker = providers.Singleton(create_reranker, settings=rerank_settings)
 
     upload_settings = providers.Singleton(UploadSettings)
 

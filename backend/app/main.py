@@ -39,6 +39,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             "voyage_api_key_missing",
             detail="VOYAGE_API_KEY is not set; every Search runs keyword only",
         )
+    if container.rerank_settings().enabled and container.reranker() is None:
+        logger.warning(
+            "rerank_voyage_api_key_missing",
+            detail="VOYAGE_API_KEY is not set; Ask's Retrieval is not reranked",
+        )
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
     # connections rather than letting the process drop them.
