@@ -7,6 +7,10 @@ from core.embedding.provider import EmbeddingProvider
 from core.embedding.voyage_provider import VoyageEmbeddingProvider
 from pydantic import ValidationError
 
+_QUERY_TIMEOUT_SECONDS = 5.0
+"""How long the API waits for a Query's embedding before Search falls back to
+keyword (ADR-0015)."""
+
 
 class EmbeddingProviderFactory:
     """Builds the configured `EmbeddingProvider`, behind the circuit breaker."""
@@ -26,12 +30,9 @@ class EmbeddingProviderFactory:
         there is no Voyage API key, which the API tolerates (ADR-0015)."""
         try:
             settings = EmbeddingSettings()
-        except ValidationError as error:
-            # Only a missing key is tolerated; a bad timeout must still fail.
-            if any(e["loc"] != ("VOYAGE_API_KEY",) for e in error.errors()):
-                raise
+        except ValidationError:
             return None
         return CircuitBreakerEmbeddingProvider(
-            VoyageEmbeddingProvider(settings, timeout=settings.query_timeout_seconds),
+            VoyageEmbeddingProvider(settings, timeout=_QUERY_TIMEOUT_SECONDS),
             breaker,
         )
