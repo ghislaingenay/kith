@@ -16,6 +16,7 @@ from auth.exceptions import AuthenticationError, MagicLinkTokenInvalidError
 from core.logging import setup_logger
 from core.mail.exceptions import MailError
 from core.ratelimit.exception_handlers import register_ratelimit_exception_handlers
+from core.rerank.exceptions import RerankConfigurationError
 from core.search.exceptions import SearchUnavailableError
 from core.security.exception_handlers import register_security_exception_handlers
 from core.storage.exceptions import StorageError
@@ -41,6 +42,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(MailError, _handle_mail_error)  # type: ignore[arg-type]
     app.add_exception_handler(
         SearchUnavailableError, _handle_search_unavailable
+    )  # type: ignore[arg-type]
+    app.add_exception_handler(
+        RerankConfigurationError, _handle_rerank_configuration_error
     )  # type: ignore[arg-type]
     app.add_exception_handler(TimeoutError, _handle_db_timeout_error)  # type: ignore[arg-type]
     # Connection/auth failures (e.g. asyncpg's InvalidPasswordError).
@@ -98,6 +102,19 @@ async def _handle_search_unavailable(
         content={
             "error": "search_unavailable",
             "message": "Search is temporarily unavailable",
+        },
+    )
+
+
+async def _handle_rerank_configuration_error(
+    _: Request, exc: RerankConfigurationError
+) -> JSONResponse:
+    logger.error("rerank_configuration_invalid", error=str(exc))
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "internal_error",
+            "message": "The server is misconfigured",
         },
     )
 

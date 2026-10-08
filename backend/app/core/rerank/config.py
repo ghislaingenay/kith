@@ -1,5 +1,6 @@
 """Configuration for Rerank (ADR-0004, ADR-0015)."""
 
+from core.rerank.exceptions import RerankConfigurationError
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -29,5 +30,7 @@ class RerankSettings(BaseSettings):
     @model_validator(mode="after")
     def _fetch_at_least_result_limit(self) -> "RerankSettings":
         if self.fetch_size < self.result_limit:
-            raise ValueError("fetch size must be at least the result limit")
+            raise RerankConfigurationError(
+                "fetch size must be at least the result limit"
+            )
         return self

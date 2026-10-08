@@ -1,5 +1,6 @@
 import pytest
 from core.rerank.config import RerankSettings
+from core.rerank.exceptions import RerankConfigurationError
 from pydantic import ValidationError
 
 _RERANK_VARIABLES = (
@@ -47,7 +48,7 @@ def test_a_fetch_size_below_the_result_limit_is_refused(
     monkeypatch.setenv("RERANK_FETCH_SIZE", "4")
     monkeypatch.setenv("RERANK_RESULT_LIMIT", "5")
 
-    with pytest.raises(ValidationError, match="fetch size"):
+    with pytest.raises(RerankConfigurationError, match="fetch size"):
         RerankSettings()
 
 
