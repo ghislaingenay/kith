@@ -23,6 +23,7 @@ from core.search.exceptions import SearchUnavailableError
 from core.search.factory import SearchIndexFactory
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
+from documents.query_embedding import create_query_embedding_provider
 from documents.config import (
     IngestionSettings,
     PreviewSettings,
@@ -133,7 +134,7 @@ class Container(containers.DeclarativeContainer):
     # and then every Search runs keyword only. `Singleton` does not cache a
     # `None`, which only costs rebuilding the settings on each access.
     query_embedding_provider = providers.Singleton(
-        EmbeddingProviderFactory.create_for_queries,
+        create_query_embedding_provider,
         breaker=embedding_circuit_breaker,
     )
 

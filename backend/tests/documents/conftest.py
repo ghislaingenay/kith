@@ -25,14 +25,13 @@ from core.ratelimit.limiter import Decision, MultiWindowLimiter
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.storage.dependencies import get_storage_provider
-from documents.dependencies import get_db_session
+from documents.dependencies import get_db_session, get_query_embedding_provider
 from main import app
 from core.search.config import SearchSettings
 from core.search.dependencies import get_search_index
 from core.search.opensearch_index import OpenSearchIndex
 from tenants.models import Tenant
 from tenants.permissions import Role
-from core.embedding.dependencies import get_query_embedding_provider
 from tests.support.fake_embedding_provider import FakeEmbeddingProvider
 from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_search_index import FakeSearchIndex

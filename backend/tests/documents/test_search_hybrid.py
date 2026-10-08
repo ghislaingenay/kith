@@ -7,10 +7,10 @@ import uuid
 import pytest
 from core.circuit_breaker.breaker import CircuitBreaker
 from core.embedding.circuit_breaker_provider import CircuitBreakerEmbeddingProvider
-from core.embedding.dependencies import get_query_embedding_provider
 from core.embedding.exceptions import EmbeddingUnavailableError
 from core.embedding.provider import EmbeddingInputType
 from core.search.opensearch_index import OpenSearchIndex
+from documents.dependencies import get_query_embedding_provider
 from documents.models import Document
 from httpx import AsyncClient
 from main import app
