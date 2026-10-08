@@ -21,6 +21,7 @@ from core.retry.handler import RetryHandler
 from core.search.config import SearchSettings
 from core.search.exceptions import SearchUnavailableError
 from core.search.factory import SearchIndexFactory
+from core.search.query_embedding import create_query_embedding_provider
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
 from documents.config import (
@@ -126,6 +127,14 @@ class Container(containers.DeclarativeContainer):
     embedding_provider = providers.Singleton(
         EmbeddingProviderFactory.create,
         settings=embedding_settings,
+        breaker=embedding_circuit_breaker,
+    )
+
+    # The API's provider, with a short timeout; `None` without a Voyage key,
+    # and then every Search runs keyword only. `Singleton` does not cache a
+    # `None`, which only costs rebuilding the settings on each access.
+    query_embedding_provider = providers.Singleton(
+        create_query_embedding_provider,
         breaker=embedding_circuit_breaker,
     )
 

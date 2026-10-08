@@ -10,7 +10,8 @@ from core.container import container
 from core.database import get_session
 from core.jobs.dependencies import get_job_queue
 from core.jobs.provider import JobQueue
-from core.search.dependencies import get_search_index
+from core.embedding.provider import EmbeddingProvider
+from core.search.dependencies import get_query_embedding_provider, get_search_index
 from core.search.provider import SearchIndex
 from core.storage.dependencies import get_storage_provider
 from core.storage.provider import StorageProvider
@@ -80,6 +81,9 @@ def get_deletion_service(
 def get_retrieval_service(
     repository: Annotated[DocumentsRepository, Depends(get_documents_repository)],
     search_index: Annotated[SearchIndex, Depends(get_search_index)],
+    embedding_provider: Annotated[
+        EmbeddingProvider | None, Depends(get_query_embedding_provider)
+    ],
     settings: Annotated[RetrievalSettings, Depends(get_retrieval_settings)],
 ) -> RetrievalService:
-    return RetrievalService(repository, search_index, settings)
+    return RetrievalService(repository, search_index, embedding_provider, settings)

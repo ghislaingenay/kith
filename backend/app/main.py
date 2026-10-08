@@ -9,12 +9,16 @@ from auth.router import router as auth_router
 from core.container import container
 from core.exceptions import register_exception_handlers
 from core.migrations import warn_if_schema_out_of_date
+from core.logging import setup_logger
 from core.search.startup import require_search_index
 from documents.router import library_router
 from documents.router import router as uploads_router
 from documents.router import search_router
 from tenants.router import router as tenants_router
 from users.router import router as users_router
+
+
+logger = setup_logger(__name__)
 
 
 @asynccontextmanager
@@ -30,6 +34,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     container.mailer()
     container.job_queue()
     await require_search_index(container.search_index())
+    if container.query_embedding_provider() is None:
+        logger.warning(
+            "voyage_api_key_missing",
+            detail="VOYAGE_API_KEY is not set; every Search runs keyword only",
+        )
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
     # connections rather than letting the process drop them.

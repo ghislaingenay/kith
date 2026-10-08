@@ -7,6 +7,7 @@ import re
 from core.embedding.provider import VECTOR_DIMENSION
 
 INDEX_ALIAS = "kith-chunks"
+SEARCH_PIPELINE = "kith-rrf"
 MAPPING_VERSION = 2
 
 _TEXT_ANALYZER = "kith_text"
@@ -18,6 +19,18 @@ def versioned_index_name(embedding_model_id: str) -> str:
     # Index names must be lowercase, so anything else becomes a hyphen.
     model_slug = re.sub(r"[^a-z0-9]+", "-", embedding_model_id.lower()).strip("-")
     return f"{INDEX_ALIAS}-{model_slug}-v{MAPPING_VERSION}"
+
+
+def search_pipeline_body() -> dict:
+    """The pipeline that merges the keyword and meaning legs of a hybrid
+    search into one ranking by reciprocal rank fusion (ADR-0015). A Chunk
+    found by one leg is ranked too, so a Chunk without a vector still shows."""
+    return {
+        "description": "Merges keyword and meaning results by reciprocal rank fusion",
+        "phase_results_processors": [
+            {"score-ranker-processor": {"combination": {"technique": "rrf"}}}
+        ],
+    }
 
 
 def index_body() -> dict:

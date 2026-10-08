@@ -28,10 +28,11 @@ from core.storage.dependencies import get_storage_provider
 from documents.dependencies import get_db_session
 from main import app
 from core.search.config import SearchSettings
-from core.search.dependencies import get_search_index
+from core.search.dependencies import get_query_embedding_provider, get_search_index
 from core.search.opensearch_index import OpenSearchIndex
 from tenants.models import Tenant
 from tenants.permissions import Role
+from tests.support.fake_embedding_provider import FakeEmbeddingProvider
 from tests.support.fake_job_queue import FakeJobQueue
 from tests.support.fake_search_index import FakeSearchIndex
 from tests.support.fake_storage import FakeStorageProvider
@@ -120,6 +121,11 @@ def fake_search_index() -> FakeSearchIndex:
 
 
 @pytest.fixture
+def fake_embedding_provider() -> FakeEmbeddingProvider:
+    return FakeEmbeddingProvider()
+
+
+@pytest.fixture
 async def caller(db_session: AsyncSession) -> Caller:
     return Caller(await make_tenant(db_session), await make_user(db_session))
 
@@ -130,6 +136,7 @@ async def client(
     storage: FakeStorageProvider,
     job_queue: FakeJobQueue,
     fake_search_index: FakeSearchIndex,
+    fake_embedding_provider: FakeEmbeddingProvider,
     caller: Caller,
 ) -> AsyncIterator[AsyncClient]:
     async def _db_session() -> AsyncIterator[AsyncSession]:
@@ -139,6 +146,9 @@ async def client(
     app.dependency_overrides[get_storage_provider] = lambda: storage
     app.dependency_overrides[get_job_queue] = lambda: job_queue
     app.dependency_overrides[get_search_index] = lambda: fake_search_index
+    app.dependency_overrides[get_query_embedding_provider] = (
+        lambda: fake_embedding_provider
+    )
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
         id=caller.user_id,
         email="jane@example.com",

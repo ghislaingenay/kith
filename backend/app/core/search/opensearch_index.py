@@ -10,10 +10,16 @@ from core.search.exceptions import (
     SearchError,
     SearchUnavailableError,
 )
-from core.search.mapping import INDEX_ALIAS, index_body, versioned_index_name
+from core.search.mapping import (
+    INDEX_ALIAS,
+    SEARCH_PIPELINE,
+    index_body,
+    search_pipeline_body,
+    versioned_index_name,
+)
 from core.search.provider import ChunkDocument, ChunkHit, SearchIndex
 from opensearchpy import AsyncOpenSearch, helpers
-from opensearchpy.exceptions import OpenSearchException, RequestError
+from opensearchpy.exceptions import NotFoundError, OpenSearchException, RequestError
 
 
 _MINIMUM_WORDS_MATCHED = "70%"
@@ -70,14 +76,19 @@ class OpenSearchIndex(SearchIndex):
         return INDEX_ALIAS
 
     async def ensure_index(self) -> None:
-        if await self.alias_exists():
-            return
-        try:
-            await self._client.indices.create(index=self._index_name, body=index_body())
-        except RequestError as error:
-            # A concurrent run created it between the check and the create.
-            if error.error != ALREADY_EXISTS_ERROR:
-                raise
+        if not await self.alias_exists():
+            try:
+                await self._client.indices.create(
+                    index=self._index_name, body=index_body()
+                )
+            except RequestError as error:
+                # A concurrent run created it between the check and the create.
+                if error.error != ALREADY_EXISTS_ERROR:
+                    raise
+        # Putting a pipeline replaces it, so this also brings it up to date.
+        await self._client.transport.perform_request(
+            "PUT", f"/_search/pipeline/{SEARCH_PIPELINE}", body=search_pipeline_body()
+        )
 
     async def recreate_index(self) -> None:
         with _store_errors("Deleting the index"):
@@ -93,6 +104,15 @@ class OpenSearchIndex(SearchIndex):
 
     async def alias_exists(self) -> bool:
         return await self._client.indices.exists_alias(name=INDEX_ALIAS)
+
+    async def search_pipeline_exists(self) -> bool:
+        try:
+            await self._client.transport.perform_request(
+                "GET", f"/_search/pipeline/{SEARCH_PIPELINE}"
+            )
+        except NotFoundError:
+            return False
+        return True
 
     async def delete_document_chunks(
         self, *, tenant_id: uuid.UUID, document_id: uuid.UUID
@@ -205,34 +225,58 @@ class OpenSearchIndex(SearchIndex):
         query_vector: Sequence[float] | None = None,
         size: int,
     ) -> list[ChunkHit]:
-        if query_vector is not None:
-            raise NotImplementedError("The meaning leg of Retrieval is not built yet.")
+        tenant_filter = {"term": {"tenant_id": str(tenant_id)}}
+        # A Chunk with no flag is not deleted.
+        deleted_chunk = {"term": {"deleted": True}}
+        # Most of the words must match, in any order...
+        words_match = {
+            "match": {
+                "text": {
+                    "query": query,
+                    "minimum_should_match": _MINIMUM_WORDS_MATCHED,
+                }
+            }
+        }
+        keyword_leg = {
+            "bool": {
+                "must": [words_match],
+                # ...and the exact phrase ranks higher.
+                "should": [{"match_phrase": {"text": query}}],
+                "filter": [tenant_filter],
+                "must_not": [deleted_chunk],
+            }
+        }
+        params: dict[str, str] = {}
+        if query_vector is None:
+            search_query = keyword_leg
+        else:
+            # The filter sits inside the `knn` clause so the engine applies it
+            # while searching; a `bool.filter` around it would drop hits after
+            # the top k and return fewer than asked for (ADR-0015).
+            meaning_leg = {
+                "knn": {
+                    "embedding": {
+                        "vector": list(query_vector),
+                        "k": size,
+                        "filter": {
+                            "bool": {
+                                "filter": [tenant_filter],
+                                "must_not": [deleted_chunk],
+                            }
+                        },
+                    }
+                }
+            }
+            search_query = {"hybrid": {"queries": [keyword_leg, meaning_leg]}}
+            params["search_pipeline"] = SEARCH_PIPELINE
         with _store_errors("Searching Chunks"):
             response = await self._client.search(
                 index=INDEX_ALIAS,
                 routing=str(tenant_id),
+                params=params,
                 body={
                     "size": size,
-                    "query": {
-                        "bool": {
-                            # Most of the words must match, in any order...
-                            "must": [
-                                {
-                                    "match": {
-                                        "text": {
-                                            "query": query,
-                                            "minimum_should_match": _MINIMUM_WORDS_MATCHED,
-                                        }
-                                    }
-                                }
-                            ],
-                            # ...and the exact phrase ranks higher.
-                            "should": [{"match_phrase": {"text": query}}],
-                            "filter": [{"term": {"tenant_id": str(tenant_id)}}],
-                            # A Chunk with no flag is not deleted.
-                            "must_not": [{"term": {"deleted": True}}],
-                        }
-                    },
+                    "query": search_query,
                     "highlight": {
                         "fields": {"text": {}},
                         "pre_tags": [_HIGHLIGHT_OPEN],
@@ -240,6 +284,9 @@ class OpenSearchIndex(SearchIndex):
                         # Escapes the Chunk's own markup, so the only tags in
                         # a fragment are the match markers.
                         "encoder": "html",
+                        # Marks words by the keyword leg alone, so a Chunk found
+                        # only by meaning gets no fragments.
+                        "highlight_query": words_match,
                     },
                 },
             )
