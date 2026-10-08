@@ -52,6 +52,24 @@ function mockSearch(results = [apiResult()], degraded = false) {
   return seen;
 }
 
+function mockLibrary(
+  documents: object[] = [
+    {
+      id: "d1",
+      name: "report.pdf",
+      size_bytes: 1024,
+      uploader: "alice",
+      created_at: "2024-01-01T00:00:00Z",
+      ingestion_status: "ready",
+      ingestion_stage: null,
+      pages_extracted: null,
+      page_count: 1,
+    },
+  ],
+) {
+  server.use(http.get(`${API_URL}/documents`, () => HttpResponse.json(documents)));
+}
+
 function renderPanel(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   render(
     <QueryClientProvider client={client}>
@@ -62,28 +80,52 @@ function renderPanel(client = new QueryClient({ defaultOptions: { queries: { ret
 }
 
 beforeEach(() => {
+  mockLibrary();
   navigation.url = "";
   navigation.push.mockReset();
 });
 
 describe("SearchPanel", () => {
-  it("shows the placeholder and no Ask AI button or chips", () => {
+  it("shows the placeholder and a Search button, no Ask AI button or chips", async () => {
     renderPanel();
-    expect(screen.getByPlaceholderText("Search documents…")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Search documents…")).toBeInTheDocument();
     expect(screen.queryByText(/ask ai/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Search"]);
+  });
+
+  it("runs the Search only when the Search button is clicked", async () => {
+    renderPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "cat food");
+    expect(navigation.push).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(navigation.push).toHaveBeenCalledWith("/w/acme?q=cat+food&type=search");
+  });
+
+  it("hides the search box and points to the uploads when there are no Documents", async () => {
+    mockLibrary([]);
+    navigation.url = "q=cat&type=search";
+    const seen = mockSearch();
+    renderPanel();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("No documents available");
+    expect(screen.getByRole("link", { name: "Go to uploads" })).toHaveAttribute(
+      "href",
+      "/w/acme/uploads",
+    );
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(seen.queries).toEqual([]);
   });
 
   it("puts the Query in the URL on Enter", async () => {
     renderPanel();
-    await userEvent.type(screen.getByRole("searchbox"), "cat food{Enter}");
+    await userEvent.type(await screen.findByRole("searchbox"), "cat food{Enter}");
     expect(navigation.push).toHaveBeenCalledWith("/w/acme?q=cat+food&type=search");
   });
 
   it("does nothing for an empty or whitespace Query", async () => {
     const seen = mockSearch();
     renderPanel();
-    await userEvent.type(screen.getByRole("searchbox"), "   {Enter}");
+    await userEvent.type(await screen.findByRole("searchbox"), "   {Enter}");
     expect(navigation.push).not.toHaveBeenCalled();
     expect(seen.queries).toEqual([]);
   });
@@ -93,8 +135,8 @@ describe("SearchPanel", () => {
     const seen = mockSearch();
     renderPanel();
 
-    expect(screen.getByRole("searchbox")).toHaveValue("cat");
     expect(await screen.findByText("report.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("searchbox")).toHaveValue("cat");
     expect(seen.queries).toEqual(["cat"]);
     expect(seen.tenantIds).toEqual([TENANT_ID]);
   });
