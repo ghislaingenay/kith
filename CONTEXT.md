@@ -132,7 +132,8 @@ A Query for which the User requested an Answer. Asks are counted in Usage.
 _Avoid_: Question, chat, prompt
 
 **Rerank**:
-Re-scoring the Chunks found by Retrieval with a second, more precise model before they are shown or cited.
+Re-scoring the Chunks found by Retrieval for an Ask with a second, more precise model, and keeping only the best of them before they are cited. A Search is never reranked: it shows Retrieval's order. If Rerank cannot be done, the Ask goes on with Retrieval's order.
+_Avoid_: Re-ranking, re-sorting, scoring (scoring is what Retrieval already does)
 
 **Feedback**:
 A thumbs-up or thumbs-down a User leaves on an Answer.
@@ -149,7 +150,7 @@ _Avoid_: Activity log, history, event log
 ### Limits
 
 **Usage**:
-What a Tenant has consumed in a period: Documents, storage bytes, Asks, and the language-model tokens spent writing Answers. Tokens spent embedding Chunks are not Usage; the Document and page Limits already bound them.
+What a Tenant has consumed in a period: Documents, storage bytes, Asks, and the language-model tokens spent writing Answers. Tokens spent embedding Chunks are not Usage; the Document and page Limits already bound them. Tokens spent on Rerank are not Usage either; the Ask they serve is already counted.
 _Avoid_: Consumption, metering (metering is the act of recording Usage)
 
 **Limit**:

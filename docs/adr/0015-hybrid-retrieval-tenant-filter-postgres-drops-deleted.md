@@ -25,3 +25,5 @@ Search and Ask share one Retrieval: a keyword (BM25) leg and a meaning (kNN on t
 - Deleting sets the flag with an update by query, which a concurrent embedding write to the same Chunk can make fail with a version conflict. That is logged, and Postgres still hides the Chunks; the purge job removes them.
 - A Chunk indexed before the flag existed has none, which reads as not deleted.
 - No rerank yet: RRF order is final until the reranker arrives with Ask (ADR-0004 amendment).
+
+> Amended 2026-10-08. Rerank exists now, for Ask only: Ask's Retrieval fetches `RERANK_FETCH_SIZE` (50) hits, drops deleted Documents in Postgres as above, reranks the rest with `rerank-3` (ADR-0004 amendment) and keeps the top `RERANK_RESULT_LIMIT` (5). When Rerank is switched off (`RERANK_ENABLED`), has no Voyage key, fails, times out (5 s) or has its `rerank` circuit breaker open, Ask keeps the top 5 in RRF order and a warning is logged; the result is not marked degraded, because unreranked Chunks are still good ones. Ask therefore always gets the same number of Chunks, only their order differs. Search is unchanged: it is never reranked and RRF order stays final for it.
