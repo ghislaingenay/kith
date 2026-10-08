@@ -1,9 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useHasDocuments } from "@/features/uploads";
 
 import { useSearch } from "../api/use_search";
 import { SearchResults } from "./search_results";
@@ -12,6 +16,26 @@ import { SearchResults } from "./search_results";
  * the Query, so refresh, Back and shared links all rerun the same Search. */
 export function SearchPanel({ tenantId }: { readonly tenantId: string }) {
   const params = useSearchParams();
+  const pathname = usePathname();
+  const { hasDocuments, isError } = useHasDocuments(tenantId);
+
+  // If the library check itself fails, show the box anyway and let the Search
+  // report its own errors.
+  if (hasDocuments === undefined && !isError) return null;
+  if (hasDocuments === false) {
+    return (
+      <Alert className="w-full max-w-2xl">
+        <AlertTitle>No documents available</AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p>Upload a document to start searching.</p>
+          <Button asChild>
+            <Link href={`${pathname}/uploads`}>Go to uploads</Link>
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   const activeQuery =
     params.get("type") === "search" ? (params.get("q") ?? "").trim() : "";
 
@@ -35,11 +59,13 @@ function SearchBox({ initialQuery }: { readonly initialQuery: string }) {
     event.preventDefault();
     const query = value.trim();
     if (query === "") return;
-    router.push(`${pathname}?${new URLSearchParams({ q: query, type: "search" })}`);
+    router.push(
+      `${pathname}?${new URLSearchParams({ q: query, type: "search" })}`,
+    );
   };
 
   return (
-    <form role="search" onSubmit={submit}>
+    <form role="search" onSubmit={submit} className="flex gap-2">
       <Input
         type="search"
         aria-label="Search documents"
@@ -47,6 +73,8 @@ function SearchBox({ initialQuery }: { readonly initialQuery: string }) {
         value={value}
         onChange={(event) => setValue(event.target.value)}
       />
+      {/* The Query is embedded for each Search, so it runs on submit only. */}
+      <Button type="submit">Search</Button>
     </form>
   );
 }
