@@ -1,4 +1,4 @@
-"""The embedding provider Retrieval embeds a Query with (ADR-0015)."""
+"""The embedding provider Search embeds a Query with (ADR-0015)."""
 
 from core.circuit_breaker.breaker import CircuitBreaker
 from core.embedding.config import EmbeddingSettings

@@ -21,9 +21,9 @@ from core.retry.handler import RetryHandler
 from core.search.config import SearchSettings
 from core.search.exceptions import SearchUnavailableError
 from core.search.factory import SearchIndexFactory
+from core.search.query_embedding import create_query_embedding_provider
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
-from documents.query_embedding import create_query_embedding_provider
 from documents.config import (
     IngestionSettings,
     PreviewSettings,

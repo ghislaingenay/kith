@@ -1,7 +1,7 @@
 import pytest
 from core.circuit_breaker.breaker import CircuitBreaker
 from core.embedding.circuit_breaker_provider import CircuitBreakerEmbeddingProvider
-from documents.query_embedding import create_query_embedding_provider
+from core.search.query_embedding import create_query_embedding_provider
 
 
 def _breaker() -> CircuitBreaker:
