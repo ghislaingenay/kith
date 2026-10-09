@@ -17,6 +17,7 @@ from core.mail.config import MailSettings
 from core.mail.factory import MailerFactory
 from core.ratelimit.factory import RateLimiterFactory
 from core.rerank.config import RerankSettings
+from core.rerank.exceptions import RerankUnavailableError
 from core.rerank.factory import create_reranker
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
@@ -142,8 +143,21 @@ class Container(containers.DeclarativeContainer):
 
     rerank_settings = providers.Singleton(RerankSettings)
 
+    # Its own breaker, so a reranker outage never stops Search or embedding
+    # (ADR-0015). Only an unavailable reranker counts; a request it rejects
+    # does not.
+    rerank_circuit_breaker = providers.Singleton(
+        CircuitBreaker,
+        name="rerank",
+        failure_threshold=circuit_breaker_settings.provided.failure_threshold,
+        reset_timeout_seconds=circuit_breaker_settings.provided.reset_timeout_seconds,
+        failure_types=(RerankUnavailableError,),
+    )
+
     # `None` when Rerank is switched off or there is no Voyage key.
-    reranker = providers.Singleton(create_reranker, settings=rerank_settings)
+    reranker = providers.Singleton(
+        create_reranker, settings=rerank_settings, breaker=rerank_circuit_breaker
+    )
 
     upload_settings = providers.Singleton(UploadSettings)
 

@@ -8,7 +8,8 @@ from core.embedding.exceptions import EmbeddingError
 from core.embedding.provider import EmbeddingInputType, EmbeddingProvider
 from core.logging import setup_logger
 from core.rerank.config import RerankSettings
-from core.rerank.provider import Reranker
+from core.rerank.exceptions import RerankError
+from core.rerank.provider import Reranker, RerankResult
 from core.search.exceptions import SearchUnavailableError
 from core.search.provider import SearchIndex
 from documents.config import RetrievalSettings
@@ -95,9 +96,9 @@ class RetrievalService:
         self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, query: str
     ) -> AskRetrieval:
         """Like `search`, from more candidates, which the reranker narrows to
-        the few an Ask cites. Without a reranker (switched off, or no Voyage
-        key) the top ones are kept in Retrieval's order, unscored. The Query
-        text is never logged, and Rerank tokens are not Usage."""
+        the few an Ask cites. Without a reranker (switched off, no Voyage key,
+        or it failing) the top ones are kept in Retrieval's order, unscored.
+        The Query text is never logged, and Rerank tokens are not Usage."""
         query = _clean_query(query)
         query_vector = await self._embed_query(query)
         degraded = query_vector is None
@@ -108,15 +109,12 @@ class RetrievalService:
             size=self.rerank_settings.fetch_size,
         )
         limit = self.rerank_settings.result_limit
-        rerank_tokens = 0
-        is_reranked = False
-        if self.reranker is None or not candidates:
+        reranked = await self._rerank(query, candidates)
+        is_reranked = reranked is not None
+        if reranked is None:
+            rerank_tokens = 0
             chunks = [RetrievedChunk(result, None) for result in candidates[:limit]]
         else:
-            is_reranked = True
-            reranked = await self.reranker.rerank(
-                query, [candidate.text for candidate in candidates]
-            )
             rerank_tokens = reranked.tokens_used
             chunks = [
                 RetrievedChunk(candidates[ranked.index], ranked.relevance_score)
@@ -180,6 +178,23 @@ class RetrievalService:
             for hit in hits
             if (document := documents.get(hit.document_id))
         ]
+
+    async def _rerank(
+        self, query: str, candidates: list[SearchResultResponse]
+    ) -> RerankResult | None:
+        """The reranker's ranking of the candidates, or `None` when there is
+        none to have: no reranker, no candidates, or the reranker failing,
+        slow, or its circuit breaker open (ADR-0015). A failure is a warning,
+        not an error: Retrieval's order is still a good one."""
+        if self.reranker is None or not candidates:
+            return None
+        try:
+            return await self.reranker.rerank(
+                query, [candidate.text for candidate in candidates]
+            )
+        except (RerankError, CircuitOpenError) as error:
+            logger.warning("rerank_failed", error=str(error))
+            return None
 
     async def _embed_query(self, query: str) -> list[float] | None:
         """The Query's vector, or `None` when it cannot be had: no provider,

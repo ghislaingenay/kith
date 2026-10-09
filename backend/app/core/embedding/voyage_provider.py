@@ -25,7 +25,9 @@ _UNAVAILABLE_ERRORS = (
 )
 
 
-def _is_unavailable(error: voyage_error.VoyageError) -> bool:
+def is_voyage_unavailable(error: voyage_error.VoyageError) -> bool:
+    """Down, slow or overloaded, as opposed to a request Voyage rejects. Shared
+    with the Voyage reranker."""
     if isinstance(error, _UNAVAILABLE_ERRORS):
         return True
     return isinstance(error, voyage_error.APIError) and (error.http_status or 0) >= 500
@@ -62,7 +64,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                 output_dimension=VECTOR_DIMENSION,
             )
         except voyage_error.VoyageError as error:
-            if _is_unavailable(error):
+            if is_voyage_unavailable(error):
                 raise EmbeddingUnavailableError(f"Embedding failed: {error}") from error
             raise EmbeddingError(f"Embedding was rejected: {error}") from error
         return EmbeddingResult(
