@@ -694,3 +694,18 @@ class TestActivatePendingMemberships:
         )
 
         assert memberships == []
+
+
+class TestGetTenantIdBySlug:
+    async def test_finds_the_tenant_with_that_slug(
+        self, repository: TenantsRepository, db_session: AsyncSession
+    ) -> None:
+        tenant = await _make_tenant(db_session)
+        await _make_tenant(db_session, name="Other")
+
+        assert await repository.get_tenant_id_by_slug(tenant.slug) == tenant.id
+
+    async def test_none_for_an_unknown_slug(
+        self, repository: TenantsRepository
+    ) -> None:
+        assert await repository.get_tenant_id_by_slug("no-such-tenant") is None

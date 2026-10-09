@@ -42,6 +42,7 @@ def _service(
     *,
     fetch_size: int = 50,
     result_limit: int = 5,
+    enabled: bool = True,
 ) -> RetrievalService:
     return RetrievalService(
         DocumentsRepository(db_session),
@@ -49,7 +50,9 @@ def _service(
         embedding_provider,
         RetrievalSettings(),
         reranker,
-        RerankSettings(fetch_size=fetch_size, result_limit=result_limit),
+        RerankSettings(
+            enabled=enabled, fetch_size=fetch_size, result_limit=result_limit
+        ),
     )
 
 
@@ -63,10 +66,14 @@ async def _index_payment_chunks(
 
 
 async def _retrieve(
-    service: RetrievalService, caller: Caller, query: str = QUERY
+    service: RetrievalService,
+    caller: Caller,
+    query: str = QUERY,
+    *,
+    rerank: bool | None = None,
 ) -> AskRetrieval:
     return await service.retrieve_for_ask(
-        tenant_id=caller.tenant_id, user_id=caller.user_id, query=query
+        tenant_id=caller.tenant_id, user_id=caller.user_id, query=query, rerank=rerank
     )
 
 
@@ -204,6 +211,104 @@ async def test_without_a_reranker_the_top_chunks_keep_retrievals_order_unscored(
     assert retrieval.degraded is False
     assert [chunk.result for chunk in retrieval.chunks] == search_response.results[:3]
     assert [chunk.rerank_score for chunk in retrieval.chunks] == [None] * 3
+
+
+async def test_switched_off_rerank_keeps_retrievals_order_without_calling_the_reranker(
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_embedding_provider: FakeEmbeddingProvider,
+    fake_reranker: FakeReranker,
+) -> None:
+    document = await _seed_document(db_session, tenant_id=caller.tenant_id)
+    texts = await _index_payment_chunks(search_index, document, 4)
+    fake_reranker.scores = {texts[3]: 0.9}
+    unreranked = await _retrieve(
+        _service(
+            db_session, search_index, fake_embedding_provider, None, result_limit=2
+        ),
+        caller,
+    )
+
+    retrieval = await _retrieve(
+        _service(
+            db_session,
+            search_index,
+            fake_embedding_provider,
+            fake_reranker,
+            result_limit=2,
+            enabled=False,
+        ),
+        caller,
+    )
+
+    assert retrieval.is_reranked is False
+    assert retrieval.chunks == unreranked.chunks
+    assert fake_reranker.requests == []
+
+
+async def test_forcing_rerank_on_beats_it_being_switched_off(
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_embedding_provider: FakeEmbeddingProvider,
+    fake_reranker: FakeReranker,
+) -> None:
+    document = await _seed_document(db_session, tenant_id=caller.tenant_id)
+    texts = await _index_payment_chunks(search_index, document, 4)
+    fake_reranker.scores = {texts[2]: 0.8}
+    service = _service(
+        db_session, search_index, fake_embedding_provider, fake_reranker, enabled=False
+    )
+
+    retrieval = await _retrieve(service, caller, rerank=True)
+
+    assert retrieval.is_reranked is True
+    assert retrieval.rerank_tokens == fake_reranker.tokens_used
+    assert (retrieval.chunks[0].result.text, retrieval.chunks[0].rerank_score) == (
+        texts[2],
+        0.8,
+    )
+
+
+async def test_forcing_rerank_off_beats_it_being_switched_on(
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_embedding_provider: FakeEmbeddingProvider,
+    fake_reranker: FakeReranker,
+) -> None:
+    document = await _seed_document(db_session, tenant_id=caller.tenant_id)
+    await _index_payment_chunks(search_index, document, 4)
+    unreranked = await _retrieve(
+        _service(db_session, search_index, fake_embedding_provider, None), caller
+    )
+    service = _service(
+        db_session, search_index, fake_embedding_provider, fake_reranker, enabled=True
+    )
+
+    retrieval = await _retrieve(service, caller, rerank=False)
+
+    assert retrieval.is_reranked is False
+    assert retrieval.rerank_tokens == 0
+    assert retrieval.chunks == unreranked.chunks
+    assert fake_reranker.requests == []
+
+
+async def test_forcing_rerank_on_without_a_reranker_falls_back(
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_embedding_provider: FakeEmbeddingProvider,
+) -> None:
+    document = await _seed_document(db_session, tenant_id=caller.tenant_id)
+    texts = await _index_payment_chunks(search_index, document, 3)
+    service = _service(db_session, search_index, fake_embedding_provider, None)
+
+    retrieval = await _retrieve(service, caller, rerank=True)
+
+    assert retrieval.is_reranked is False
+    assert sorted(chunk.result.text for chunk in retrieval.chunks) == texts
 
 
 async def test_the_reranker_is_not_called_when_nothing_is_found(

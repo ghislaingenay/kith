@@ -67,6 +67,10 @@ class TenantsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def get_tenant_id_by_slug(self, slug: str) -> uuid.UUID | None:
+        result = await self.session.execute(select(Tenant.id).where(Tenant.slug == slug))
+        return result.scalar_one_or_none()
+
     async def get_active_membership(
         self, *, user_id: uuid.UUID, tenant_id: uuid.UUID
     ) -> TenantMembership | None:
