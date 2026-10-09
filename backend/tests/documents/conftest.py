@@ -22,6 +22,7 @@ from auth.schemas import AuthenticatedUser, TenantContext
 from core.jobs.dependencies import get_job_queue
 from core.ratelimit.dependencies import get_rate_limiter
 from core.ratelimit.limiter import Decision, MultiWindowLimiter
+from core.rerank.dependencies import get_reranker
 from core.retry.config import RetrySettings
 from core.retry.handler import RetryHandler
 from core.storage.dependencies import get_storage_provider
@@ -34,6 +35,7 @@ from tenants.models import Tenant
 from tenants.permissions import Role
 from tests.support.fake_embedding_provider import FakeEmbeddingProvider
 from tests.support.fake_job_queue import FakeJobQueue
+from tests.support.fake_reranker import FakeReranker
 from tests.support.fake_search_index import FakeSearchIndex
 from tests.support.fake_storage import FakeStorageProvider
 from users.models import User
@@ -126,6 +128,11 @@ def fake_embedding_provider() -> FakeEmbeddingProvider:
 
 
 @pytest.fixture
+def fake_reranker() -> FakeReranker:
+    return FakeReranker()
+
+
+@pytest.fixture
 async def caller(db_session: AsyncSession) -> Caller:
     return Caller(await make_tenant(db_session), await make_user(db_session))
 
@@ -137,6 +144,7 @@ async def client(
     job_queue: FakeJobQueue,
     fake_search_index: FakeSearchIndex,
     fake_embedding_provider: FakeEmbeddingProvider,
+    fake_reranker: FakeReranker,
     caller: Caller,
 ) -> AsyncIterator[AsyncClient]:
     async def _db_session() -> AsyncIterator[AsyncSession]:
@@ -149,6 +157,7 @@ async def client(
     app.dependency_overrides[get_query_embedding_provider] = (
         lambda: fake_embedding_provider
     )
+    app.dependency_overrides[get_reranker] = lambda: fake_reranker
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
         id=caller.user_id,
         email="jane@example.com",

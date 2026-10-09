@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tenants.permissions import Role
 
 from tests.documents.conftest import Caller, make_tenant
+from tests.support.fake_reranker import FakeReranker
 from tests.support.fake_search_index import FakeSearchIndex
 
 SEARCH_URL = "/api/v1/search"
@@ -352,6 +353,22 @@ async def test_a_user_is_limited_to_60_searches_a_minute(
     await redis_client.aclose()
 
     assert statuses == [200] * 60 + [429]
+
+
+async def test_search_never_calls_the_reranker(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: SearchIndex,
+    fake_reranker: FakeReranker,
+) -> None:
+    document = await _seed_document(db_session, tenant_id=caller.tenant_id)
+    await _index_chunk(search_index, document, "The termination clause.")
+
+    response = await _search(client, "termination")
+
+    assert len(response.json()["results"]) == 1
+    assert fake_reranker.requests == []
 
 
 async def test_the_query_text_is_never_logged(

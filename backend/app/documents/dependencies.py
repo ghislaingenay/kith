@@ -11,6 +11,9 @@ from core.database import get_session
 from core.jobs.dependencies import get_job_queue
 from core.jobs.provider import JobQueue
 from core.embedding.provider import EmbeddingProvider
+from core.rerank.config import RerankSettings
+from core.rerank.dependencies import get_rerank_settings, get_reranker
+from core.rerank.provider import Reranker
 from core.search.dependencies import get_query_embedding_provider, get_search_index
 from core.search.provider import SearchIndex
 from core.storage.dependencies import get_storage_provider
@@ -85,5 +88,14 @@ def get_retrieval_service(
         EmbeddingProvider | None, Depends(get_query_embedding_provider)
     ],
     settings: Annotated[RetrievalSettings, Depends(get_retrieval_settings)],
+    reranker: Annotated[Reranker | None, Depends(get_reranker)],
+    rerank_settings: Annotated[RerankSettings, Depends(get_rerank_settings)],
 ) -> RetrievalService:
-    return RetrievalService(repository, search_index, embedding_provider, settings)
+    return RetrievalService(
+        repository,
+        search_index,
+        embedding_provider,
+        settings,
+        reranker,
+        rerank_settings,
+    )
