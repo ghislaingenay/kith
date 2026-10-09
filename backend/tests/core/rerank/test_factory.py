@@ -14,12 +14,15 @@ def _breaker() -> CircuitBreaker:
     )
 
 
-def test_no_reranker_when_rerank_is_switched_off(
+def test_a_reranker_even_when_rerank_is_switched_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Ask's Retrieval decides, and `make retrieve` can force Rerank on.
     monkeypatch.setenv("VOYAGE_API_KEY", "test-key")
 
-    assert create_reranker(RerankSettings(enabled=False), _breaker()) is None
+    reranker = create_reranker(RerankSettings(enabled=False), _breaker())
+
+    assert isinstance(reranker, CircuitBreakerReranker)
 
 
 def test_no_reranker_without_an_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

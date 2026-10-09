@@ -10,5 +10,6 @@ def get_rerank_settings() -> RerankSettings:
 
 
 def get_reranker() -> Reranker | None:
-    """`None` when Rerank is switched off or there is no Voyage API key."""
+    """`None` when there is no Voyage API key; built even when Rerank is
+    switched off, since Ask's Retrieval decides whether to use it."""
     return container.reranker()

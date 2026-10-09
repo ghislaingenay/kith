@@ -110,3 +110,14 @@ make embed-documents document=<document-uuid>
 ```
 
 The command only adds `embed_document` jobs (`embed:{document_id}`) for Documents that are `processing` at `embedding` or `partial`, in every Tenant (a `failed`, `ready` or deleted Document is not queued; a `partial` Document whose indexed Chunks all have vectors already is queued and the job embeds nothing); with `document=` it adds the job for that Document only, if it is waiting. It never calls the embedding provider: the ingest worker does the embedding, under its retries and circuit breaker (ADR-0014). Running it again is safe: a Document whose job is already queued or running is not queued again, and a job only embeds Chunks that still wait for a vector. The worker (`worker-ingest`) must be running for the jobs to be picked up.
+
+## See what Ask would cite
+
+Ask's Retrieval fetches `RERANK_FETCH_SIZE` (50) candidate Chunks, drops those of deleted Documents and keeps the best `RERANK_RESULT_LIMIT` (5), reranked by Voyage when Rerank applies (ADR-0015). To see what it returns for a Query in one Tenant before Ask exists:
+
+```sh
+make retrieve q="payment terms" tenant=<tenant-slug> rerank=true
+make retrieve q="payment terms" tenant=<tenant-slug> rerank=false
+```
+
+`rerank=` forces Rerank on or off whatever `RERANK_ENABLED` says, and both start from the same candidates, so the two orders can be compared. Each Chunk is printed with its rank, Rerank score (blank when not reranked), Document name, page and the first 150 characters of its text, followed by the Rerank tokens used. With `rerank=true`, a missing `VOYAGE_API_KEY`, a failing or slow reranker, or an open `rerank` breaker falls back to Retrieval's order, and the command says so. It runs against the real search store and Voyage, and the Rerank tokens are billed.

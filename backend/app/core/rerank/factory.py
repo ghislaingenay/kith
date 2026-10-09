@@ -16,11 +16,11 @@ from pydantic import ValidationError
 def create_reranker(
     settings: RerankSettings, breaker: CircuitBreaker
 ) -> Reranker | None:
-    """`None` when Rerank is switched off or there is no Voyage API key; Ask's
-    Retrieval then keeps Retrieval's order. The time limit sits inside the
-    breaker, so a slow reranker counts as a down one."""
-    if not settings.enabled:
-        return None
+    """`None` when there is no Voyage API key; Ask's Retrieval then keeps
+    Retrieval's order. Built even when Rerank is switched off, since Ask's
+    Retrieval decides whether to use it and can be told to rerank anyway
+    (`make retrieve`). The time limit sits inside the breaker, so a slow
+    reranker counts as a down one."""
     try:
         api_key = EmbeddingSettings().voyage_api_key
     except ValidationError:

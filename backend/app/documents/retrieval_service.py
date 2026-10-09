@@ -36,6 +36,8 @@ class AskRetrieval:
     degraded: bool
     """Retrieval fell back to keyword alone (ADR-0015)."""
     is_reranked: bool
+    rerank_tokens: int
+    """Tokens the reranker used; 0 when not reranked. Not Usage."""
 
 
 def _clean_query(query: str) -> str:
@@ -93,12 +95,20 @@ class RetrievalService:
         return SearchResponse(degraded=degraded, results=results)
 
     async def retrieve_for_ask(
-        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, query: str
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID | None,
+        query: str,
+        rerank: bool | None = None,
     ) -> AskRetrieval:
         """Like `search`, from more candidates, which the reranker narrows to
         the few an Ask cites. Without a reranker (switched off, no Voyage key,
         or it failing) the top ones are kept in Retrieval's order, unscored.
-        The Query text is never logged, and Rerank tokens are not Usage."""
+        `rerank` forces Rerank on or off over `RERANK_ENABLED`, from the same
+        candidates either way. `user_id` is `None` outside a request (`make
+        retrieve`). The Query text is never logged, and Rerank tokens are not
+        Usage."""
         query = _clean_query(query)
         query_vector = await self._embed_query(query)
         degraded = query_vector is None
@@ -109,7 +119,8 @@ class RetrievalService:
             size=self.rerank_settings.fetch_size,
         )
         limit = self.rerank_settings.result_limit
-        reranked = await self._rerank(query, candidates)
+        is_rerank_on = self.rerank_settings.enabled if rerank is None else rerank
+        reranked = await self._rerank(query, candidates) if is_rerank_on else None
         is_reranked = reranked is not None
         if reranked is None:
             rerank_tokens = 0
@@ -123,7 +134,7 @@ class RetrievalService:
         logger.info(
             "ask_retrieval_completed",
             tenant_id=str(tenant_id),
-            user_id=str(user_id),
+            user_id=str(user_id) if user_id else None,
             result_count=len(chunks),
             is_reranked=is_reranked,
             rerank_model=self.rerank_settings.model,
@@ -136,7 +147,12 @@ class RetrievalService:
                 tenant_id=str(tenant_id),
                 rerank_scores=[chunk.rerank_score for chunk in chunks],
             )
-        return AskRetrieval(chunks=chunks, degraded=degraded, is_reranked=is_reranked)
+        return AskRetrieval(
+            chunks=chunks,
+            degraded=degraded,
+            is_reranked=is_reranked,
+            rerank_tokens=rerank_tokens,
+        )
 
     async def _find_live_chunks(
         self,

@@ -154,7 +154,7 @@ class Container(containers.DeclarativeContainer):
         failure_types=(RerankUnavailableError,),
     )
 
-    # `None` when Rerank is switched off or there is no Voyage key.
+    # `None` when there is no Voyage key; built even when Rerank is switched off.
     reranker = providers.Singleton(
         create_reranker, settings=rerank_settings, breaker=rerank_circuit_breaker
     )
