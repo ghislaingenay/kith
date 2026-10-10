@@ -128,7 +128,7 @@ A reference from an Answer to the Chunk that supports a claim.
 _Avoid_: Source, reference
 
 **Ask**:
-A Query for which the User requested an Answer. Asks are counted in Usage.
+A Query for which the User requested an Answer. Each Ask is kept as a record (its Query, User, Answer and cited Chunks) and is paid for from its Tenant's Credit Balance by an Ask Charge, whoever in the Tenant made it. An Ask stands alone: its Answer is written from its own Retrieval only, never from earlier Asks.
 _Avoid_: Question, chat, prompt
 
 **Rerank**:
@@ -150,12 +150,32 @@ _Avoid_: Activity log, history, event log
 ### Limits
 
 **Usage**:
-What a Tenant has consumed in a period: Documents, storage bytes, Asks, and the language-model tokens spent writing Answers. Tokens spent embedding Chunks are not Usage; the Document and page Limits already bound them. Tokens spent on Rerank are not Usage either; the Ask they serve is already counted.
+What a Tenant has consumed: Documents, storage bytes, and the language-model tokens (input and output) spent writing Answers. Usage belongs to the Tenant, not to a User; each Ask still records which User spent it. The number of Asks is shown but does not limit anything; tokens are what an Ask is measured by, charged against the Credit Balance. Tokens spent embedding Chunks are not Usage; the Document and page Limits already bound them. Tokens spent on Rerank are not Usage either; the Ask they serve is already counted.
 _Avoid_: Consumption, metering (metering is the act of recording Usage)
 
 **Limit**:
-A soft ceiling on one Usage dimension for a Tenant. Exceeding it warns; it does not bill.
+A soft ceiling on one Usage dimension for a Tenant. Exceeding it warns; it does not bill. Asks have no Limit: the Credit Balance bounds them.
 _Avoid_: Quota, plan, tier
+
+**Credit**:
+The unit a Credit Balance is shown in: 1,000 language-model tokens. Tokens are what is recorded; Credits are how they are shown and how top-ups are given. A typical Ask costs a few Credits.
+_Avoid_: Token (on its own, to Users), point, coin
+
+**Credit Balance**:
+A Tenant's running balance of language-model tokens for Asks, shared by everyone in the Tenant. It starts with a grant when the Tenant is created, rises with Credit Adjustments and falls with Ask Charges; it never resets. An Ask may start only while it is above zero, so Asks running at once can leave it slightly negative. Seen by every Role that can Ask. Not money: nothing is billed.
+_Avoid_: Credits (for the balance), quota, allowance, wallet
+
+**Credit Ledger**:
+Every change to a Tenant's Credit Balance, one row each, never edited: Ask Charges and Credit Adjustments. The Credit Balance is their sum.
+_Avoid_: Usage log (top-ups are not Usage), transactions, billing history
+
+**Ask Charge**:
+The Credit Ledger row that takes an Ask's tokens, input and output as the language-model provider reported them, off its Tenant's Credit Balance. An Ask cut off part-way is charged what the provider reported; one the provider reported nothing for costs nothing, as does one whose Retrieval found no Chunks. Rerank and Query embedding tokens are never charged.
+_Avoid_: Debit, cost, fee
+
+**Credit Adjustment**:
+A Credit Ledger row that adds to or takes from a Tenant's Credit Balance outside an Ask, always with a note saying why: the starting grant, a top-up, or the correction of a mistaken one.
+_Avoid_: Top-up (one kind of Adjustment), refund, grant (the starting one is an Adjustment too)
 
 ### Quality
 
