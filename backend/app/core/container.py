@@ -27,6 +27,7 @@ from core.search.factory import SearchIndexFactory
 from core.search.query_embedding import create_query_embedding_provider
 from core.storage.config import StorageSettings
 from core.storage.factory import StorageProviderFactory
+from credits.config import CreditSettings
 from documents.config import (
     IngestionSettings,
     PreviewSettings,
@@ -166,6 +167,8 @@ class Container(containers.DeclarativeContainer):
     retrieval_settings = providers.Singleton(RetrievalSettings)
 
     preview_settings = providers.Singleton(PreviewSettings)
+
+    credit_settings = providers.Singleton(CreditSettings)
 
     database_settings = providers.Singleton(DatabaseSettings)
 

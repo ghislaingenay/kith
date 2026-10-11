@@ -58,8 +58,9 @@ Outcome of the design interview held 2026-09-14. Vocabulary is defined in `CONTE
 
 ## 5. Usage, Limits, rate limits
 
-- Usage per Tenant per calendar month (UTC): Documents, storage bytes, Asks, Answer tokens (input + output as reported by the provider). Embedding tokens recorded, not limited.
-- Default Limits: 100 MB storage, 20 Documents, 30 Asks per month. Storage and Documents block; Asks warn at 80 % and block at 100 %. No payment.
+- Usage per Tenant: Documents, storage bytes, Asks, Answer tokens (input + output as reported by the provider). Embedding and Rerank tokens are not Usage. The number of Asks is shown but limits nothing.
+- Default Limits: 100 MB storage, 20 Documents. Both block. No payment.
+- Asks are bounded by the Tenant's Credit Balance (ADR-0017): language-model tokens kept as an append-only Credit Ledger (`credit_ledger`) whose sum is the balance. It never resets. Rows are Ask Charges (each Ask's reported input + output tokens, naming its User) and Credit Adjustments (always with a note: the starting grant, an operator top-up via `make adjust-credits`, or a correction). Shown in Credits, 1 Credit = 1,000 tokens, rounded down. A Tenant created through onboarding starts with `STARTING_CREDIT_GRANT` (200) Credits; Tenants that existed before the ledger start at 0, with no backfill. An Ask may start while the balance is above 0, so concurrent Asks can leave it slightly negative. `GET /credit-balance` returns `{ credits, tokens, is_low, is_exhausted }` to Roles that may Ask; the sidebar shows "N credits left", amber below `CREDIT_LOW_THRESHOLD` (20) Credits, "No credits left" at or below 0. Hidden for Viewers.
 - Rate limits in Redis (env): per User 60 searches/minute and 10 Asks/minute; per email 5 magic-link requests/hour. Upload starts are counted from the `uploads` table instead (env): per User 30 starts in the past hour and 5 pending Uploads younger than 30 minutes, so the retry hint is exact. The Documents and storage Limits are env defaults, the same for every Tenant, until Limits become per Tenant.
 
 ## 6. Surfaces

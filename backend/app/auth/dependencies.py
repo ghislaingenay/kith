@@ -17,6 +17,10 @@ from core.mail.provider import Mailer
 from core.ratelimit.counter_limiter import CounterLimiter
 from fastapi import Cookie, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
+from credits.config import CreditSettings
+from credits.dependencies import get_credit_settings
+from credits.repository import CreditsRepository
+from credits.service import CreditsService
 from tenants.permissions import Role
 from tenants.repository import TenantsRepository
 from tenants.service import TenantsService
@@ -108,11 +112,15 @@ def get_magic_link_verification_service(
     cache: Annotated[CacheProvider, Depends(get_cache_provider)],
     user_repository: Annotated[UserRepository, Depends(get_user_repository)],
     session_service: Annotated[SessionService, Depends(get_session_service)],
+    credit_settings: Annotated[CreditSettings, Depends(get_credit_settings)],
     session: AsyncSession = Depends(get_db_session),
 ) -> MagicLinkVerificationService:
     return MagicLinkVerificationService(
         cache=cache,
         user_repository=user_repository,
         session_service=session_service,
-        tenants_service=TenantsService(TenantsRepository(session)),
+        tenants_service=TenantsService(
+            TenantsRepository(session),
+            CreditsService(CreditsRepository(session), credit_settings),
+        ),
     )

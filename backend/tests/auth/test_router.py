@@ -26,6 +26,9 @@ from auth.service import MagicLinkService, MagicLinkVerificationService
 from auth.session import SessionService
 from core.ratelimit.counter_limiter import CounterLimiter
 from core.security import dependencies as security_dependencies
+from credits.config import CreditSettings
+from credits.repository import CreditsRepository
+from credits.service import CreditsService
 from main import app
 from tenants.dependencies import get_tenants_service
 from tenants.models import (
@@ -604,7 +607,9 @@ def _override_verify_with_db(db_session: AsyncSession) -> FakeCacheProvider:
         cache=cache,
         user_repository=UserRepository(db_session),
         session_service=SessionService(cache),
-        tenants_service=TenantsService(repository),
+        tenants_service=TenantsService(
+            repository, CreditsService(CreditsRepository(db_session), CreditSettings())
+        ),
     )
     app.dependency_overrides[get_magic_link_verification_service] = lambda: service
     return cache

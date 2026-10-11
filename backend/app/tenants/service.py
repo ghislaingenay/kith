@@ -3,6 +3,7 @@ solo-signup path and the explicit "create another tenant" action)."""
 
 import uuid
 
+from credits.service import CreditsService
 from tenants.exceptions import TenantAlreadyExistsError
 from tenants.models import TenantMembership
 from tenants.repository import TenantsRepository
@@ -10,8 +11,11 @@ from tenants.schemas import TenantMembershipSummary
 
 
 class TenantsService:
-    def __init__(self, repository: TenantsRepository) -> None:
+    def __init__(
+        self, repository: TenantsRepository, credits_service: CreditsService
+    ) -> None:
         self.repository = repository
+        self.credits_service = credits_service
 
     async def provision_default_membership(
         self, *, user_id: uuid.UUID, email: str, first_name: str | None = None
@@ -38,6 +42,8 @@ class TenantsService:
         membership, tenant_name, tenant_slug, role = await self.repository.create_tenant(
             user_id=user_id, name=name
         )
+        await self.credits_service.grant_starting_credits(membership.tenant_id)
+        await self.repository.commit()
         return TenantMembershipSummary(
             tenant_id=membership.tenant_id,
             tenant_name=tenant_name,

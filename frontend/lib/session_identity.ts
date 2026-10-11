@@ -19,11 +19,14 @@ export const sessionIdentitySchema = z.object({
       tenant_id: z.uuid(),
       tenant_slug: z.string(),
       tenant_name: z.string(),
+      role: z.enum(["owner", "admin", "member", "viewer"]),
     }),
   ),
 });
 
 export type SessionIdentity = Readonly<z.infer<typeof sessionIdentitySchema>>;
+
+export type Role = SessionIdentity["memberships"][number]["role"];
 
 /**
  * Forwards a cookie header into GET /me and returns the caller's identity

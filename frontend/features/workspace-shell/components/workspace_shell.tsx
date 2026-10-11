@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { displayName, useProfile, UserAvatar, type Profile } from "@/features/profile";
 import { Building2, Home, Settings, Upload } from "lucide-react";
 
+import type { Role } from "@/lib/session_identity";
+
 import {
   Sidebar,
   SidebarContent,
@@ -19,16 +21,21 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 
+import { CreditBalance } from "./credit_balance";
 import { SignOutButton } from "./sign_out_button";
 
 export function WorkspaceShell({
+  tenantId,
   tenantName,
   tenantSlug,
+  role,
   profile: initialProfile,
   children,
 }: {
+  readonly tenantId: string;
   readonly tenantName: string;
   readonly tenantSlug: string;
+  readonly role: Role;
   readonly profile: Profile;
   readonly children: React.ReactNode;
 }) {
@@ -86,6 +93,7 @@ export function WorkspaceShell({
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
+          {role !== "viewer" && <CreditBalance tenantId={tenantId} />}
           <div className="flex items-center gap-2 px-2 py-1">
             <UserAvatar displayName={shownName} avatarUrl={profile.avatar_url} sizePx={32} />
             <p className="truncate text-sm text-sidebar-foreground">{shownName}</p>

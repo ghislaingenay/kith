@@ -239,6 +239,7 @@ class TenantsRepository:
         return membership
 
     async def create_tenant(self, *, user_id: uuid.UUID, name: str) -> MembershipDetails:
+        """Flushes without committing; the caller calls `commit`."""
         slug = f"{_slugify(name)[:80]}-{uuid.uuid4().hex[:8]}"
 
         tenant = Tenant(
@@ -254,5 +255,8 @@ class TenantsRepository:
             tenant_id=tenant.id, user_id=user_id, role=Role.OWNER
         )
         self.session.add(membership)
-        await self.session.commit()
+        await self.session.flush()
         return MembershipDetails(membership, tenant.name, tenant.slug, Role.OWNER)
+
+    async def commit(self) -> None:
+        await self.session.commit()
