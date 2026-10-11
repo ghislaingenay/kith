@@ -49,12 +49,13 @@ export function useAsk(tenantId: string) {
           } else if (event.type === "answer_delta") {
             setState((current) => ({ ...current, answer: current.answer + event.text }));
           } else {
-            setState((current) => ({ ...current, phase: "done", done: event.done }));
+            const phase = event.done.status === "failed" ? "failed" : "done";
+            setState((current) => ({ ...current, phase, done: event.done }));
           }
         }
         // A stream that closes without `done` broke partway.
         setState((current) =>
-          current.phase === "done" ? current : { ...current, phase: "failed" },
+          current.done ? current : { ...current, phase: "failed" },
         );
       } catch (error) {
         if (controller.signal.aborted) return;

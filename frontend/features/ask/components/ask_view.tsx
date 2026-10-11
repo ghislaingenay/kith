@@ -25,7 +25,14 @@ export function AskView({ state }: { readonly state: AskState }) {
           {state.answer}
         </p>
       )}
-      {state.phase === "failed" && <AskFailure error={state.error} />}
+      {state.done?.status === "cut_off" && (
+        <p role="status" className="text-sm text-muted-foreground">
+          The answer was interrupted. {state.done.credits_charged}{" "}
+          {state.done.credits_charged === 1 ? "credit was" : "credits were"} used for what
+          the AI had already read and written.
+        </p>
+      )}
+      {state.phase === "failed" && <AskFailure state={state} />}
     </div>
   );
 }
@@ -57,15 +64,20 @@ function LoadingCitations() {
   );
 }
 
-function AskFailure({ error }: { readonly error: unknown }) {
+function AskFailure({ state }: { readonly state: AskState }) {
   return (
     <p role="alert" className="text-sm text-destructive">
-      {failureMessage(error)}
+      {failureMessage(state)}
     </p>
   );
 }
 
-function failureMessage(error: unknown): string {
+function failureMessage({ error, done }: AskState): string {
+  // The Ask ended failed in its `done`: the model was down or erred, and
+  // `done` says what it cost.
+  if (done?.status === "failed" && done.credits_charged === 0) {
+    return "The answer failed. No credits were used. Try again.";
+  }
   const status = error instanceof ApiError ? error.status : null;
   if (status === 429) return "You are asking too fast. Wait a moment and try again.";
   if (status === 503) return "Answers are unavailable right now.";

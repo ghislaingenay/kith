@@ -141,11 +141,15 @@ function mockAskStream() {
   };
 }
 
-function mockAsk(passages = [citedPassage()], deltas = ["Payment is due ", "in 30 days [1]."]) {
+function mockAsk(
+  passages = [citedPassage()],
+  deltas = ["Payment is due ", "in 30 days [1]."],
+  done: object = DONE,
+) {
   const body = [
     serverSentEvent("citations", { passages }),
     ...deltas.map((text) => serverSentEvent("answer_delta", { text })),
-    serverSentEvent("done", DONE),
+    serverSentEvent("done", done),
   ].join("");
   const seen = { queries: [] as string[] };
   server.use(
@@ -463,6 +467,49 @@ describe("SearchPanel's Ask", () => {
     await userEvent.type(await screen.findByRole("searchbox"), "   ");
     await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
     expect(seen.queries).toEqual([]);
+  });
+
+  it("says the Answer failed and cost nothing when the stream ends failed", async () => {
+    mockAsk([citedPassage()], [], { ...DONE, status: "failed", credits_charged: 0 });
+    renderAskingPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The answer failed. No credits were used. Try again.",
+    );
+    expect(screen.getByRole("list", { name: "Citations" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask AI" })).toBeEnabled();
+  });
+
+  it("says a cut-off Answer was interrupted and what it cost", async () => {
+    mockAsk([citedPassage()], ["Payment is due"], {
+      ...DONE,
+      status: "cut_off",
+      credits_charged: 9,
+    });
+    renderAskingPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+
+    expect(await screen.findByText("Payment is due")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "The answer was interrupted. 9 credits were used for what the AI had already read and written.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows no failure or interruption note for a completed Answer", async () => {
+    mockAsk();
+    renderAskingPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+
+    await screen.findByText("Payment is due in 30 days [1].");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/interrupted/)).not.toBeInTheDocument();
   });
 
   it("explains an Ask refused because Answers are unavailable", async () => {
