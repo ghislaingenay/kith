@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from asks.router import router as asks_router
 from auth.router import me_router
 from auth.router import router as auth_router
 from core.container import container
@@ -45,6 +46,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             "rerank_voyage_api_key_missing",
             detail="VOYAGE_API_KEY is not set; Ask's Retrieval is not reranked",
         )
+    if container.answer_provider() is None:
+        logger.warning(
+            "answer_provider_missing",
+            detail="No answer model is configured; every Ask answers 503",
+        )
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
     # connections rather than letting the process drop them.
@@ -78,6 +84,7 @@ app.include_router(uploads_router, prefix=set_api_version())
 app.include_router(library_router, prefix=set_api_version())
 app.include_router(search_router, prefix=set_api_version())
 app.include_router(credits_router, prefix=set_api_version())
+app.include_router(asks_router, prefix=set_api_version())
 
 
 @app.get("/health")

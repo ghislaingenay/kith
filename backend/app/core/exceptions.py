@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError, TimeoutError
 
 from auth.exceptions import AuthenticationError, MagicLinkTokenInvalidError
+from core.answer.exceptions import AnswerUnavailableError
 from core.logging import setup_logger
 from core.mail.exceptions import MailError
 from core.ratelimit.exception_handlers import register_ratelimit_exception_handlers
@@ -20,6 +21,7 @@ from core.rerank.exceptions import RerankConfigurationError
 from core.search.exceptions import SearchUnavailableError
 from core.security.exception_handlers import register_security_exception_handlers
 from core.storage.exceptions import StorageError
+from credits.exception_handlers import register_credit_exception_handlers
 from documents.exception_handlers import register_document_exception_handlers
 from tenants.exception_handlers import register_tenant_exception_handlers
 from users.exception_handlers import register_user_exception_handlers
@@ -30,6 +32,7 @@ logger = setup_logger(__name__)
 def register_exception_handlers(app: FastAPI) -> None:
     register_tenant_exception_handlers(app)
     register_document_exception_handlers(app)
+    register_credit_exception_handlers(app)
     register_user_exception_handlers(app)
     register_ratelimit_exception_handlers(app)
     register_security_exception_handlers(app)
@@ -43,6 +46,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         SearchUnavailableError, _handle_search_unavailable
     )  # type: ignore[arg-type]
+    app.add_exception_handler(AnswerUnavailableError, _handle_answer_unavailable)  # type: ignore[arg-type]
     app.add_exception_handler(
         RerankConfigurationError, _handle_rerank_configuration_error
     )  # type: ignore[arg-type]
@@ -102,6 +106,18 @@ async def _handle_search_unavailable(
         content={
             "error": "search_unavailable",
             "message": "Search is temporarily unavailable",
+        },
+    )
+
+
+async def _handle_answer_unavailable(
+    _: Request, __: AnswerUnavailableError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "error": "answer_unavailable",
+            "message": "Answers are temporarily unavailable",
         },
     )
 

@@ -34,3 +34,24 @@ class CreditsRepository:
             )
         )
         await self.session.flush()
+
+    async def add_ask_charge(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        ask_id: uuid.UUID,
+        user_id: uuid.UUID,
+        tokens: int,
+    ) -> None:
+        """`tokens` is what the Ask spent, written as a negative row. Flushes
+        without committing, like `add_adjustment`."""
+        self.session.add(
+            CreditLedgerEntry(
+                tenant_id=tenant_id,
+                kind=CreditLedgerKind.ASK_CHARGE,
+                tokens=-tokens,
+                ask_id=ask_id,
+                user_id=user_id,
+            )
+        )
+        await self.session.flush()

@@ -5,7 +5,7 @@ COMPOSE = docker compose $(if $(wildcard .env),--env-file .env) -f infra/docker-
 # --rm to create a temporary container for running alembic commands
 ALEMBIC = $(COMPOSE) run --rm app alembic
 
-.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create refresh-index clean-documents search-replay embed-documents retrieve
+.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create refresh-index clean-documents search-replay embed-documents retrieve adjust-credits
 
 up:
 	$(COMPOSE) up -d
@@ -69,3 +69,11 @@ embed-documents:
 retrieve:
 	@if [ -z "$(q)" ] || [ -z "$(tenant)" ] || [ -z "$(rerank)" ]; then echo 'usage: make retrieve q="<query>" tenant=<slug> rerank=true|false'; exit 1; fi
 	$(COMPOSE) run --rm app python -m scripts.retrieve "$(q)" --tenant "$(tenant)" --rerank "$(rerank)"
+
+# ── credits ─────────────────────────────────────────────────────────────────
+
+# give a Tenant Credits, or take back a mistaken top-up with a negative amount (ADR-0017)
+# usage: make adjust-credits tenant_id=<uuid> credits=<n> note="why"
+adjust-credits:
+	@if [ -z "$(tenant_id)" ] || [ -z "$(credits)" ] || [ -z "$(note)" ]; then echo 'usage: make adjust-credits tenant_id=<uuid> credits=<n> note="<why>"'; exit 1; fi
+	$(COMPOSE) run --rm app python -m scripts.adjust_credits --tenant-id "$(tenant_id)" --credits="$(credits)" --note "$(note)"
