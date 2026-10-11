@@ -4,6 +4,8 @@ from dependency_injector import containers, providers
 
 from core.circuit_breaker.breaker import CircuitBreaker
 from core.circuit_breaker.config import CircuitBreakerSettings
+from core.answer.config import AnswerSettings
+from core.answer.factory import create_answer_provider
 from core.cache.config import CacheSettings
 from core.cache.factory import CacheProviderFactory
 from core.cors import CorsSettings
@@ -158,6 +160,13 @@ class Container(containers.DeclarativeContainer):
     # `None` when there is no Voyage key; built even when Rerank is switched off.
     reranker = providers.Singleton(
         create_reranker, settings=rerank_settings, breaker=rerank_circuit_breaker
+    )
+
+    answer_settings = providers.Singleton(AnswerSettings)
+
+    # `None` until the OpenAI adapter exists; Ask then answers 503.
+    answer_provider = providers.Singleton(
+        create_answer_provider, settings=answer_settings
     )
 
     upload_settings = providers.Singleton(UploadSettings)

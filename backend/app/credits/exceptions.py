@@ -7,3 +7,7 @@ class InvalidCreditAmountError(Exception):
 
 class BlankAdjustmentNoteError(Exception):
     """Every Credit Adjustment carries a note saying why (ADR-0017)."""
+
+
+class CreditBalanceExhaustedError(Exception):
+    """The Tenant's Credit Balance is at or below 0, so no Ask may start."""
