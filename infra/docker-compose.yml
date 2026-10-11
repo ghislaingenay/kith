@@ -245,6 +245,10 @@ services:
       # Host-reachable on purpose — this runs in the browser, not inside
       # the compose network, so it can't resolve "app" as a hostname.
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      # "false" hides an Answer's source cards (and its markers), or only
+      # its `[n]` markers. Both default to on.
+      NEXT_PUBLIC_ASK_SHOW_SOURCES: ${NEXT_PUBLIC_ASK_SHOW_SOURCES:-true}
+      NEXT_PUBLIC_ASK_CITATION_MARKERS: ${NEXT_PUBLIC_ASK_CITATION_MARKERS:-true}
     volumes:
       - ../frontend:/app
       - /app/node_modules
