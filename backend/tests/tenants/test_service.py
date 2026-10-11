@@ -56,11 +56,16 @@ class FakeTenantsRepository:
 
 
 class FakeCreditsService:
-    def __init__(self) -> None:
-        self.granted: list[uuid.UUID] = []
+    """Records each grant with how many commits the repository had made by
+    then, so a test can tell whether the grant landed before the commit."""
+
+    def __init__(self, repository: FakeTenantsRepository | None = None) -> None:
+        self.repository = repository
+        self.granted: list[tuple[uuid.UUID, int | None]] = []
 
     async def grant_starting_credits(self, tenant_id):
-        self.granted.append(tenant_id)
+        commits = self.repository.commits if self.repository else None
+        self.granted.append((tenant_id, commits))
 
 
 class TestListMyMemberships:
@@ -102,6 +107,18 @@ class TestCreateTenant:
         assert summary.role == Role.OWNER
         assert repo.locks_acquired == [user_id]
 
+    async def test_grants_starting_credits_to_the_new_tenant_before_committing(
+        self,
+    ) -> None:
+        repo = FakeTenantsRepository()
+        credits_service = FakeCreditsService(repo)
+        service = TenantsService(repo, credits_service)
+
+        summary = await service.create_tenant(user_id=uuid.uuid4(), name="Acme")
+
+        assert credits_service.granted == [(summary.tenant_id, 0)]
+        assert repo.commits == 1
+
     async def test_raises_when_user_already_has_an_active_membership(self) -> None:
         repo = FakeTenantsRepository()
         user_id = uuid.uuid4()
@@ -111,12 +128,15 @@ class TestCreateTenant:
         repo.membership_details.append(
             (existing_membership, "Acme Inc", "acme-inc", Role.OWNER)
         )
-        service = TenantsService(repo, FakeCreditsService())
+        credits_service = FakeCreditsService(repo)
+        service = TenantsService(repo, credits_service)
 
         with pytest.raises(TenantAlreadyExistsError):
             await service.create_tenant(user_id=user_id, name="Another Co")
 
         assert repo.created == []
+        assert credits_service.granted == []
+        assert repo.commits == 0
 
     async def test_raises_when_user_has_a_non_owner_active_membership(self) -> None:
         repo = FakeTenantsRepository()
