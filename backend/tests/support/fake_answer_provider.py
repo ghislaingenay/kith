@@ -29,6 +29,8 @@ class FakeAnswerProvider(AnswerProvider):
         """Stream every delta, then end with `failed` and the usage."""
         self.hits_output_cap = False
         """Stream every delta, then end with `cut_off` and the usage."""
+        self.error: Exception | None = None
+        """Raised before any delta, as a model that cannot be reached does."""
         self.after_delta: Callable[[], Awaitable[None]] | None = None
         """Awaited after each delta, to stand for a slow model."""
 
@@ -36,6 +38,8 @@ class FakeAnswerProvider(AnswerProvider):
         self, request: AnswerRequest
     ) -> AsyncIterator[AnswerDelta | AnswerEnd]:
         self.requests.append(request)
+        if self.error is not None:
+            raise self.error
         if self.fails_before_output:
             yield AnswerEnd(AnswerEnding.FAILED, None)
             return

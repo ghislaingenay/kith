@@ -7,17 +7,26 @@ import { useState, type FormEvent } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AskView, useAsk } from "@/features/ask";
 import { useHasDocuments } from "@/features/uploads";
 
 import { useSearch } from "../api/use_search";
 import { SearchResults } from "./search_results";
 
 /** The dashboard's Search box and results. The URL (`?q=…&type=search`) holds
- * the Query, so refresh, Back and shared links all rerun the same Search. */
-export function SearchPanel({ tenantId }: { readonly tenantId: string }) {
+ * the Query, so refresh, Back and shared links all rerun the same Search. An
+ * Ask is never in the URL, so a reload never charges again. */
+export function SearchPanel({
+  tenantId,
+  canAsk,
+}: {
+  readonly tenantId: string;
+  readonly canAsk: boolean;
+}) {
   const params = useSearchParams();
   const pathname = usePathname();
   const { hasDocuments, isError } = useHasDocuments(tenantId);
+  const { state: askState, ask, reset: resetAsk } = useAsk(tenantId);
 
   // If the library check itself fails, show the box anyway and let the Search
   // report its own errors.
@@ -42,15 +51,36 @@ export function SearchPanel({ tenantId }: { readonly tenantId: string }) {
   return (
     <div className="w-full max-w-2xl space-y-6">
       {/* Keyed so Back or a shared link re-fills the box. */}
-      <SearchBox key={activeQuery} initialQuery={activeQuery} />
-      {activeQuery !== "" && (
-        <ActiveSearch tenantId={tenantId} query={activeQuery} />
+      <SearchBox
+        key={activeQuery}
+        initialQuery={activeQuery}
+        canAsk={canAsk}
+        isAsking={askState.phase === "streaming"}
+        onSearch={resetAsk}
+        onAsk={(query) => void ask(query)}
+      />
+      {askState.phase !== "idle" ? (
+        <AskView state={askState} />
+      ) : (
+        activeQuery !== "" && <ActiveSearch tenantId={tenantId} query={activeQuery} />
       )}
     </div>
   );
 }
 
-function SearchBox({ initialQuery }: { readonly initialQuery: string }) {
+function SearchBox({
+  initialQuery,
+  canAsk,
+  isAsking,
+  onSearch,
+  onAsk,
+}: {
+  readonly initialQuery: string;
+  readonly canAsk: boolean;
+  readonly isAsking: boolean;
+  readonly onSearch: () => void;
+  readonly onAsk: (query: string) => void;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const [value, setValue] = useState(initialQuery);
@@ -59,6 +89,7 @@ function SearchBox({ initialQuery }: { readonly initialQuery: string }) {
     event.preventDefault();
     const query = value.trim();
     if (query === "") return;
+    onSearch();
     router.push(
       `${pathname}?${new URLSearchParams({ q: query, type: "search" })}`,
     );
@@ -75,6 +106,20 @@ function SearchBox({ initialQuery }: { readonly initialQuery: string }) {
       />
       {/* The Query is embedded for each Search, so it runs on submit only. */}
       <Button type="submit">Search</Button>
+      {canAsk && (
+        // Disabled while an Answer streams, so a double click never charges twice.
+        <Button
+          type="button"
+          variant="outline"
+          disabled={isAsking}
+          onClick={() => {
+            const query = value.trim();
+            if (query !== "") onAsk(query);
+          }}
+        >
+          Ask AI
+        </Button>
+      )}
     </form>
   );
 }

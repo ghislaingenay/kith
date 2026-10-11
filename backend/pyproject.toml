@@ -14,6 +14,7 @@ dependencies = [
     "fastapi[standard]>=0.141.1",
     "gunicorn>=26.1.0",
     "langchain-text-splitters>=1.1.2",
+    "openai>=3.27,<4",
     "opensearch-py[async]>=2.8",
     "pypdfium2>=5.13.0",
     "pytest>=9.1.1",

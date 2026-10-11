@@ -1,5 +1,11 @@
 """Errors raised by the answer core module."""
 
 
-class AnswerUnavailableError(Exception):
-    """No answer model is configured, so no Ask can be answered."""
+class AnswerError(Exception):
+    """The answer model rejected the request, and would reject it the same way
+    again (for example a bad key)."""
+
+
+class AnswerUnavailableError(AnswerError):
+    """No answer model is configured, or it could not be reached, timed out,
+    or is overloaded."""

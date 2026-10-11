@@ -9,7 +9,7 @@ export default async function WorkspacePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { tenantId, tenantName } = await resolveWorkspace(slug);
+  const { tenantId, tenantName, role } = await resolveWorkspace(slug);
 
   return (
     <div className="flex flex-1 flex-col items-center px-4 py-16">
@@ -21,7 +21,7 @@ export default async function WorkspacePage({
       </p>
       {/* useSearchParams needs a Suspense boundary to prerender. */}
       <Suspense>
-        <SearchPanel tenantId={tenantId} />
+        <SearchPanel tenantId={tenantId} canAsk={role !== "viewer"} />
       </Suspense>
     </div>
   );

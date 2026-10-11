@@ -12,6 +12,7 @@ import structlog
 from arq.connections import RedisSettings
 from asks.models import Ask
 from core.answer.dependencies import get_answer_provider
+from core.answer.exceptions import AnswerUnavailableError
 from core.logging.config import LoggingSettings, configure_logging
 from core.ratelimit.dependencies import get_rate_limiter
 from core.ratelimit.limiter import SlidingWindowLimiter
@@ -116,6 +117,33 @@ async def test_an_ask_streams_citations_then_the_answer_then_done(
         "reranked": True,
         "degraded": False,
     }
+
+
+async def test_a_model_that_cannot_be_reached_ends_the_stream_failed_and_charges_nothing(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+    document = await _seed_document(
+        db_session, tenant_id=caller.tenant_id, name="contract.pdf"
+    )
+    await _index_chunk(search_index, document, "Payment terms are 30 days.")
+    fake_answer_provider.error = AnswerUnavailableError("timed out")
+
+    response = await _ask(client)
+
+    assert response.status_code == 200
+    events = _events(response)
+    assert [name for name, _ in events] == ["citations", "done"]
+    done = events[-1][1]
+    assert (done["status"], done["credits_charged"], done["balance_credits"]) == (
+        "failed",
+        0,
+        200,
+    )
 
 
 async def test_the_model_gets_the_query_and_the_five_reranked_passages_numbered_in_order(
