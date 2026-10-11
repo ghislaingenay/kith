@@ -71,6 +71,13 @@ class TenantsRepository:
         result = await self.session.execute(select(Tenant.id).where(Tenant.slug == slug))
         return result.scalar_one_or_none()
 
+    async def get_undeleted_tenant_name(self, tenant_id: uuid.UUID) -> str | None:
+        return await self.session.scalar(
+            select(Tenant.name).where(
+                Tenant.id == tenant_id, Tenant.deleted_at.is_(None)
+            )
+        )
+
     async def get_active_membership(
         self, *, user_id: uuid.UUID, tenant_id: uuid.UUID
     ) -> TenantMembership | None:
