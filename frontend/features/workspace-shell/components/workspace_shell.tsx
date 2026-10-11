@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { CreditBalance } from "@/features/credits";
 import { displayName, useProfile, UserAvatar, type Profile } from "@/features/profile";
 import { Building2, Home, Settings, Upload } from "lucide-react";
 
@@ -21,7 +22,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 
-import { CreditBalance } from "./credit_balance";
 import { SignOutButton } from "./sign_out_button";
 
 export function WorkspaceShell({

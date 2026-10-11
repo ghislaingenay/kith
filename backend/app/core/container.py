@@ -164,7 +164,7 @@ class Container(containers.DeclarativeContainer):
 
     answer_settings = providers.Singleton(AnswerSettings)
 
-    # `None` until the OpenAI adapter exists; Ask then answers 503.
+    # `None` without an OpenAI key; Ask then answers 503.
     answer_provider = providers.Singleton(
         create_answer_provider, settings=answer_settings
     )

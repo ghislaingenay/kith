@@ -16,8 +16,8 @@ from asks.schemas import (
     CitedPassage,
 )
 from core.answer.config import AnswerSettings
-from core.answer.exceptions import AnswerUnavailableError
-from core.answer.provider import AnswerDelta, AnswerEnd, AnswerProvider
+from core.answer.exceptions import AnswerError, AnswerUnavailableError
+from core.answer.provider import AnswerDelta, AnswerEnd, AnswerEnding, AnswerProvider
 from core.logging import setup_logger
 from credits.service import CreditsService
 from documents.retrieval_service import AskRetrieval, RetrievalService
@@ -90,12 +90,17 @@ class AskService:
         request = build_answer_request(query, [passage.text for passage in passages])
         answer_parts: list[str] = []
         end: AnswerEnd | None = None
-        async for part in answer_provider.stream_answer(request):
-            if isinstance(part, AnswerDelta):
-                answer_parts.append(part.text)
-                yield AnswerDeltaEvent(text=part.text)
-            else:
-                end = part
+        try:
+            async for part in answer_provider.stream_answer(request):
+                if isinstance(part, AnswerDelta):
+                    answer_parts.append(part.text)
+                    yield AnswerDeltaEvent(text=part.text)
+                else:
+                    end = part
+        except AnswerError as error:
+            # The stream has started, so the failure is told in `done`.
+            logger.warning("answer_failed", tenant_id=str(tenant_id), error=str(error))
+            end = AnswerEnd(AnswerEnding.FAILED, None)
         if end is None:
             raise RuntimeError("The answer provider's stream ended without an end")
 

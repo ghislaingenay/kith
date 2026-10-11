@@ -49,5 +49,6 @@ class AnswerProvider(ABC):
         self, request: AnswerRequest
     ) -> AsyncIterator[AnswerDelta | AnswerEnd]:
         """Streams the Answer's text deltas, then exactly one `AnswerEnd`. A
-        provider failure ends the stream with `AnswerEnding.FAILED` instead of
-        raising."""
+        response the model itself failed ends with `AnswerEnding.FAILED`; a
+        model that cannot be reached raises `AnswerUnavailableError`, and a
+        rejected request raises `AnswerError`."""

@@ -26,3 +26,5 @@ class AnswerSettings(BaseSettings):
         description="Covers reasoning plus the visible Answer",
         validation_alias="ANSWER_MAX_OUTPUT_TOKENS",
     )
+    # docker-compose passes an empty string when the variable is unset.
+    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")

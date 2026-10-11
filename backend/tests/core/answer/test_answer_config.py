@@ -1,6 +1,7 @@
 import pytest
 from core.answer.config import AnswerSettings
 from core.answer.factory import create_answer_provider
+from core.answer.openai_provider import OpenAIAnswerProvider
 from pydantic import ValidationError
 
 _ANSWER_VARIABLES = (
@@ -8,6 +9,7 @@ _ANSWER_VARIABLES = (
     "ANSWER_MODEL",
     "ANSWER_REASONING_EFFORT",
     "ANSWER_MAX_OUTPUT_TOKENS",
+    "OPENAI_API_KEY",
 )
 
 
@@ -47,5 +49,20 @@ def test_an_unknown_provider_is_refused(monkeypatch: pytest.MonkeyPatch) -> None
         AnswerSettings()
 
 
-def test_no_provider_until_the_openai_adapter_exists() -> None:
+def test_the_openai_provider_when_an_openai_key_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    assert isinstance(create_answer_provider(AnswerSettings()), OpenAIAnswerProvider)
+
+
+@pytest.mark.parametrize("api_key", [None, ""])
+def test_no_provider_without_an_openai_key(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | None
+) -> None:
+    # docker-compose passes an empty string when the variable is unset.
+    if api_key is not None:
+        monkeypatch.setenv("OPENAI_API_KEY", api_key)
+
     assert create_answer_provider(AnswerSettings()) is None

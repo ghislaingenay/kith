@@ -24,8 +24,33 @@ type ApiFetchInit = Omit<RequestInit, "body"> & { body?: unknown };
  * Components (pass `credentials: "include"`). */
 export async function apiFetch<T = unknown>(
   path: string,
-  { body, headers, ...init }: ApiFetchInit = {},
+  init: ApiFetchInit = {},
 ): Promise<T> {
+  const response = await send(path, init);
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+}
+
+/** `apiFetch` for a streamed response (e.g. `text/event-stream`): resolves
+ * with the body once the API has accepted the request, so a refusal is still
+ * an `ApiError`. Client Components only. */
+export async function apiStream(
+  path: string,
+  init: ApiFetchInit = {},
+): Promise<ReadableStream<Uint8Array>> {
+  const response = await send(path, init);
+  if (!response.body) {
+    throw new ApiError(response.status, "The response has no body.");
+  }
+  return response.body;
+}
+
+async function send(
+  path: string,
+  { body, headers, ...init }: ApiFetchInit,
+): Promise<Response> {
   const isFormData = body instanceof FormData;
   const base = isClientSide() ? env.NEXT_PUBLIC_API_URL : env.BACKEND_URL;
   const url = `${base}${path}`;
@@ -53,10 +78,7 @@ export async function apiFetch<T = unknown>(
   if (!response.ok) {
     throw new ApiError(response.status, await extractErrorMessage(response));
   }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
+  return response;
 }
 
 async function extractErrorMessage(response: Response): Promise<string> {

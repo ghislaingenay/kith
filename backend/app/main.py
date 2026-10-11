@@ -49,7 +49,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if container.answer_provider() is None:
         logger.warning(
             "answer_provider_missing",
-            detail="No answer model is configured; every Ask answers 503",
+            detail="OPENAI_API_KEY is not set; every Ask answers 503",
         )
     yield
     # Graceful shutdown: release the DB pool's and both Redis clients'
