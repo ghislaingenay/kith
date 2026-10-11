@@ -73,7 +73,7 @@ retrieve:
 # ── credits ─────────────────────────────────────────────────────────────────
 
 # give a Tenant Credits, or take back a mistaken top-up with a negative amount (ADR-0017)
-# usage: make adjust-credits TENANT_ID=<uuid> CREDITS=<n> NOTE="why"
+# usage: make adjust-credits tenant_id=<uuid> credits=<n> note="why"
 adjust-credits:
-	@if [ -z "$(TENANT_ID)" ] || [ -z "$(CREDITS)" ] || [ -z "$(NOTE)" ]; then echo 'usage: make adjust-credits TENANT_ID=<uuid> CREDITS=<n> NOTE="<why>"'; exit 1; fi
-	$(COMPOSE) run --rm app python -m scripts.adjust_credits --tenant-id "$(TENANT_ID)" --credits="$(CREDITS)" --note "$(NOTE)"
+	@if [ -z "$(tenant_id)" ] || [ -z "$(credits)" ] || [ -z "$(note)" ]; then echo 'usage: make adjust-credits tenant_id=<uuid> credits=<n> note="<why>"'; exit 1; fi
+	$(COMPOSE) run --rm app python -m scripts.adjust_credits --tenant-id "$(tenant_id)" --credits="$(credits)" --note "$(note)"
