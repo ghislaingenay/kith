@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 from core.database import DatabaseSettings, create_engine, create_session_factory
-from credits.adjustment import adjust_credits
+from credits.adjustment import CreditAdjustmentResult, adjust_credits
 from credits.config import CreditSettings
 from credits.exceptions import BlankAdjustmentNoteError, InvalidCreditAmountError
 from credits.models import CreditLedgerEntry, CreditLedgerKind
@@ -36,7 +36,7 @@ async def _adjust(
     tenant_id: uuid.UUID,
     credits: int,
     note: str = _TOP_UP_NOTE,
-):
+) -> CreditAdjustmentResult:
     return await adjust_credits(
         session_factory,
         CreditSettings(),
