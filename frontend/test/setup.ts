@@ -24,6 +24,16 @@ if (typeof window !== "undefined") {
     }) as unknown as MediaQueryList;
 }
 
+// jsdom doesn't implement ResizeObserver — needed by Radix's positioned
+// popups (e.g. the sidebar's Credit Balance tooltip).
+if (typeof window !== "undefined") {
+  window.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 if (typeof window !== "undefined") installImageLoadingStub();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));

@@ -10,6 +10,10 @@ from auth.dependencies import get_current_tenant
 from auth.schemas import TenantContext
 from core.container import container
 from core.database import get_session
+from credits.config import CreditSettings
+from credits.dependencies import get_credit_settings
+from credits.repository import CreditsRepository
+from credits.service import CreditsService
 from tenants.exceptions import PermissionDenied
 from tenants.permissions import Action, has_permission
 from tenants.repository import TenantsRepository
@@ -28,9 +32,14 @@ def get_tenant_repository(
 
 
 def get_tenants_service(
-    tenant_repository: Annotated[TenantsRepository, Depends(get_tenant_repository)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    credit_settings: Annotated[CreditSettings, Depends(get_credit_settings)],
 ) -> TenantsService:
-    return TenantsService(tenant_repository)
+    # One session for both, so the starting grant commits with the Tenant.
+    return TenantsService(
+        TenantsRepository(session),
+        CreditsService(CreditsRepository(session), credit_settings),
+    )
 
 
 def require_permission(

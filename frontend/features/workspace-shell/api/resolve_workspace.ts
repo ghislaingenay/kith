@@ -37,6 +37,7 @@ export const resolveWorkspace = cache(async (slug: string) => {
     tenantId: membership.tenant_id,
     tenantName: membership.tenant_name,
     tenantSlug: membership.tenant_slug,
+    role: membership.role,
     profile: identity.profile,
   };
 });

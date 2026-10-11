@@ -5,10 +5,16 @@ export default async function WorkspaceLayout({
   params,
 }: LayoutProps<"/w/[slug]">) {
   const { slug } = await params;
-  const { tenantName, tenantSlug, profile } = await resolveWorkspace(slug);
+  const { tenantId, tenantName, tenantSlug, role, profile } = await resolveWorkspace(slug);
 
   return (
-    <WorkspaceShell tenantName={tenantName} tenantSlug={tenantSlug} profile={profile}>
+    <WorkspaceShell
+      tenantId={tenantId}
+      tenantName={tenantName}
+      tenantSlug={tenantSlug}
+      role={role}
+      profile={profile}
+    >
       {children}
     </WorkspaceShell>
   );

@@ -11,6 +11,7 @@ from core.exceptions import register_exception_handlers
 from core.migrations import warn_if_schema_out_of_date
 from core.logging import setup_logger
 from core.search.startup import require_search_index
+from credits.router import router as credits_router
 from documents.router import library_router
 from documents.router import router as uploads_router
 from documents.router import search_router
@@ -76,6 +77,7 @@ app.include_router(users_router, prefix=set_api_version())
 app.include_router(uploads_router, prefix=set_api_version())
 app.include_router(library_router, prefix=set_api_version())
 app.include_router(search_router, prefix=set_api_version())
+app.include_router(credits_router, prefix=set_api_version())
 
 
 @app.get("/health")

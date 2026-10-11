@@ -19,6 +19,7 @@ class FakeTenantsRepository:
         self.locks_acquired: list[uuid.UUID] = []
         self.activation_calls: list[dict] = []
         self.pending_memberships: list[PendingMembership] = []
+        self.commits = 0
 
     async def acquire_user_tenant_lock(self, user_id):
         self.locks_acquired.append(user_id)
@@ -30,6 +31,9 @@ class FakeTenantsRepository:
         return TenantMembership(
             tenant_id=uuid.uuid4(), user_id=user_id, role=Role.OWNER
         )
+
+    async def commit(self):
+        self.commits += 1
 
     async def create_tenant(self, *, user_id, name):
         self.created.append({"user_id": user_id, "name": name})
@@ -51,6 +55,14 @@ class FakeTenantsRepository:
         return []
 
 
+class FakeCreditsService:
+    def __init__(self) -> None:
+        self.granted: list[uuid.UUID] = []
+
+    async def grant_starting_credits(self, tenant_id):
+        self.granted.append(tenant_id)
+
+
 class TestListMyMemberships:
     async def test_maps_repository_rows_to_summaries(self) -> None:
         repo = FakeTenantsRepository()
@@ -59,7 +71,7 @@ class TestListMyMemberships:
             tenant_id=uuid.uuid4(), user_id=user_id, role=Role.OWNER
         )
         repo.membership_details.append((membership, "Acme Inc", "acme-inc", Role.OWNER))
-        service = TenantsService(repo)
+        service = TenantsService(repo, FakeCreditsService())
 
         summaries = await service.list_my_memberships(user_id)
 
@@ -69,7 +81,7 @@ class TestListMyMemberships:
         assert summaries[0].role == Role.OWNER
 
     async def test_returns_empty_list_for_no_memberships(self) -> None:
-        service = TenantsService(FakeTenantsRepository())
+        service = TenantsService(FakeTenantsRepository(), FakeCreditsService())
 
         summaries = await service.list_my_memberships(uuid.uuid4())
 
@@ -79,7 +91,7 @@ class TestListMyMemberships:
 class TestCreateTenant:
     async def test_delegates_to_repository_and_maps_to_summary(self) -> None:
         repo = FakeTenantsRepository()
-        service = TenantsService(repo)
+        service = TenantsService(repo, FakeCreditsService())
         user_id = uuid.uuid4()
 
         summary = await service.create_tenant(user_id=user_id, name="Acme")
@@ -99,7 +111,7 @@ class TestCreateTenant:
         repo.membership_details.append(
             (existing_membership, "Acme Inc", "acme-inc", Role.OWNER)
         )
-        service = TenantsService(repo)
+        service = TenantsService(repo, FakeCreditsService())
 
         with pytest.raises(TenantAlreadyExistsError):
             await service.create_tenant(user_id=user_id, name="Another Co")
@@ -115,7 +127,7 @@ class TestCreateTenant:
         repo.membership_details.append(
             (existing_membership, "Acme Inc", "acme-inc", Role.MEMBER)
         )
-        service = TenantsService(repo)
+        service = TenantsService(repo, FakeCreditsService())
 
         with pytest.raises(TenantAlreadyExistsError):
             await service.create_tenant(user_id=user_id, name="Another Co")
@@ -126,7 +138,7 @@ class TestCreateTenant:
 class TestProvisionDefaultMembership:
     async def test_delegates_to_repository(self) -> None:
         repo = FakeTenantsRepository()
-        service = TenantsService(repo)
+        service = TenantsService(repo, FakeCreditsService())
         user_id = uuid.uuid4()
 
         await service.provision_default_membership(
@@ -155,7 +167,7 @@ class TestActivatePendingMemberships:
                 tenant_id=second_tenant, email="dana@example.com", role=Role.VIEWER
             ),
         ]
-        service = TenantsService(repo)
+        service = TenantsService(repo, FakeCreditsService())
 
         await service.activate_pending_memberships(
             user_id=user_id, email="dana@example.com"
@@ -171,7 +183,7 @@ class TestActivatePendingMemberships:
 
     async def test_does_not_call_the_repository_when_nothing_is_pending(self) -> None:
         repo = FakeTenantsRepository()
-        service = TenantsService(repo)
+        service = TenantsService(repo, FakeCreditsService())
 
         await service.activate_pending_memberships(
             user_id=uuid.uuid4(), email="nobody@example.com"
