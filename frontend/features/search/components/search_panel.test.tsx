@@ -15,6 +15,23 @@ const navigation = vi.hoisted(() => ({
   push: vi.fn(),
 }));
 
+const askFlags = vi.hoisted(() => ({ showSources: true, citationMarkers: true }));
+
+vi.mock("@/config/env", async (importOriginal) => {
+  const { env } = await importOriginal<typeof import("@/config/env")>();
+  return {
+    env: {
+      ...env,
+      get NEXT_PUBLIC_ASK_SHOW_SOURCES() {
+        return askFlags.showSources;
+      },
+      get NEXT_PUBLIC_ASK_CITATION_MARKERS() {
+        return askFlags.citationMarkers;
+      },
+    },
+  };
+});
+
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(navigation.url),
   usePathname: () => "/w/acme",
@@ -161,10 +178,27 @@ function mockAsk(
   return seen;
 }
 
+/** Waits for the Answer to read `text`, markers included. */
+async function expectAnswer(text: string) {
+  await waitFor(() => expect(screen.getByLabelText("Answer")).toHaveTextContent(text));
+}
+
+/** Types the Query, clicks Ask AI and waits for the finished Answer. */
+async function askAndFinish(query = "terms") {
+  await userEvent.type(await screen.findByRole("searchbox"), query);
+  await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Ask AI" })).toBeEnabled());
+  return screen.getByLabelText("Answer");
+}
+
 beforeEach(() => {
   mockLibrary();
   navigation.url = "";
   navigation.push.mockReset();
+  askFlags.showSources = true;
+  askFlags.citationMarkers = true;
+  // jsdom doesn't implement scrolling.
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 describe("SearchPanel", () => {
@@ -390,7 +424,7 @@ describe("SearchPanel's Ask", () => {
     expect(await screen.findByLabelText("Answer")).toHaveTextContent("Payment is due");
 
     ask.send("answer_delta", { text: "in 30 days [1]." });
-    expect(await screen.findByText("Payment is due in 30 days [1].")).toBeInTheDocument();
+    await expectAnswer("Payment is due in 30 days [1].");
 
     ask.send("done", DONE);
     ask.end();
@@ -445,7 +479,7 @@ describe("SearchPanel's Ask", () => {
     await userEvent.type(await screen.findByRole("searchbox"), "terms");
     await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
 
-    await screen.findByText("Payment is due in 30 days [1].");
+    await expectAnswer("Payment is due in 30 days [1].");
     await waitFor(() =>
       expect(client.getQueryState(["credit-balance", TENANT_ID])?.isInvalidated).toBe(true),
     );
@@ -507,7 +541,7 @@ describe("SearchPanel's Ask", () => {
     await userEvent.type(await screen.findByRole("searchbox"), "terms");
     await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
 
-    await screen.findByText("Payment is due in 30 days [1].");
+    await expectAnswer("Payment is due in 30 days [1].");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/interrupted/)).not.toBeInTheDocument();
   });
@@ -546,10 +580,114 @@ describe("SearchPanel's Ask", () => {
     renderAskingPanel();
     await userEvent.type(await screen.findByRole("searchbox"), "terms");
     await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
-    await screen.findByText("Payment is due in 30 days [1].");
+    await expectAnswer("Payment is due in 30 days [1].");
 
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(navigation.push).toHaveBeenCalledWith("/w/acme?q=terms&type=search");
     expect(screen.queryByLabelText("Answer")).not.toBeInTheDocument();
+  });
+});
+
+describe("SearchPanel's Ask citations", () => {
+  const TWO_SOURCES = [
+    citedPassage(),
+    citedPassage({ n: 2, chunk_id: "c2", document_id: "d2", document_name: "terms.pdf", page_number: 2 }),
+  ];
+
+  it("links a marker to its Citation card, which opens the Document at its page", async () => {
+    mockAsk(TWO_SOURCES, ["Payment is due in 30 days [2]."]);
+    server.use(
+      http.get(`${API_URL}/documents/d2/file-url`, () =>
+        HttpResponse.json({
+          url: "http://localhost:9000/kith-dev/terms.pdf?signature=abc",
+          expires_in: 300,
+        }),
+      ),
+    );
+    renderAskingPanel();
+    const answer = await askAndFinish();
+
+    await userEvent.click(within(answer).getByRole("link", { name: "Citation 2" }));
+    const card = screen.getByRole("button", { name: /terms\.pdf/ });
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts[0]).toBe(card);
+    expect(card).toHaveFocus();
+    expect(navigation.push).not.toHaveBeenCalled();
+
+    await userEvent.click(card);
+    expect(await screen.findByRole("dialog", { name: "terms.pdf" })).toBeInTheDocument();
+    expect(await screen.findByText("PDF page 2")).toBeInTheDocument();
+  });
+
+  it("dims the Citations the finished Answer never marks", async () => {
+    const ask = mockAskStream();
+    renderAskingPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+
+    ask.send("citations", { passages: TWO_SOURCES });
+    ask.send("answer_delta", { text: "Due in 30 days [1]." });
+    await waitFor(() => expect(screen.getByLabelText("Answer")).toHaveTextContent("[1]"));
+    // Not yet: the Answer may still mark it.
+    expect(screen.queryByText("Not cited in the Answer")).not.toBeInTheDocument();
+
+    ask.send("done", DONE);
+    ask.end();
+    const [first, second] = within(
+      await screen.findByRole("list", { name: "Citations" }),
+    ).getAllByRole("listitem");
+    await waitFor(() => expect(second).toHaveTextContent("Not cited in the Answer"));
+    expect(first).not.toHaveTextContent("Not cited in the Answer");
+  });
+
+  it("removes the markers when they are turned off, and still lists the Citations", async () => {
+    askFlags.citationMarkers = false;
+    mockAsk(TWO_SOURCES, ["Due in 30 days [1], or 60 [2][7]."]);
+    renderAskingPanel();
+    const answer = await askAndFinish();
+
+    expect(answer).toHaveTextContent("Due in 30 days, or 60.");
+    expect(within(answer).queryByRole("link")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("list", { name: "Citations" })).getAllByRole("listitem"),
+    ).toHaveLength(2);
+  });
+
+  it("shows no Citations and no markers when sources are turned off", async () => {
+    askFlags.showSources = false;
+    mockAsk(TWO_SOURCES, ["Due in 30 days [1]."]);
+    renderAskingPanel();
+    const answer = await askAndFinish();
+
+    expect(answer).toHaveTextContent("Due in 30 days.");
+    expect(within(answer).queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Citations" })).not.toBeInTheDocument();
+  });
+
+  it("shows no Citations placeholder while streaming when sources are turned off", async () => {
+    askFlags.showSources = false;
+    const ask = mockAskStream();
+    renderAskingPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+
+    expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled();
+    expect(screen.queryByRole("status", { name: "Finding passages" })).not.toBeInTheDocument();
+
+    ask.send("citations", { passages: TWO_SOURCES });
+    ask.send("answer_delta", { text: "Due in 30 days [1]." });
+    ask.send("done", DONE);
+    ask.end();
+    await expectAnswer("Due in 30 days.");
+  });
+
+  it("shows a marker with no Citation as plain text", async () => {
+    mockAsk(TWO_SOURCES, ["Due [1], or later [7]."]);
+    renderAskingPanel();
+    const answer = await askAndFinish();
+
+    expect(answer).toHaveTextContent("Due [1], or later [7].");
+    expect(within(answer).getAllByRole("link")).toHaveLength(1);
+    expect(within(answer).getByRole("link", { name: "Citation 1" })).toBeInTheDocument();
   });
 });

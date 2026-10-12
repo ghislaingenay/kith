@@ -60,7 +60,7 @@ export function SearchPanel({
         onAsk={(query) => void ask(query)}
       />
       {askState.phase !== "idle" ? (
-        <AskView state={askState} />
+        <AskView tenantId={tenantId} state={askState} />
       ) : (
         activeQuery !== "" && <ActiveSearch tenantId={tenantId} query={activeQuery} />
       )}
