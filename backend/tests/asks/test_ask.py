@@ -2,9 +2,11 @@
 charged to the Credit Balance, through the real app, Postgres and OpenSearch,
 with the fake answer provider (ADR-0016, ADR-0017)."""
 
+import asyncio
 import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -19,12 +21,15 @@ from core.ratelimit.limiter import SlidingWindowLimiter
 from core.search.dependencies import get_search_index
 from core.search.opensearch_index import OpenSearchIndex
 from core.search.provider import SearchIndex
+from credits.adjustment import adjust_credits
+from credits.config import CreditSettings
 from credits.models import CreditLedgerEntry, CreditLedgerKind
+from documents.dependencies import get_db_session
 from httpx import AsyncClient, Response
 from main import app
 from redis import asyncio as redis_asyncio
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tenants.permissions import Role
 
 from tests.documents.conftest import Caller
@@ -37,6 +42,8 @@ from tests.support.fake_search_index import FakeSearchIndex
 ASKS_URL = "/api/v1/asks"
 QUERY = "payment terms"
 _STARTING_TOKENS = 200_000
+# What the fake answer provider reports by default: 2,400 input + 650 output.
+_ASK_CHARGE_TOKENS = 3_050
 
 
 async def _give_credits(
@@ -254,10 +261,10 @@ async def test_the_ask_and_its_ask_charge_are_saved_and_the_balance_drops(
         caller.tenant_id,
         ask.id,
         caller.user_id,
-        -3_050,
+        -_ASK_CHARGE_TOKENS,
     )
     balance = (await client.get("/api/v1/credit-balance")).json()
-    assert balance["tokens"] == _STARTING_TOKENS - 3_050
+    assert balance["tokens"] == _STARTING_TOKENS - _ASK_CHARGE_TOKENS
     assert done["balance_credits"] == balance["credits"]
 
 
@@ -281,7 +288,7 @@ async def test_deleting_an_ask_keeps_its_ask_charge(
         )
     )
     assert charge is not None
-    assert (charge.ask_id, charge.tokens) == (None, -3_050)
+    assert (charge.ask_id, charge.tokens) == (None, -_ASK_CHARGE_TOKENS)
 
 
 async def _seed_payment_chunk(
@@ -411,10 +418,101 @@ async def test_a_tenant_without_credits_is_refused_before_retrieval_runs(
     response = await _ask(client)
 
     assert response.status_code == 402
-    assert response.json()["error"] == "No credits left"
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json() == {
+        "type": "credits-exhausted",
+        "title": "No credits left",
+        "status": 402,
+        "detail": "The Credit Balance is used up. Ask an Admin to get more Credits.",
+    }
     assert fake_embedding_provider.requests == []
     assert fake_reranker.requests == []
     assert fake_answer_provider.requests == []
+
+
+async def _balance_tokens(client: AsyncClient) -> int:
+    return (await client.get("/api/v1/credit-balance")).json()["tokens"]
+
+
+def _own_sessions(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
+    """Sessions on the test database apart from the shared `db_session`."""
+    return async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+
+async def test_one_token_above_zero_lets_an_ask_run_and_take_the_balance_negative(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id, 1)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+
+    response = await _ask(client)
+
+    assert response.status_code == 200
+    name, done = _events(response)[-1]
+    assert (name, done["status"]) == ("done", "completed")
+    assert await _balance_tokens(client) == 1 - _ASK_CHARGE_TOKENS
+    assert (await _ask(client)).status_code == 402
+
+
+async def test_two_asks_at_once_on_a_nearly_empty_balance_both_complete(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id, 1_000)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+    # Each request gets its own session, as in production, so the two Asks
+    # really run side by side.
+    sessions = _own_sessions(db_session)
+
+    async def _own_session() -> AsyncIterator[AsyncSession]:
+        async with sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_db_session] = _own_session
+    # Neither Ask is charged before both are streaming, so both passed the
+    # balance check while it was still above 0.
+    fake_answer_provider.after_delta = asyncio.Barrier(2).wait
+
+    async with asyncio.timeout(30):
+        first, second = await asyncio.gather(_ask(client), _ask(client))
+
+    assert [_events(first)[-1][1]["status"], _events(second)[-1][1]["status"]] == [
+        "completed",
+        "completed",
+    ]
+    assert await _balance_tokens(client) == 1_000 - 2 * _ASK_CHARGE_TOKENS
+    fake_answer_provider.after_delta = None
+    assert (await _ask(client)).status_code == 402
+
+
+async def test_a_top_up_above_zero_lets_asks_run_again(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id, -1_500)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+    assert (await _ask(client)).status_code == 402
+
+    # What `make adjust-credits` runs.
+    await adjust_credits(
+        _own_sessions(db_session),
+        CreditSettings(),
+        tenant_id=caller.tenant_id,
+        credits=2,
+        note="Top-up",
+    )
+
+    response = await _ask(client)
+    assert response.status_code == 200
+    assert _events(response)[-1][1]["status"] == "completed"
 
 
 async def test_a_user_is_limited_to_10_asks_a_minute(

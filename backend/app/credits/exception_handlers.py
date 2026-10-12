@@ -15,7 +15,15 @@ def register_credit_exception_handlers(app: FastAPI) -> None:
 async def _handle_credit_balance_exhausted(
     _: Request, exc: CreditBalanceExhaustedError
 ) -> JSONResponse:
+    # An RFC 9457 problem (MVP design §API), so a client can tell this 402
+    # apart by `type` without reading the text.
     return JSONResponse(
         status_code=status.HTTP_402_PAYMENT_REQUIRED,
-        content={"error": "No credits left", "message": str(exc)},
+        content={
+            "type": "credits-exhausted",
+            "title": "No credits left",
+            "status": status.HTTP_402_PAYMENT_REQUIRED,
+            "detail": str(exc),
+        },
+        media_type="application/problem+json",
     )

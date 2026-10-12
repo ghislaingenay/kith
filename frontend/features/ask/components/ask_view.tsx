@@ -182,6 +182,8 @@ function failureMessage({ error, done }: AskState): string {
     return "The answer failed. No credits were used. Try again.";
   }
   const status = error instanceof ApiError ? error.status : null;
+  // The Credit Balance refreshes after each Ask, so Ask AI then says who to ask.
+  if (status === 402) return "No credits left.";
   if (status === 429) return "You are asking too fast. Wait a moment and try again.";
   if (status === 503) return "Answers are unavailable right now.";
   return "The answer failed. Try again.";
