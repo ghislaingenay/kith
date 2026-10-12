@@ -41,7 +41,7 @@ export function AskView({
   return (
     <div className="space-y-4">
       {state.passages === null ? (
-        state.phase === "streaming" && <LoadingCitations />
+        showSources && state.phase === "streaming" && <LoadingCitations />
       ) : (
         showSources && (
           <ol aria-label="Citations" className="grid gap-2 sm:grid-cols-2">

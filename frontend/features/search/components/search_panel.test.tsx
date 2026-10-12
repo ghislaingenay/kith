@@ -664,6 +664,23 @@ describe("SearchPanel's Ask citations", () => {
     expect(screen.queryByRole("list", { name: "Citations" })).not.toBeInTheDocument();
   });
 
+  it("shows no Citations placeholder while streaming when sources are turned off", async () => {
+    askFlags.showSources = false;
+    const ask = mockAskStream();
+    renderAskingPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+
+    expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled();
+    expect(screen.queryByRole("status", { name: "Finding passages" })).not.toBeInTheDocument();
+
+    ask.send("citations", { passages: TWO_SOURCES });
+    ask.send("answer_delta", { text: "Due in 30 days [1]." });
+    ask.send("done", DONE);
+    ask.end();
+    await expectAnswer("Due in 30 days.");
+  });
+
   it("shows a marker with no Citation as plain text", async () => {
     mockAsk(TWO_SOURCES, ["Due [1], or later [7]."]);
     renderAskingPanel();
