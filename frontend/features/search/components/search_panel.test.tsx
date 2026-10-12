@@ -40,6 +40,26 @@ vi.mock("next/navigation", () => ({
 
 const API_URL = "http://localhost:8000/api/v1";
 const TENANT_ID = "0b8e6f0e-6f6e-4c1c-9d55-4a0a4a3b1a10";
+const NO_CREDITS_MESSAGE =
+  "Acme has no credits left. Ask an Admin to request more. Search still works.";
+
+function mockCreditBalance(overrides = {}) {
+  server.use(
+    http.get(`${API_URL}/credit-balance`, () =>
+      HttpResponse.json({
+        credits: 142,
+        tokens: 142_310,
+        is_low: false,
+        is_exhausted: false,
+        ...overrides,
+      }),
+    ),
+  );
+}
+
+function mockExhaustedCreditBalance() {
+  mockCreditBalance({ credits: -2, tokens: -1_500, is_low: true, is_exhausted: true });
+}
 
 function apiResult(overrides = {}) {
   return {
@@ -93,7 +113,7 @@ function renderPanel(
 ) {
   render(
     <QueryClientProvider client={client}>
-      <SearchPanel tenantId={TENANT_ID} canAsk={canAsk} />
+      <SearchPanel tenantId={TENANT_ID} tenantName="Acme" canAsk={canAsk} />
     </QueryClientProvider>,
   );
   return client;
@@ -193,6 +213,7 @@ async function askAndFinish(query = "terms") {
 
 beforeEach(() => {
   mockLibrary();
+  mockCreditBalance();
   navigation.url = "";
   navigation.push.mockReset();
   askFlags.showSources = true;
@@ -468,20 +489,17 @@ describe("SearchPanel's Ask", () => {
 
   it("refreshes the sidebar's Credit Balance after the Ask", async () => {
     mockAsk();
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(["credit-balance", TENANT_ID], {
-      credits: 142,
-      tokens: 142_310,
-      is_low: false,
-      is_exhausted: false,
-    });
-    renderPanel(client, true);
+    const client = renderAskingPanel();
+    await waitFor(() =>
+      expect(client.getQueryData(["credit-balance", TENANT_ID])).toMatchObject({ credits: 142 }),
+    );
+    mockCreditBalance({ credits: 138, tokens: 138_310 });
     await userEvent.type(await screen.findByRole("searchbox"), "terms");
     await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
 
     await expectAnswer("Payment is due in 30 days [1].");
     await waitFor(() =>
-      expect(client.getQueryState(["credit-balance", TENANT_ID])?.isInvalidated).toBe(true),
+      expect(client.getQueryData(["credit-balance", TENANT_ID])).toMatchObject({ credits: 138 }),
     );
   });
 
@@ -585,6 +603,65 @@ describe("SearchPanel's Ask", () => {
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(navigation.push).toHaveBeenCalledWith("/w/acme?q=terms&type=search");
     expect(screen.queryByLabelText("Answer")).not.toBeInTheDocument();
+  });
+});
+
+describe("SearchPanel's Ask with no credits left", () => {
+  it("disables Ask AI and says why and who to ask", async () => {
+    mockExhaustedCreditBalance();
+    renderAskingPanel();
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled(),
+    );
+    expect(screen.getByRole("button", { name: "Ask AI" })).toHaveAccessibleDescription(
+      NO_CREDITS_MESSAGE,
+    );
+    expect(screen.getByText(NO_CREDITS_MESSAGE)).toBeInTheDocument();
+  });
+
+  it("still runs a Search", async () => {
+    mockExhaustedCreditBalance();
+    navigation.url = "q=cat&type=search";
+    mockSearch();
+    renderAskingPanel();
+
+    expect(await screen.findByText("report.pdf")).toBeInTheDocument();
+    expect(await screen.findByText(NO_CREDITS_MESSAGE)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(navigation.push).toHaveBeenCalledWith("/w/acme?q=cat&type=search");
+  });
+
+  it("keeps Ask AI enabled with no message while credits are left", async () => {
+    renderAskingPanel();
+
+    expect(await screen.findByRole("button", { name: "Ask AI" })).toBeEnabled();
+    expect(screen.queryByText(NO_CREDITS_MESSAGE)).not.toBeInTheDocument();
+  });
+
+  it("explains an Ask refused because the credits ran out meanwhile, then disables Ask AI", async () => {
+    server.use(
+      http.post(`${API_URL}/asks`, () => {
+        mockExhaustedCreditBalance();
+        return HttpResponse.json(
+          {
+            type: "credits-exhausted",
+            title: "No credits left",
+            status: 402,
+            detail: "The Credit Balance is used up. Ask an Admin to get more Credits.",
+          },
+          { status: 402, headers: { "Content-Type": "application/problem+json" } },
+        );
+      }),
+    );
+    renderAskingPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("No credits left.");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled(),
+    );
   });
 });
 

@@ -21,7 +21,11 @@ export default async function WorkspacePage({
       </p>
       {/* useSearchParams needs a Suspense boundary to prerender. */}
       <Suspense>
-        <SearchPanel tenantId={tenantId} canAsk={role !== "viewer"} />
+        <SearchPanel
+          tenantId={tenantId}
+          tenantName={tenantName}
+          canAsk={role !== "viewer"}
+        />
       </Suspense>
     </div>
   );
