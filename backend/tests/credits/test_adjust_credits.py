@@ -3,8 +3,12 @@ Credits or takes back a mistaken top-up. `adjust_credits` is called as a
 function against real Postgres, and the balance is read back from
 `GET /api/v1/credit-balance`."""
 
+import os
+import subprocess
+import sys
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from core.database import DatabaseSettings, create_engine, create_session_factory
@@ -171,3 +175,25 @@ async def test_a_deleted_tenant_is_refused_and_nothing_is_written(
         await _adjust(session_factory, tenant_id, 10)
 
     assert await _ledger_row_count(db_session) == 0
+
+
+def test_the_script_alone_knows_every_table_the_ledger_points_to() -> None:
+    # A fresh interpreter: the test process has already imported the whole
+    # app, which registers every table and would hide a missing one.
+    check = (
+        "import scripts.adjust_credits\n"
+        "from credits.models import CreditLedgerEntry\n"
+        "for fk in CreditLedgerEntry.__table__.foreign_keys:\n"
+        "    fk.column\n"
+    )
+    app_dir = Path(__file__).resolve().parents[2] / "app"
+
+    result = subprocess.run(
+        [sys.executable, "-c", check],
+        env={**os.environ, "PYTHONPATH": str(app_dir)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr

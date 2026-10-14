@@ -6,10 +6,12 @@ import asyncio
 import sys
 import uuid
 
+from asks import models as asks_models  # noqa: F401 — the ledger points to asks
 from core.container import container
 from credits.adjustment import CreditAdjustmentResult, adjust_credits
 from credits.exceptions import BlankAdjustmentNoteError, InvalidCreditAmountError
 from tenants.exceptions import TenantNotFound
+from users import models as users_models  # noqa: F401 — the ledger points to users
 
 
 def _print(adjustment: CreditAdjustmentResult) -> None:
