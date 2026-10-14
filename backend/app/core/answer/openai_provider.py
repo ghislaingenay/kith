@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from typing import cast
 
 import openai
-from core.answer.config import AnswerSettings
+from core.answer.config import ANSWER_TIMEOUT_SECONDS, AnswerSettings
 from core.answer.exceptions import AnswerError, AnswerUnavailableError
 from core.answer.provider import (
     AnswerDelta,
@@ -17,8 +17,6 @@ from core.answer.provider import (
 from openai import AsyncOpenAI
 from openai.types.responses import Response
 from openai.types.shared import ReasoningEffort
-
-ANSWER_TIMEOUT_SECONDS = 60.0
 
 
 def _is_openai_unavailable(error: openai.APIError) -> bool:

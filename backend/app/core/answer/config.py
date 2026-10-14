@@ -5,6 +5,10 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ANSWER_TIMEOUT_SECONDS = 60.0
+"""How long the model may take to write a whole Answer: the time limit around
+the provider, and the OpenAI client's own timeout."""
+
 
 class AnswerSettings(BaseSettings):
     """Env-driven config for the model that writes an Ask's Answer."""

@@ -7,9 +7,6 @@ from contextlib import aclosing
 from core.answer.exceptions import AnswerUnavailableError
 from core.answer.provider import AnswerDelta, AnswerEnd, AnswerProvider, AnswerRequest
 
-ANSWER_TIMEOUT_SECONDS = 60.0
-"""How long the model may take to write a whole Answer."""
-
 
 class TimeLimitedAnswerProvider(AnswerProvider):
     """Gives up on an Answer that takes longer than `timeout_seconds` in all,

@@ -1,13 +1,10 @@
 """Builds the configured `AnswerProvider`, if any."""
 
 from core.answer.circuit_breaker_answer_provider import CircuitBreakerAnswerProvider
-from core.answer.config import AnswerSettings
+from core.answer.config import ANSWER_TIMEOUT_SECONDS, AnswerSettings
 from core.answer.openai_provider import OpenAIAnswerProvider
 from core.answer.provider import AnswerProvider
-from core.answer.time_limited_answer_provider import (
-    ANSWER_TIMEOUT_SECONDS,
-    TimeLimitedAnswerProvider,
-)
+from core.answer.time_limited_answer_provider import TimeLimitedAnswerProvider
 from core.circuit_breaker.breaker import CircuitBreaker
 
 
