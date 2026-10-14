@@ -7,7 +7,8 @@ success closes the breaker, its failure reopens it for another timeout.
 Every state change is logged, with the breaker's `name`."""
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import NoReturn
 
@@ -43,6 +44,13 @@ class CircuitBreaker:
         self._opened_at = 0.0
 
     async def call[T](self, func: Callable[[], Awaitable[T]]) -> T:
+        async with self.guard():
+            return await func()
+
+    @asynccontextmanager
+    async def guard(self) -> AsyncIterator[None]:
+        """`call` for work that is not one awaitable, such as a stream read
+        to its end: the block counts as one call."""
         if self._state == _State.OPEN:
             if self._clock() - self._opened_at < self._reset_timeout_seconds:
                 self._reject()
@@ -53,7 +61,7 @@ class CircuitBreaker:
 
         started_in = self._state
         try:
-            result = await func()
+            yield
         except self._failure_types:
             # A call that began while closed and ends after the breaker
             # opened is stale: it says nothing about the probe.
@@ -73,7 +81,6 @@ class CircuitBreaker:
         if started_in == _State.HALF_OPEN or self._state == _State.CLOSED:
             self._consecutive_failures = 0
             self._transition(_State.CLOSED)
-        return result
 
     def _record_failure(self) -> None:
         self._consecutive_failures += 1

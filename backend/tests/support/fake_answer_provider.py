@@ -1,8 +1,9 @@
 """An in-memory `AnswerProvider` stand-in. Streams scripted deltas and token
 counts, records every request it receives, and can be scripted to fail
 before any output, fail after reporting usage, hit the output cap or be
-slow."""
+slow, and notes whether it was stopped part-way."""
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 from core.answer.provider import (
@@ -33,6 +34,8 @@ class FakeAnswerProvider(AnswerProvider):
         """Raised before any delta, as a model that cannot be reached does."""
         self.after_delta: Callable[[], Awaitable[None]] | None = None
         """Awaited after each delta, to stand for a slow model."""
+        self.was_stopped = False
+        """Whether the reader stopped the Answer before its end."""
 
     async def stream_answer(
         self, request: AnswerRequest
@@ -43,10 +46,14 @@ class FakeAnswerProvider(AnswerProvider):
         if self.fails_before_output:
             yield AnswerEnd(AnswerEnding.FAILED, None)
             return
-        for text in self.deltas:
-            yield AnswerDelta(text)
-            if self.after_delta is not None:
-                await self.after_delta()
+        try:
+            for text in self.deltas:
+                yield AnswerDelta(text)
+                if self.after_delta is not None:
+                    await self.after_delta()
+        except (asyncio.CancelledError, GeneratorExit):
+            self.was_stopped = True
+            raise
         if self.fails_after_usage:
             yield AnswerEnd(AnswerEnding.FAILED, self.usage)
         elif self.hits_output_cap:

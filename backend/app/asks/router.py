@@ -1,10 +1,12 @@
 """HTTP layer for the asks domain."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from starlette.types import Send
 
 from asks.dependencies import get_ask_service
 from asks.schemas import (
@@ -45,9 +47,24 @@ router = APIRouter(
 )
 
 
-async def _server_sent_events(events: AsyncIterator[AskEvent]) -> AsyncIterator[str]:
-    async for event in events:
-        yield f"event: {_EVENT_NAMES[type(event)]}\ndata: {event.model_dump_json()}\n\n"
+async def _server_sent_events(
+    events: AsyncGenerator[AskEvent],
+) -> AsyncGenerator[str]:
+    async with aclosing(events):
+        async for event in events:
+            yield f"event: {_EVENT_NAMES[type(event)]}\ndata: {event.model_dump_json()}\n\n"
+
+
+class _ClosingStreamingResponse(StreamingResponse):
+    """Closes its events however the response ends. A client that hangs up
+    while the stream waits to send would otherwise leave the Ask suspended,
+    with the model still answering, until garbage collection."""
+
+    body_iterator: AsyncGenerator[str]
+
+    async def stream_response(self, send: Send) -> None:
+        async with aclosing(self.body_iterator):
+            await super().stream_response(send)
 
 
 @router.post(
@@ -69,7 +86,7 @@ async def ask(
     events = await service.ask(
         tenant_id=tenant.tenant_id, user_id=user.id, query=data.query
     )
-    return StreamingResponse(
+    return _ClosingStreamingResponse(
         _server_sent_events(events),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store"},

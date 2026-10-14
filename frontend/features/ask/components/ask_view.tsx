@@ -37,13 +37,16 @@ export function AskView({
   const cardId = (n: number) => `${idPrefix}-citation-${n}`;
   // Only a finished Answer can say a source went unmarked.
   const cited = state.done ? citedNumbers(state.answer) : null;
+  // No passages means the model was never asked (`no_chunks`).
+  const hasPassages = state.passages !== null && state.passages.length > 0;
 
   return (
     <div className="space-y-4">
       {state.passages === null ? (
         showSources && state.phase === "streaming" && <LoadingCitations />
       ) : (
-        showSources && (
+        showSources &&
+        hasPassages && (
           <ol aria-label="Citations" className="grid gap-2 sm:grid-cols-2">
             {state.passages.map((passage) => (
               <li key={passage.chunk_id}>
@@ -58,7 +61,7 @@ export function AskView({
           </ol>
         )
       )}
-      {state.passages !== null && (
+      {hasPassages && (
         <p aria-label="Answer" aria-live="polite" className="whitespace-pre-wrap text-sm">
           {showMarkers ? (
             <MarkedAnswer
@@ -69,6 +72,11 @@ export function AskView({
           ) : (
             stripCitationMarkers(state.answer)
           )}
+        </p>
+      )}
+      {state.done?.status === "no_chunks" && (
+        <p role="status" className="text-sm text-muted-foreground">
+          No passages in your Documents match this.
         </p>
       )}
       {state.done?.status === "cut_off" && (

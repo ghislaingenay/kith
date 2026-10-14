@@ -13,8 +13,11 @@ import pytest
 import structlog
 from arq.connections import RedisSettings
 from asks.models import Ask
+from core.answer.circuit_breaker_answer_provider import CircuitBreakerAnswerProvider
 from core.answer.dependencies import get_answer_provider
 from core.answer.exceptions import AnswerUnavailableError
+from core.answer.time_limited_answer_provider import TimeLimitedAnswerProvider
+from core.circuit_breaker.breaker import CircuitBreaker
 from core.logging.config import LoggingSettings, configure_logging
 from core.ratelimit.dependencies import get_rate_limiter
 from core.ratelimit.limiter import SlidingWindowLimiter
@@ -151,6 +154,227 @@ async def test_a_model_that_cannot_be_reached_ends_the_stream_failed_and_charges
         0,
         200,
     )
+
+
+async def _done_and_saved_ask(
+    response: Response, db_session: AsyncSession
+) -> tuple[dict[str, Any], Ask]:
+    done = _events(response)[-1][1]
+    db_session.expire_all()
+    ask = await db_session.get(Ask, uuid.UUID(done["ask_id"]))
+    assert ask is not None
+    return done, ask
+
+
+@pytest.mark.parametrize("script", ["hits_output_cap", "fails_after_usage"])
+async def test_an_answer_ended_early_after_usage_was_reported_is_cut_off_and_charged(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+    script: str,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+    setattr(fake_answer_provider, script, True)
+
+    done, ask = await _done_and_saved_ask(await _ask(client), db_session)
+
+    assert (done["status"], done["credits_charged"], done["balance_credits"]) == (
+        "cut_off",
+        4,
+        196,
+    )
+    assert (ask.status, ask.answer) == ("cut_off", "The payment terms are 30 days [1].")
+    assert await _balance_tokens(client) == _STARTING_TOKENS - _ASK_CHARGE_TOKENS
+
+
+async def test_a_failure_with_nothing_reported_is_failed_and_charges_nothing(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+    fake_answer_provider.fails_after_usage = True
+    fake_answer_provider.usage = None
+
+    done, ask = await _done_and_saved_ask(await _ask(client), db_session)
+
+    assert (done["status"], done["credits_charged"]) == ("failed", 0)
+    assert (ask.status, ask.input_tokens) == ("failed", None)
+    assert await _balance_tokens(client) == _STARTING_TOKENS
+
+
+def _behind_the_answer_breaker(
+    fake_answer_provider: FakeAnswerProvider, breaker: CircuitBreaker
+) -> None:
+    """Answers through the real time limit and breaker, as in production,
+    with a time limit short enough for a test."""
+    provider = CircuitBreakerAnswerProvider(
+        TimeLimitedAnswerProvider(fake_answer_provider, timeout_seconds=0.05),
+        breaker,
+    )
+    app.dependency_overrides[get_answer_provider] = lambda: provider
+
+
+def _answer_breaker() -> CircuitBreaker:
+    return CircuitBreaker(
+        name="answer",
+        failure_threshold=1,
+        reset_timeout_seconds=30,
+        failure_types=(AnswerUnavailableError,),
+    )
+
+
+async def test_a_model_slower_than_the_time_limit_is_failed_and_charges_nothing(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+    fake_answer_provider.after_delta = lambda: asyncio.sleep(1)
+    _behind_the_answer_breaker(fake_answer_provider, _answer_breaker())
+
+    done, ask = await _done_and_saved_ask(await _ask(client), db_session)
+
+    assert (done["status"], done["credits_charged"]) == ("failed", 0)
+    assert (ask.status, ask.answer) == ("failed", "The payment terms are ")
+    assert await _balance_tokens(client) == _STARTING_TOKENS
+
+
+async def test_an_open_answer_breaker_is_failed_without_calling_the_model(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+    fake_answer_provider.error = AnswerUnavailableError("down")
+    _behind_the_answer_breaker(fake_answer_provider, _answer_breaker())
+    await _ask(client)  # Opens the breaker.
+    fake_answer_provider.error = None
+
+    response = await _ask(client)
+
+    events = _events(response)
+    assert [name for name, _ in events] == ["citations", "done"]
+    done = events[-1][1]
+    assert (done["status"], done["credits_charged"]) == ("failed", 0)
+    assert len(fake_answer_provider.requests) == 1
+    assert await _balance_tokens(client) == _STARTING_TOKENS
+
+
+async def _ask_and_hang_up(hang_up: asyncio.Event, *, stall_reading: bool) -> None:
+    """Asks through the ASGI app itself, since httpx cannot hang up part-way:
+    the client goes away once `hang_up` is set. With `stall_reading`, the
+    client stops reading at the first Answer delta and then hangs up."""
+    request_body = json.dumps({"query": QUERY}).encode()
+    request_sent = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": request_body, "more_body": False}
+        await hang_up.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        if stall_reading and b"event: answer_delta" in message.get("body", b""):
+            hang_up.set()
+            await asyncio.Event().wait()
+
+    scope = {
+        "type": "http",
+        # uvicorn's version: the response listens for the client hanging up.
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": ASKS_URL,
+        "raw_path": ASKS_URL.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"test"), (b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 50000),
+        "server": ("test", 80),
+    }
+    async with asyncio.timeout(10):
+        await app(scope, receive, send)
+
+
+@pytest.mark.parametrize("stall_reading", [False, True], ids=["model", "client"])
+async def test_a_client_that_hangs_up_stops_the_model_and_the_ask_is_still_recorded(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+    stall_reading: bool,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+    hang_up = asyncio.Event()
+
+    async def _hang_up_while_the_model_writes() -> None:
+        hang_up.set()
+        await asyncio.Event().wait()
+
+    if not stall_reading:
+        fake_answer_provider.after_delta = _hang_up_while_the_model_writes
+
+    await _ask_and_hang_up(hang_up, stall_reading=stall_reading)
+
+    assert fake_answer_provider.was_stopped
+    db_session.expire_all()
+    [ask] = (await db_session.scalars(select(Ask))).all()
+    # Nothing was reported before the model was stopped, so nothing is charged.
+    assert (ask.status, ask.answer, ask.input_tokens) == (
+        "failed",
+        "The payment terms are ",
+        None,
+    )
+    assert await _balance_tokens(client) == _STARTING_TOKENS
+
+
+async def test_with_no_matching_chunks_the_model_is_not_called_and_nothing_is_charged(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+
+    response = await _ask(client)
+
+    events = _events(response)
+    assert events[0] == ("citations", {"passages": []})
+    assert [name for name, _ in events] == ["citations", "done"]
+    done = events[-1][1]
+    assert (done["status"], done["credits_charged"], done["balance_credits"]) == (
+        "no_chunks",
+        0,
+        200,
+    )
+    assert fake_answer_provider.requests == []
+    _, ask = await _done_and_saved_ask(response, db_session)
+    assert (ask.status, ask.answer, ask.cited_chunks, ask.input_tokens) == (
+        "no_chunks",
+        "",
+        [],
+        None,
+    )
+    assert await _balance_tokens(client) == _STARTING_TOKENS
 
 
 async def test_the_model_gets_the_query_and_the_five_reranked_passages_numbered_in_order(
@@ -540,9 +764,11 @@ async def test_an_ask_is_never_made_by_get_and_is_not_cached(
     client: AsyncClient,
     caller: Caller,
     db_session: AsyncSession,
+    search_index: OpenSearchIndex,
     fake_answer_provider: FakeAnswerProvider,
 ) -> None:
     await _give_credits(db_session, caller.tenant_id)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
 
     get_response = await client.get(ASKS_URL, params={"query": QUERY})
     post_response = await _ask(client)
@@ -590,3 +816,39 @@ async def test_the_query_and_answer_text_are_never_logged(
         "degraded": False,
         "log_level": "info",
     }
+
+
+@pytest.mark.parametrize(
+    ("script", "status"),
+    [
+        (None, "completed"),
+        ("hits_output_cap", "cut_off"),
+        ("fails_before_output", "failed"),
+        ("no_chunks", "no_chunks"),
+    ],
+)
+async def test_every_outcome_is_logged_with_its_status_and_without_text(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+    script: str | None,
+    status: str,
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+    if script != "no_chunks":
+        document = await _seed_document(db_session, tenant_id=caller.tenant_id)
+        await _index_chunk(search_index, document, "A confidential merger plan.")
+    if script in ("hits_output_cap", "fails_before_output"):
+        setattr(fake_answer_provider, script, True)
+    fake_answer_provider.deltas = ["The secret merger closes in May [1]."]
+    configure_logging(LoggingSettings())
+
+    with structlog.testing.capture_logs() as structured_logs:
+        await _ask(client, "confidential merger")
+
+    assert "confidential" not in repr(structured_logs)
+    assert "secret" not in repr(structured_logs)
+    [completed] = [log for log in structured_logs if log["event"] == "ask_completed"]
+    assert completed["status"] == status

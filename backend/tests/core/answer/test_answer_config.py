@@ -1,7 +1,8 @@
 import pytest
+from core.answer.circuit_breaker_answer_provider import CircuitBreakerAnswerProvider
 from core.answer.config import AnswerSettings
 from core.answer.factory import create_answer_provider
-from core.answer.openai_provider import OpenAIAnswerProvider
+from core.circuit_breaker.breaker import CircuitBreaker
 from pydantic import ValidationError
 
 _ANSWER_VARIABLES = (
@@ -11,6 +12,15 @@ _ANSWER_VARIABLES = (
     "ANSWER_MAX_OUTPUT_TOKENS",
     "OPENAI_API_KEY",
 )
+
+
+def _breaker() -> CircuitBreaker:
+    return CircuitBreaker(
+        name="answer",
+        failure_threshold=5,
+        reset_timeout_seconds=30,
+        failure_types=(),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +64,10 @@ def test_the_openai_provider_when_an_openai_key_is_set(
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-    assert isinstance(create_answer_provider(AnswerSettings()), OpenAIAnswerProvider)
+    provider = create_answer_provider(AnswerSettings(), _breaker())
+
+    # Behind the time limit and the `answer` breaker, as the reranker is.
+    assert isinstance(provider, CircuitBreakerAnswerProvider)
 
 
 @pytest.mark.parametrize("api_key", [None, ""])
@@ -65,4 +78,4 @@ def test_no_provider_without_an_openai_key(
     if api_key is not None:
         monkeypatch.setenv("OPENAI_API_KEY", api_key)
 
-    assert create_answer_provider(AnswerSettings()) is None
+    assert create_answer_provider(AnswerSettings(), _breaker()) is None
