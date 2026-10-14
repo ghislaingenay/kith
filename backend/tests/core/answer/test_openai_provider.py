@@ -92,17 +92,33 @@ class _StubResponses:
         self.stream_error = stream_error
         self.create_calls: list[dict[str, object]] = []
 
-    async def create(self, **options: object) -> AsyncIterator[object]:
+        self.streams: list[_StubStream] = []
+
+    async def create(self, **options: object) -> "_StubStream":
         self.create_calls.append(options)
         if self.create_error is not None:
             raise self.create_error
-        return self._stream()
+        stream = _StubStream(self.events, self.stream_error)
+        self.streams.append(stream)
+        return stream
 
-    async def _stream(self) -> AsyncIterator[object]:
+
+class _StubStream:
+    """Like the SDK's `AsyncStream`: closing it ends the HTTP response."""
+
+    def __init__(self, events: list[object], error: Exception | None) -> None:
+        self.events = events
+        self.error = error
+        self.is_closed = False
+
+    async def __aiter__(self) -> AsyncIterator[object]:
         for event in self.events:
             yield event
-        if self.stream_error is not None:
-            raise self.stream_error
+        if self.error is not None:
+            raise self.error
+
+    async def close(self) -> None:
+        self.is_closed = True
 
 
 class _StubClient:
@@ -248,3 +264,23 @@ async def test_a_request_the_model_rejects_is_not_reported_as_unavailable(
         await _collect(_provider(_StubClient(create_error=_status_error(status_code))))
 
     assert not isinstance(raised.value, AnswerUnavailableError)
+
+
+async def test_a_reader_that_stops_early_closes_the_stream_to_openai() -> None:
+    client = _StubClient([_delta("The terms "), _delta("are 30 days."), _completed()])
+    stream = _provider(client).stream_answer(_REQUEST)
+
+    await anext(stream)
+    await stream.aclose()
+
+    [openai_stream] = client.responses.streams
+    assert openai_stream.is_closed
+
+
+async def test_a_finished_answer_closes_the_stream_to_openai() -> None:
+    client = _StubClient()
+
+    await _collect(_provider(client))
+
+    [openai_stream] = client.responses.streams
+    assert openai_stream.is_closed

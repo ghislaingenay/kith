@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from typing import cast
 
 import openai
-from core.answer.config import AnswerSettings
+from core.answer.config import ANSWER_TIMEOUT_SECONDS, AnswerSettings
 from core.answer.exceptions import AnswerError, AnswerUnavailableError
 from core.answer.provider import (
     AnswerDelta,
@@ -17,8 +17,6 @@ from core.answer.provider import (
 from openai import AsyncOpenAI
 from openai.types.responses import Response
 from openai.types.shared import ReasoningEffort
-
-ANSWER_TIMEOUT_SECONDS = 60.0
 
 
 def _is_openai_unavailable(error: openai.APIError) -> bool:
@@ -79,20 +77,24 @@ class OpenAIAnswerProvider(AnswerProvider):
                 store=False,
                 stream=True,
             )
-            async for event in stream:
-                if event.type == "response.output_text.delta":
-                    yield AnswerDelta(event.delta)
-                elif event.type == "response.completed":
-                    yield AnswerEnd(AnswerEnding.COMPLETED, _usage(event.response))
-                    return
-                elif event.type == "response.incomplete":
-                    yield AnswerEnd(
-                        _incomplete_ending(event.response), _usage(event.response)
-                    )
-                    return
-                elif event.type == "response.failed":
-                    yield AnswerEnd(AnswerEnding.FAILED, _usage(event.response))
-                    return
+            try:
+                async for event in stream:
+                    if event.type == "response.output_text.delta":
+                        yield AnswerDelta(event.delta)
+                    elif event.type == "response.completed":
+                        yield AnswerEnd(AnswerEnding.COMPLETED, _usage(event.response))
+                        return
+                    elif event.type == "response.incomplete":
+                        yield AnswerEnd(
+                            _incomplete_ending(event.response), _usage(event.response)
+                        )
+                        return
+                    elif event.type == "response.failed":
+                        yield AnswerEnd(AnswerEnding.FAILED, _usage(event.response))
+                        return
+            finally:
+                # Stops the model when the reader stops early.
+                await stream.close()
         except openai.APIError as error:
             if _is_openai_unavailable(error):
                 raise AnswerUnavailableError(f"Answer failed: {error}") from error

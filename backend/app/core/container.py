@@ -5,6 +5,7 @@ from dependency_injector import containers, providers
 from core.circuit_breaker.breaker import CircuitBreaker
 from core.circuit_breaker.config import CircuitBreakerSettings
 from core.answer.config import AnswerSettings
+from core.answer.exceptions import AnswerUnavailableError
 from core.answer.factory import create_answer_provider
 from core.cache.config import CacheSettings
 from core.cache.factory import CacheProviderFactory
@@ -164,9 +165,20 @@ class Container(containers.DeclarativeContainer):
 
     answer_settings = providers.Singleton(AnswerSettings)
 
+    # Its own breaker, so an answer model outage never stops Search or
+    # Rerank. Only an unavailable or slow model counts; a request it rejects
+    # does not.
+    answer_circuit_breaker = providers.Singleton(
+        CircuitBreaker,
+        name="answer",
+        failure_threshold=circuit_breaker_settings.provided.failure_threshold,
+        reset_timeout_seconds=circuit_breaker_settings.provided.reset_timeout_seconds,
+        failure_types=(AnswerUnavailableError,),
+    )
+
     # `None` without an OpenAI key; Ask then answers 503.
     answer_provider = providers.Singleton(
-        create_answer_provider, settings=answer_settings
+        create_answer_provider, settings=answer_settings, breaker=answer_circuit_breaker
     )
 
     upload_settings = providers.Singleton(UploadSettings)

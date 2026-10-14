@@ -553,6 +553,20 @@ describe("SearchPanel's Ask", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("says no passages match when the Ask found none", async () => {
+    mockAsk([], [], { ...DONE, status: "no_chunks", credits_charged: 0 });
+    renderAskingPanel();
+    await userEvent.type(await screen.findByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+
+    expect(
+      await screen.findByText("No passages in your Documents match this."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Answer")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Citations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("shows no failure or interruption note for a completed Answer", async () => {
     mockAsk();
     renderAskingPanel();
