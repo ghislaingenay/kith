@@ -6,12 +6,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { env } from "@/config/env";
 import { DocumentViewerDialog } from "@/features/document-viewer";
 import { ApiError } from "@/lib/api_client";
-import { cn } from "@/lib/utils";
 
 import type { AskState } from "../hooks/use_ask";
 import type { CitedPassage } from "../types";
 import {
-  citedNumbers,
+  renumberCitations,
   splitCitationMarkers,
   stripCitationMarkers,
 } from "../utils/citation_markers";
@@ -35,25 +34,31 @@ export function AskView({
   const showSources = env.NEXT_PUBLIC_ASK_SHOW_SOURCES;
   const showMarkers = showSources && env.NEXT_PUBLIC_ASK_CITATION_MARKERS;
   const cardId = (n: number) => `${idPrefix}-citation-${n}`;
-  // Only a finished Answer can say a source went unmarked.
-  const cited = state.done ? citedNumbers(state.answer) : null;
   // No passages means the model was never asked (`no_chunks`).
   const hasPassages = state.passages !== null && state.passages.length > 0;
+  // Until the Answer ends, the passages it will cite are unknown: the
+  // Citations wait, and so do the markers.
+  const isWriting = state.phase === "streaming" && state.done === null;
+  // A completed Answer shows only the passages it cites; a failed or cut-off
+  // one keeps every passage the AI read.
+  const { answer, passages } =
+    state.done?.status === "completed" && state.passages
+      ? renumberCitations(state.answer, state.passages)
+      : { answer: state.answer, passages: state.passages };
 
   return (
     <div className="space-y-4">
-      {state.passages === null ? (
-        showSources && state.phase === "streaming" && <LoadingCitations />
+      {isWriting || passages === null ? (
+        showSources && isWriting && <LoadingCitations />
       ) : (
         showSources &&
-        hasPassages && (
+        passages.length > 0 && (
           <ol aria-label="Citations" className="grid gap-2 sm:grid-cols-2">
-            {state.passages.map((passage) => (
+            {passages.map((passage) => (
               <li key={passage.chunk_id}>
                 <CitationCard
                   id={cardId(passage.n)}
                   passage={passage}
-                  isCited={cited?.has(passage.n) ?? true}
                   onOpen={() => setOpened(passage)}
                 />
               </li>
@@ -61,16 +66,12 @@ export function AskView({
           </ol>
         )
       )}
-      {hasPassages && (
+      {hasPassages && passages && (
         <p aria-label="Answer" aria-live="polite" className="whitespace-pre-wrap text-sm">
-          {showMarkers ? (
-            <MarkedAnswer
-              answer={state.answer}
-              passages={state.passages}
-              cardId={cardId}
-            />
+          {showMarkers && !isWriting ? (
+            <MarkedAnswer answer={answer} passages={passages} cardId={cardId} />
           ) : (
-            stripCitationMarkers(state.answer)
+            stripCitationMarkers(answer)
           )}
         </p>
       )}
@@ -133,12 +134,10 @@ function MarkedAnswer({
 function CitationCard({
   id,
   passage,
-  isCited,
   onOpen,
 }: {
   readonly id: string;
   readonly passage: CitedPassage;
-  readonly isCited: boolean;
   readonly onOpen: () => void;
 }) {
   return (
@@ -146,10 +145,7 @@ function CitationCard({
       id={id}
       type="button"
       onClick={onOpen}
-      className={cn(
-        "h-full w-full cursor-pointer rounded-lg border px-3 py-2 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring",
-        !isCited && "opacity-50",
-      )}
+      className="h-full w-full cursor-pointer rounded-lg border px-3 py-2 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring"
     >
       <p className="text-sm font-medium">
         <span className="mr-2 text-muted-foreground">[{passage.n}]</span>
@@ -157,7 +153,6 @@ function CitationCard({
         <span className="ml-2 font-normal text-muted-foreground">
           Page {passage.page_number}
         </span>
-        {!isCited && <span className="sr-only">Not cited in the Answer</span>}
       </p>
       <p className="mt-1 line-clamp-3 whitespace-pre-line text-sm text-muted-foreground">
         {passage.text}
