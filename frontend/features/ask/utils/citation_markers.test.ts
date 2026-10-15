@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { citedNumbers, splitCitationMarkers, stripCitationMarkers } from "./citation_markers";
+import { renumberCitations, splitCitationMarkers, stripCitationMarkers } from "./citation_markers";
 
 describe("splitCitationMarkers", () => {
   it("splits the Answer into text and the markers of known sources", () => {
@@ -46,8 +46,42 @@ describe("stripCitationMarkers", () => {
   });
 });
 
-describe("citedNumbers", () => {
-  it("lists the numbers the Answer marks", () => {
-    expect(citedNumbers("Due [2], or [2] and [7].")).toEqual(new Set([2, 7]));
+describe("renumberCitations", () => {
+  const passage = (n: number) => ({
+    n,
+    chunk_id: `c${n}`,
+    document_id: "d1",
+    document_name: "contract.pdf",
+    page_number: n,
+    text: `Passage ${n}`,
+  });
+  const FIVE = [1, 2, 3, 4, 5].map(passage);
+
+  it("keeps only the marked passages, numbered in the order the Answer marks them", () => {
+    const { answer, passages } = renumberCitations("Due in 30 days [4], or 60 [2].", FIVE);
+
+    expect(answer).toBe("Due in 30 days [1], or 60 [2].");
+    expect(passages).toEqual([
+      { ...passage(4), n: 1 },
+      { ...passage(2), n: 2 },
+    ]);
+  });
+
+  it("gives a passage marked twice one number", () => {
+    const { answer, passages } = renumberCitations("Due [2], then [3][2].", FIVE);
+
+    expect(answer).toBe("Due [1], then [2][1].");
+    expect(passages.map((p) => p.chunk_id)).toEqual(["c2", "c3"]);
+  });
+
+  it("leaves a marker for a number with no passage as it is", () => {
+    const { answer, passages } = renumberCitations("Due [7] or [5].", FIVE);
+
+    expect(answer).toBe("Due [7] or [1].");
+    expect(passages.map((p) => p.chunk_id)).toEqual(["c5"]);
+  });
+
+  it("keeps no passages when the Answer marks none", () => {
+    expect(renumberCitations("Not found.", FIVE)).toEqual({ answer: "Not found.", passages: [] });
   });
 });
