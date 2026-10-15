@@ -1,15 +1,21 @@
 "use client";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { useCreditBalance } from "../api/use_credit_balance";
 import type { CreditBalance as CreditBalanceData } from "../types";
 
-/** The sidebar's "N credits left", amber when low; renders nothing until the
- * balance is known. */
+/** The sidebar's "N credits left", amber when low; a skeleton while the
+ * balance loads, and nothing if it can't be fetched. */
 export function CreditBalance({ tenantId }: { readonly tenantId: string }) {
-  const { data: balance } = useCreditBalance(tenantId);
-  if (!balance) {
+  const { data: balance, isPending, isError } = useCreditBalance(tenantId);
+  if (isPending) {
+    return (
+      <Skeleton role="status" aria-label="Loading credits" className="mx-2 h-4 w-24" />
+    );
+  }
+  if (isError) {
     return null;
   }
 
