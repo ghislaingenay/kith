@@ -183,6 +183,16 @@ describe("WorkspaceShell", () => {
       expect(seen.tenantIds).toEqual([TENANT_ID]);
     });
 
+    it("shows a skeleton until the balance arrives", async () => {
+      renderShell({ name: "Jane", avatar_url: null });
+
+      expect(screen.getByRole("status", { name: "Loading credits" })).toBeInTheDocument();
+      await screen.findByText("142 credits left");
+      expect(
+        screen.queryByRole("status", { name: "Loading credits" }),
+      ).not.toBeInTheDocument();
+    });
+
     it("explains what credits are in a tooltip", async () => {
       const user = userEvent.setup();
       renderShell({ name: "Jane", avatar_url: null });

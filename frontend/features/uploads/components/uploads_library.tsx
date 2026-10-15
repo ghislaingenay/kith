@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DocumentViewerDialog } from "@/features/document-viewer";
 
 import {
@@ -80,11 +81,13 @@ export function UploadsLibrary({ tenantId }: { readonly tenantId: string }) {
   };
 
   return (
-    <section className="w-full max-w-4xl" aria-label="Uploaded documents">
+    <section
+      className="w-full max-w-4xl"
+      aria-label="Uploaded documents"
+      aria-busy={documents.isPending}
+    >
       {summary.data && <ProcessingBanner summary={summary.data} />}
-      {documents.isPending && (
-        <p className="text-sm text-muted-foreground">Loading documents…</p>
-      )}
+      {documents.isPending && <LoadingRows />}
       {documents.isError && (
         <p role="alert" className="text-sm text-destructive">
           {documents.error.message}
@@ -176,6 +179,16 @@ function ProcessingBanner({ summary }: { readonly summary: LibrarySummary }) {
         `${countFiles(in_progress)} ${in_progress === 1 ? "is" : "are"} still processing. Answers may be incomplete for the newest ones. `}
       {failed > 0 && `${countFiles(failed)} failed to process.`}
     </p>
+  );
+}
+
+function LoadingRows() {
+  return (
+    <div aria-hidden="true" className="space-y-2">
+      {LOADING_ROWS.map((row) => (
+        <Skeleton key={row} className="h-12 w-full" />
+      ))}
+    </div>
   );
 }
 
@@ -318,5 +331,7 @@ function DocumentRow({
 function countFiles(count: number): string {
   return `${count} ${count === 1 ? "file" : "files"}`;
 }
+
+const LOADING_ROWS = [0, 1, 2];
 
 const COLUMNS = ["Name", "Size", "Uploaded By", "Date", "Status"];

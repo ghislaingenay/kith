@@ -79,6 +79,17 @@ describe("UploadsLibrary", () => {
     expect(seen.tenantIds).toEqual([TENANT_ID]);
   });
 
+  it("shows skeleton rows until the Documents arrive", async () => {
+    mockLibraryApi([apiDocument()]);
+
+    renderLibrary();
+
+    const library = screen.getByRole("region", { name: "Uploaded documents" });
+    expect(library).toHaveAttribute("aria-busy", "true");
+    await screen.findByText("report.pdf");
+    expect(library).toHaveAttribute("aria-busy", "false");
+  });
+
   it("does not show the removed Type and Linked Page columns", async () => {
     mockLibraryApi([apiDocument()]);
 
