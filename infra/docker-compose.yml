@@ -97,7 +97,8 @@ services:
       timeout: 5s
       retries: 5
 
-  # ADR-0012: security is off for local development only.
+  # ADR-0012: security is off here and on the VPS deploy (private network
+  # only); it is turned on with the move to AWS.
   opensearch:
     image: opensearchproject/opensearch:2.19.1
     environment:
