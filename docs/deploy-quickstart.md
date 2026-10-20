@@ -1,0 +1,273 @@
+# Deploy quickstart (VPS, first time)
+
+How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
+
+> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `infra/docker-compose.prod.yml`, `infra/Caddyfile`, `frontend/Dockerfile`, `.github/workflows/deploy.yml`, the `pg-backup` service, `make rebuild-index`, and the Sentry SDK setup (`SENTRY_DSN`). Update this page as each one lands.
+
+## The shape
+
+```
+internet ──443──▶ Caddy ──┬── /api/*, /health ──▶ app (FastAPI, gunicorn)
+                          └── everything else ──▶ frontend (Next.js)
+
+private Docker network: app, worker-ingest, frontend, postgres, redis, opensearch, pg-backup
+outside services:       AWS S3 (files + backups), Resend (email), Sentry, OpenAI, Voyage
+```
+
+Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS's `127.0.0.1` only, for an SSH tunnel. Everything else publishes nothing.
+
+## 1. What you need before starting
+
+- A VPS: Ubuntu 24.04, **4 GB RAM minimum**, 2 vCPU, 40 GB disk. The stack uses about 2.7 GB, and a deploy briefly runs a second `app` and `frontend`.
+- A domain you can add DNS records to. Below it is `app.example.com`.
+- Accounts: AWS, Resend, Sentry, OpenAI, Voyage.
+- Admin access to the GitHub repo.
+
+## 2. Outside resources (one time, by hand)
+
+**DNS.** An `A` record (and `AAAA` if the VPS has IPv6) for `app.example.com` pointing at the VPS. Caddy needs it in place before it can get the HTTPS certificate.
+
+**AWS S3.** Use the region closest to the VPS.
+
+1. Create a bucket, e.g. `kith-prod`, with "Block all public access" on. The app uses presigned URLs, so nothing in it is ever public.
+2. CORS: the browser uploads PDFs straight to S3 and loads previews from it (ADR-0009).
+
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://app.example.com"],
+       "AllowedMethods": ["GET", "PUT"],
+       "AllowedHeaders": ["*"],
+       "ExposeHeaders": ["ETag"],
+       "MaxAgeSeconds": 3000
+     }
+   ]
+   ```
+
+3. Lifecycle rules:
+   - prefix `pending/`: expire after 1 day. This is the backstop for abandoned uploads (ADR-0009).
+   - prefix `backups/`: expire after 14 days.
+4. An IAM user, e.g. `kith-vps`, with access keys. Give it a policy limited to this bucket: `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on `arn:aws:s3:::kith-prod` and `arn:aws:s3:::kith-prod/*`.
+
+**Resend.** Add and verify your sending domain (SPF and DKIM records in DNS), then create an API key with "sending access" only. Its SMTP login is host `smtp.resend.com`, port `465`, user `resend`, password = the API key.
+
+**Sentry.** Do these steps once the Sentry SDK is in the code.
+
+1. Create two projects, `kith-backend` (Python) and `kith-frontend` (Next.js), and note both DSNs.
+2. Add an **Uptime** monitor on `https://app.example.com/health`.
+3. Add a **Cron** monitor named `pg-backup`, scheduled daily, which the backup job checks in to.
+
+**GitHub** (repo settings → Secrets and variables → Actions).
+
+- Variables, which get baked into the frontend image at build time:
+  - `NEXT_PUBLIC_API_URL` = `https://app.example.com`
+  - `NEXT_PUBLIC_ASK_SHOW_SOURCES` = `true`
+  - `NEXT_PUBLIC_ASK_CITATION_MARKERS` = `true`
+- Secrets, used by the deploy job to reach the VPS:
+  - `VPS_HOST`
+  - `VPS_USER` (`deploy`)
+  - `VPS_SSH_KEY` (the private half of a key made only for deploys)
+
+## 3. Prepare the VPS
+
+Run these as root, or with `sudo`, the first time.
+
+```sh
+# a user for deploys; you and CI log in as it
+adduser --disabled-password deploy
+mkdir -p /home/deploy/.ssh
+# paste your own public key AND the CI deploy public key, one per line
+nano /home/deploy/.ssh/authorized_keys
+chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
+
+# keys only, no root login
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/; s/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+systemctl restart ssh
+
+# firewall
+ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable
+
+# security updates install themselves
+apt update && apt install -y unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades
+```
+
+Check you can still log in as `deploy` from a second terminal **before** closing the root session.
+
+**Docker.** Install Docker Engine and the compose plugin by following https://docs.docker.com/engine/install/ubuntu/, then:
+
+```sh
+usermod -aG docker deploy   # being in the docker group is the same as being root, so only this user gets it
+```
+
+> Docker bypasses `ufw` for published ports. A `ports: "5432:5432"` line would open Postgres to the internet whatever `ufw` says. That is why the prod compose file publishes only Caddy's ports, and binds Postgres and OpenSearch to `127.0.0.1`.
+
+**Log rotation**, so container logs cannot fill the disk. In `/etc/docker/daemon.json`:
+
+```json
+{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }
+```
+
+Then `systemctl restart docker`.
+
+**OpenSearch memory maps.** OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
+
+```sh
+echo 'vm.max_map_count=262144' > /etc/sysctl.d/99-opensearch.conf && sysctl --system
+```
+
+**The rollout plugin**, which deploys `app` and `frontend` without downtime. Run as `deploy`:
+
+```sh
+mkdir -p ~/.docker/cli-plugins
+curl -fsSL https://raw.githubusercontent.com/wowu/docker-rollout/main/docker-rollout -o ~/.docker/cli-plugins/docker-rollout
+chmod +x ~/.docker/cli-plugins/docker-rollout
+docker rollout --help
+```
+
+**GHCR login**, needed only if the images are private. As `deploy`, with a GitHub personal access token that has `read:packages` only:
+
+```sh
+echo <token> | docker login ghcr.io -u <github-user> --password-stdin
+```
+
+## 4. Put the config on the VPS
+
+Everything lives in `/opt/kith`, owned by `deploy`:
+
+```sh
+sudo mkdir -p /opt/kith && sudo chown deploy:deploy /opt/kith
+```
+
+The deploy job copies `docker-compose.prod.yml` and `Caddyfile` from the repo on every deploy, so the server always matches `master`. For the first run, copy them by hand (`scp infra/docker-compose.prod.yml infra/Caddyfile deploy@<vps>:/opt/kith/`).
+
+The secrets go in `/opt/kith/.env`. Write it by hand, and never commit it.
+
+```sh
+touch /opt/kith/.env && chmod 600 /opt/kith/.env && nano /opt/kith/.env
+```
+
+```sh
+# ── site ──
+DOMAIN=app.example.com
+IMAGE_TAG=<commit sha to run; the deploy job sets this on later deploys>
+
+# ── postgres (password: openssl rand -hex 24) ──
+POSTGRES_USER=kith
+POSTGRES_PASSWORD=<random>
+POSTGRES_DB=kith
+DATABASE_URL=postgresql+asyncpg://kith:<same random>@postgres:5432/kith
+
+# ── internal services ──
+REDIS_URL=redis://redis:6379/0
+SEARCH_URL=http://opensearch:9200
+
+# ── files: AWS S3 ──
+STORAGE_PROVIDER=s3
+S3_BUCKET=kith-prod
+S3_REGION=<bucket region>
+AWS_ACCESS_KEY_ID=<kith-vps key>
+AWS_SECRET_ACCESS_KEY=<kith-vps secret>
+
+# ── web ──
+CORS_ALLOWED_ORIGINS=https://app.example.com
+MAGIC_LINK_VERIFY_URL=https://app.example.com/verify
+SESSION_COOKIE_SECURE=true
+APP_URL=https://app.example.com
+BACKEND_URL=http://app:8000
+
+# ── email: Resend over SMTP ──
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=465
+SMTP_USERNAME=resend
+SMTP_PASSWORD=<resend api key>
+SMTP_USE_TLS=true
+MAIL_FROM_ADDRESS=noreply@example.com
+
+# ── AI ──
+OPENAI_API_KEY=<key>
+VOYAGE_API_KEY=<key>
+
+# ── observability ──
+LOG_FORMAT=json
+LOG_LEVEL=INFO
+SENTRY_DSN=<kith-backend dsn>
+```
+
+The other settings (upload caps, retrieval sizes, `STARTING_CREDIT_GRANT`, ...) have working defaults. Add one here only to change it.
+
+## 5. First start
+
+As `deploy` in `/opt/kith`. From here on `dc` means `docker compose -f docker-compose.prod.yml --env-file .env`.
+
+```sh
+alias dc='docker compose -f docker-compose.prod.yml --env-file .env'
+
+dc pull
+
+# 1. the data services first, and wait until they report healthy
+dc up -d postgres redis opensearch
+dc ps
+
+# 2. the release step (ADR-0018): schema and search index
+dc run --rm app alembic upgrade head
+dc run --rm app python -m core.search.create_index
+
+# 3. everything else
+dc up -d
+dc ps
+```
+
+Check that it works:
+
+```sh
+curl -fsS https://app.example.com/health   # Caddy got a certificate and reaches the API
+dc logs --tail 50 app worker-ingest caddy
+```
+
+If Caddy logs certificate errors, the DNS record is not pointing at the VPS yet, or port 80 is blocked.
+
+## 6. First User and Tenant
+
+1. Open `https://app.example.com` and sign in with a magic link. The email comes through Resend, so check spam the first time.
+2. Onboarding creates the Tenant, and its Owner gets the starting Credit grant (ADR-0017).
+3. Upload a small PDF and wait until it is searchable. Then run one Search and one Ask. This checks S3 CORS, the worker, OpenSearch, Voyage and OpenAI in one go.
+
+To give Credits later: `dc run --rm app python -m scripts.adjust_credits --tenant-id <uuid> --credits=<n> --note "<why>"`.
+
+## 7. Backups: check them before you rely on them
+
+The `pg-backup` service dumps Postgres nightly to `s3://kith-prod/backups/` and checks in to the Sentry Cron monitor. Run it once by hand, then **do the restore drill once**:
+
+```sh
+dc run --rm pg-backup            # take a dump now
+# restore it into a throwaway database and look at it
+dc exec postgres createdb -U kith restore_test
+aws s3 cp s3://kith-prod/backups/<file>.sql.gz - | gunzip | dc exec -T postgres psql -U kith restore_test
+dc exec postgres psql -U kith restore_test -c 'select count(*) from documents;'
+dc exec postgres dropdb -U kith restore_test
+```
+
+OpenSearch has no backup. If it is lost, run `make rebuild-index` (ADR-0019).
+
+## 8. Turn on automatic deploys
+
+Merge anything to `master`. Once the tests pass, `.github/workflows/deploy.yml` will:
+
+1. build both images, tagged with the commit SHA, and push them to GHCR;
+2. SSH in as `deploy`, copy the compose file and Caddyfile, and set `IMAGE_TAG`;
+3. pull the images and run the release step. If it fails, the deploy stops and the old version keeps serving;
+4. run `docker rollout app` and `docker rollout frontend`, then restart `worker-ingest`.
+
+Every migration must work with the code that is still running (ADR-0018).
+
+## Day-to-day
+
+| Task | Command (on the VPS, in `/opt/kith`) |
+|---|---|
+| Follow logs | `dc logs -f app` (or `worker-ingest`, `frontend`, `caddy`) |
+| Search JSON logs | `dc logs app --no-log-prefix \| jq 'select(.level=="ERROR")'` |
+| Run a script | `dc exec app python -m scripts.<name> ...` |
+| DB from your laptop | `ssh -L 5432:localhost:5432 deploy@<vps>`, then connect to `localhost:5432` |
+| OpenSearch from your laptop | `ssh -L 9200:localhost:9200 deploy@<vps>`, then `curl localhost:9200/_cat/indices` |
+| Roll back | re-run the deploy workflow with an older commit SHA (the schema is never downgraded) |
+| Memory use | `docker stats --no-stream` |

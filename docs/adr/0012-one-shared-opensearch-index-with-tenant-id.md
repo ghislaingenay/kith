@@ -33,3 +33,5 @@ Isolation now rests on a filter, not on structure. One search-index interface is
 - One re-embedding or mapping change reindexes all Tenants together.
 - A bug in the interface's filter could leak across Tenants; the isolation test is the guard.
 - BM25 statistics are shared across Tenants, so one Tenant's text slightly affects another's ranking.
+
+> Amended 2026-10-20. The security plugin is off in development **and on the VPS deploy**. There OpenSearch sits on the private Docker network and publishes its port only to the VPS's `127.0.0.1` (for an SSH tunnel), so only `app` and `worker-ingest` can reach it. It is turned on with the move to AWS, where OpenSearch Service provides it. Revisit if anything else joins that network or the port is ever published beyond localhost. Losing the index is recovered by a rebuild from Postgres, not a backup (ADR-0019).
