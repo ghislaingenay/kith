@@ -19,6 +19,7 @@ dependencies = [
     "pypdfium2>=5.13.0",
     "pytest>=9.1.1",
     "redis>=8.1.0",
+    "sentry-sdk[arq,fastapi]>=2.69.1",
     "sqlalchemy[asyncio]>=2.0.53",
     "structlog>=26.1.0",
     "tiktoken>=0.14.0",

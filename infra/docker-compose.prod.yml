@@ -27,6 +27,9 @@ x-backend-env: &backend-env
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
   REDIS_URL: redis://redis:6379/0
   SEARCH_URL: http://opensearch:9200
+  # Sentry stays off in `local`. Each service reports to its own Sentry
+  # project; an empty DSN turns it off for that service.
+  SENTRY_ENVIRONMENT: production
 
 services:
   caddy:
@@ -48,6 +51,7 @@ services:
     <<: *backend
     environment:
       <<: *backend-env
+      SENTRY_DSN: ${SENTRY_API_DSN:-}
       # Only Caddy reaches the API, so its X-Forwarded-* headers are trusted.
       FORWARDED_ALLOW_IPS: "*"
     # Longer than GUNICORN_GRACEFUL_TIMEOUT (30 s by default), so a stop lets
@@ -71,6 +75,7 @@ services:
     command: arq workers.ingest.WorkerSettings
     environment:
       <<: *backend-env
+      SENTRY_DSN: ${SENTRY_WORKER_DSN:-}
 
   frontend:
     image: ghcr.io/ghislaingenay/kith-frontend:${IMAGE_TAG:?set IMAGE_TAG in .env}

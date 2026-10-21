@@ -17,6 +17,7 @@ from core.embedding.factory import EmbeddingProviderFactory
 from core.jobs.factory import JobQueueFactory
 from core.logging.config import LoggingSettings, configure_logging
 from core.mail.config import MailSettings
+from core.observability.config import SentrySettings, configure_sentry
 from core.mail.factory import MailerFactory
 from core.ratelimit.factory import RateLimiterFactory
 from core.rerank.config import RerankSettings
@@ -49,6 +50,12 @@ def _configure_logging_once(settings: LoggingSettings) -> bool:
     return True
 
 
+def _configure_sentry_once(settings: SentrySettings) -> bool:
+    # Same truthy-return reason as `_configure_logging_once`.
+    configure_sentry(settings)
+    return True
+
+
 class Container(containers.DeclarativeContainer):
     logging_settings = providers.Singleton(LoggingSettings)
 
@@ -58,6 +65,14 @@ class Container(containers.DeclarativeContainer):
     # anything else has a chance to log.
     logging_configured = providers.Singleton(
         _configure_logging_once, settings=logging_settings
+    )
+
+    sentry_settings = providers.Singleton(SentrySettings)
+
+    # Called eagerly at import time in `main.py` and `workers/ingest.py`, not
+    # in `lifespan`: Sentry must start before the FastAPI app or arq worker exists.
+    sentry_configured = providers.Singleton(
+        _configure_sentry_once, settings=sentry_settings
     )
 
     storage_settings = providers.Singleton(StorageSettings)

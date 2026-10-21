@@ -18,6 +18,10 @@ COPY release.sh ./
 
 ENV PYTHONPATH=/app/app
 
+# The commit SHA the image is built from, so Sentry events carry the release.
+ARG GIT_SHA
+ENV SENTRY_RELEASE=${GIT_SHA}
+
 # Workers and graceful timeout come from env. The graceful timeout lets
 # in-flight Ask streams finish when a deploy stops the container. `exec` so
 # gunicorn, not sh, receives the stop signal.

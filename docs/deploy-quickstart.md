@@ -2,7 +2,7 @@
 
 How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
 
-> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR), the `pg-backup` service, `make rebuild-index`, and the Sentry SDK setup (`SENTRY_DSN`). Update this page as each one lands.
+> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR), the `pg-backup` service, `make rebuild-index`, and the frontend's Sentry SDK setup (the backend's is in). Update this page as each one lands.
 
 ## The shape
 
@@ -51,9 +51,9 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
 
 **Resend.** Add and verify your sending domain (SPF and DKIM records in DNS), then create an API key with "sending access" only. Its SMTP login is host `smtp.resend.com`, port `465`, user `resend`, password = the API key.
 
-**Sentry.** Do these steps once the Sentry SDK is in the code.
+**Sentry.** The `kith-frontend` project waits for the frontend's Sentry SDK setup.
 
-1. Create two projects, `kith-backend` (Python) and `kith-frontend` (Next.js), and note both DSNs.
+1. Create three projects, `kith-api` (platform: FastAPI), `kith-worker` (platform: Python) and `kith-frontend` (Next.js), and note each DSN (project settings → Client Keys). For the products, tick Error monitoring and Tracing only: logs stay on the VPS.
 2. Add an **Uptime** monitor on `https://app.example.com/health`.
 3. Add a **Cron** monitor named `pg-backup`, scheduled daily, which the backup job checks in to.
 
@@ -187,7 +187,13 @@ VOYAGE_API_KEY=<key>
 # ── observability ──
 LOG_FORMAT=json
 LOG_LEVEL=INFO
-SENTRY_DSN=<kith-backend dsn>
+# Sentry: one project each for the API and the ingest worker; leave a DSN
+# empty to turn it off for that service. The compose file sets
+# SENTRY_ENVIRONMENT=production, and the image carries the release SHA.
+SENTRY_API_DSN=<kith-api dsn>
+SENTRY_WORKER_DSN=<kith-worker dsn>
+# share of requests and jobs traced (0 to 1; /health is never traced)
+SENTRY_TRACES_SAMPLE_RATE=0.1
 ```
 
 The compose file reads this file twice: it fills in `${...}` values in `docker-compose.prod.yml` (missing ones stop it from starting), and it hands the whole file to `app` and `worker-ingest` as their settings. The other services get only what they need. The internal addresses (`DATABASE_URL`, built from the `POSTGRES_*` values, `REDIS_URL`, `SEARCH_URL`, the frontend's `BACKEND_URL`) are set in the compose file, so they are not in `.env`.
