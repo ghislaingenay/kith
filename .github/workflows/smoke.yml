@@ -1,7 +1,7 @@
 name: Production stack smoke test
 
 # Starts infra/docker-compose.prod.yml from freshly built images and checks
-# Caddy's routing over HTTPS. The test for frontend/Dockerfile, the prod
+# Caddy's routing over HTTPS. It tests frontend/Dockerfile, the prod
 # compose file, the Caddyfile and the release command.
 on:
   pull_request:
