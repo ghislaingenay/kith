@@ -24,5 +24,10 @@ class FakeJobQueue:
             return
         self.jobs.append(EnqueuedJob(queue, function, payload, job_id))
 
+    async def count_jobs(self, queue: str) -> int:
+        """Every recorded job counts until the test removes it, as a job the
+        worker has not finished yet."""
+        return sum(job.queue == queue for job in self.jobs)
+
     async def close(self) -> None:
         return None

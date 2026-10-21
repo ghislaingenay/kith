@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -457,6 +457,58 @@ class DocumentsRepository:
             statement = statement.where(Document.id == document_id)
         result = await self.session.execute(statement)
         return result.scalars().all()
+
+    async def list_documents_past_chunking(self) -> Sequence[Document]:
+        """Documents with Chunks the search index should hold, across every
+        Tenant, oldest first: `ready`, `partial`, those at `indexing` or
+        `embedding`, and `failed` ones that have Chunks (indexing or embedding
+        failed). Not deleted, failed with no Chunks, or still earlier in
+        Ingestion."""
+        result = await self.session.execute(
+            select(Document)
+            .where(
+                or_(
+                    Document.ingestion_status.in_(
+                        [IngestionStatus.READY, IngestionStatus.PARTIAL]
+                    ),
+                    and_(
+                        Document.ingestion_status == IngestionStatus.PROCESSING,
+                        Document.ingestion_stage.in_(
+                            [IngestionStage.INDEXING, IngestionStage.EMBEDDING]
+                        ),
+                    ),
+                    and_(
+                        Document.ingestion_status == IngestionStatus.FAILED,
+                        exists().where(Chunk.document_id == Document.id),
+                    ),
+                )
+            )
+            .order_by(Document.created_at, Document.id)
+        )
+        return result.scalars().all()
+
+    async def mark_document_chunks_pending_embedding(
+        self, document_id: uuid.UUID
+    ) -> None:
+        """Every Chunk of the Document waits for a vector again. Does not
+        commit: the caller decides the transaction boundary."""
+        await self.session.execute(
+            update(Chunk)
+            .where(Chunk.document_id == document_id)
+            .values(embedding_status=ChunkStatus.PENDING, embedding_error=None)
+        )
+
+    async def resolve_open_chunk_dead_letters(self, document_id: uuid.UUID) -> None:
+        """Closes the Document's open rows of both stages. Does not commit:
+        the caller decides the transaction boundary."""
+        await self.session.execute(
+            update(ChunkDeadLetter)
+            .where(
+                ChunkDeadLetter.document_id == document_id,
+                ChunkDeadLetter.status == ChunkDeadLetterStatus.OPEN,
+            )
+            .values(status=ChunkDeadLetterStatus.RESOLVED, resolved_at=func.now())
+        )
 
     async def list_live_documents_by_ids(
         self, *, tenant_id: uuid.UUID, document_ids: Sequence[uuid.UUID]

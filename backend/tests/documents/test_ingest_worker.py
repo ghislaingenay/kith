@@ -12,7 +12,7 @@ from arq.connections import RedisSettings
 from arq.worker import Worker
 from core.search.provider import SearchIndex
 from core.database import DatabaseSettings, create_engine, create_session_factory
-from core.jobs.arq_queue import ArqJobQueue
+from core.jobs.arq_queue import KEEP_RESULT_SECONDS, ArqJobQueue
 from documents.config import IngestionSettings
 from documents.embed import embed_document
 from documents.ingest import ingest_document
@@ -77,6 +77,7 @@ async def _run_ingest_worker_once(
         functions=[ingest_document, embed_document],
         queue_name="ingest",
         redis_settings=redis_settings,
+        keep_result=KEEP_RESULT_SECONDS,
         burst=True,
         poll_delay=0,
         on_startup=startup,
@@ -194,3 +195,67 @@ async def test_a_job_for_a_document_already_past_uploaded_is_left_alone(
     await db_session.refresh(document)
     assert document.ingestion_status == IngestionStatus.FAILED
     assert document.ingestion_stage is None
+
+
+async def test_a_job_counts_as_waiting_until_the_worker_finishes_it(
+    caller: Caller,
+    storage: FakeStorageProvider,
+    _redis_settings: RedisSettings,
+    _database_url: str,
+    search_index: SearchIndex,
+    job_queue: ArqJobQueue,
+    embedding_provider: FakeEmbeddingProvider,
+) -> None:
+    before = await job_queue.count_jobs("ingest")
+    document_id = uuid.uuid4()
+    await job_queue.enqueue(
+        "ingest",
+        "embed_document",
+        {"document_id": str(document_id), "tenant_id": str(caller.tenant_id)},
+        job_id=f"embed:{document_id}",
+    )
+    assert await job_queue.count_jobs("ingest") == before + 1
+
+    await _run_ingest_worker_once(
+        _redis_settings,
+        _database_url,
+        storage,
+        search_index,
+        job_queue,
+        embedding_provider,
+    )
+
+    assert await job_queue.count_jobs("ingest") == 0
+
+
+async def test_an_embed_job_can_be_queued_again_once_the_last_one_finished(
+    caller: Caller,
+    storage: FakeStorageProvider,
+    _redis_settings: RedisSettings,
+    _database_url: str,
+    search_index: SearchIndex,
+    job_queue: ArqJobQueue,
+    embedding_provider: FakeEmbeddingProvider,
+) -> None:
+    """No result is kept, so a finished job's id does not block the next one
+    (a rebuild soon after the Document was embedded)."""
+    document_id = uuid.uuid4()
+    with capture_logs() as logs:
+        for _ in range(2):
+            await job_queue.enqueue(
+                "ingest",
+                "embed_document",
+                {"document_id": str(document_id), "tenant_id": str(caller.tenant_id)},
+                job_id=f"embed:{document_id}",
+            )
+            await _run_ingest_worker_once(
+                _redis_settings,
+                _database_url,
+                storage,
+                search_index,
+                job_queue,
+                embedding_provider,
+            )
+
+    runs = [log for log in logs if log["event"] == "embed_document_missing"]
+    assert len(runs) == 2

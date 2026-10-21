@@ -81,6 +81,11 @@ class BlankQueryError(Exception):
         super().__init__("Enter some text to search for.")
 
 
+class IngestionInProgressError(Exception):
+    """The index rebuild was started while ingestion jobs are waiting or
+    running, which could write to the Documents it rebuilds."""
+
+
 class EmbeddingProviderRequiredError(Exception):
     """A replay that includes `embedding` rows was started without an
     embedding provider."""

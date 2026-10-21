@@ -14,6 +14,7 @@ from typing import ClassVar
 
 from arq.connections import RedisSettings
 from core.container import container
+from core.jobs.arq_queue import KEEP_RESULT_SECONDS
 from core.logging import setup_logger
 from core.migrations import warn_if_schema_out_of_date
 from documents.embed import embed_document
@@ -68,3 +69,4 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 5
+    keep_result = KEEP_RESULT_SECONDS
