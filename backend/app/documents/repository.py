@@ -458,6 +458,38 @@ class DocumentsRepository:
         result = await self.session.execute(statement)
         return result.scalars().all()
 
+    async def list_documents_past_chunking(self) -> Sequence[Document]:
+        """Documents with Chunks the search index should hold, across every
+        Tenant, oldest first: `ready`, `partial`, and those at `indexing` or
+        `embedding`. Not deleted, failed, or still earlier in Ingestion."""
+        result = await self.session.execute(
+            select(Document)
+            .where(
+                or_(
+                    Document.ingestion_status.in_(
+                        [IngestionStatus.READY, IngestionStatus.PARTIAL]
+                    ),
+                    and_(
+                        Document.ingestion_status == IngestionStatus.PROCESSING,
+                        Document.ingestion_stage.in_(
+                            [IngestionStage.INDEXING, IngestionStage.EMBEDDING]
+                        ),
+                    ),
+                )
+            )
+            .order_by(Document.created_at, Document.id)
+        )
+        return result.scalars().all()
+
+    async def reset_chunks_embedding(self, document_id: uuid.UUID) -> None:
+        """Every Chunk of the Document waits for a vector again. Does not
+        commit: the caller decides the transaction boundary."""
+        await self.session.execute(
+            update(Chunk)
+            .where(Chunk.document_id == document_id)
+            .values(embedding_status=ChunkStatus.PENDING, embedding_error=None)
+        )
+
     async def list_live_documents_by_ids(
         self, *, tenant_id: uuid.UUID, document_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, Document]:

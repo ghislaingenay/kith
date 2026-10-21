@@ -2,7 +2,7 @@
 
 How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
 
-> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR), the `pg-backup` service, `make rebuild-index`, and the frontend's Sentry SDK setup (the backend's is in). Update this page as each one lands.
+> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR), the `pg-backup` service and the frontend's Sentry SDK setup (the backend's is in). Update this page as each one lands.
 
 ## The shape
 
@@ -251,7 +251,13 @@ dc exec postgres psql -U kith restore_test -c 'select count(*) from documents;'
 dc exec postgres dropdb -U kith restore_test
 ```
 
-OpenSearch has no backup. If it is lost, run `make rebuild-index` (ADR-0019).
+OpenSearch has no backup. If it is lost, rebuild it from Postgres in the API container (ADR-0019):
+
+```sh
+dc exec app python -m scripts.rebuild_index
+```
+
+It asks you to type `yes` first (`--yes` skips that). Search comes back as each Document is re-indexed, and hybrid results once the worker has embedded it again. See `docs/search-quickstart.md` for what it does.
 
 ## 8. Turn on automatic deploys
 

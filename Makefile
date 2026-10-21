@@ -5,7 +5,7 @@ COMPOSE = docker compose $(if $(wildcard .env),--env-file .env) -f infra/docker-
 # --rm to create a temporary container for running alembic commands
 ALEMBIC = $(COMPOSE) run --rm app alembic
 
-.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create refresh-index clean-documents search-replay embed-documents retrieve adjust-credits
+.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create refresh-index clean-documents rebuild-index search-replay embed-documents retrieve adjust-credits
 
 up:
 	$(COMPOSE) up -d
@@ -54,6 +54,11 @@ refresh-index:
 # usage: make clean-documents [yes=1]
 clean-documents:
 	$(COMPOSE) run --rm app python -m scripts.clean_documents $(if $(yes),--yes)
+
+# recreate the search index and refill it from Postgres after it is lost, then queue embedding (ADR-0019)
+# usage: make rebuild-index [yes=1]
+rebuild-index:
+	$(COMPOSE) run --rm app python -m scripts.rebuild_index $(if $(yes),--yes)
 
 # usage: make search-replay [stage=indexing|embedding] [document=<uuid>] [limit=<n>]
 search-replay:

@@ -1,0 +1,65 @@
+"""Refills the search index from Postgres after it is lost, without extracting
+the PDFs again (ADR-0019). The same command fills a fresh index on a new
+cluster. The command that runs it is `scripts/rebuild_index.py` (see
+`docs/search-quickstart.md`)."""
+
+from dataclasses import dataclass
+
+from core.jobs.provider import JobQueue
+from core.retry.handler import RetryHandler
+from core.search.provider import SearchIndex
+from documents.chunk_indexing import index_document_chunks
+from documents.config import IngestionSettings
+from documents.embed_jobs import enqueue_embed_document
+from documents.ingestion_status import is_ready_for_embedding
+from documents.repository import DocumentsRepository
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+
+@dataclass(frozen=True)
+class RebuildResult:
+    documents_reindexed: int
+    documents_queued_for_embedding: int
+    chunks_dead_lettered: int
+
+
+async def rebuild_index(
+    session_factory: async_sessionmaker,
+    search_index: SearchIndex,
+    job_queue: JobQueue,
+    retry_handler: RetryHandler,
+    settings: IngestionSettings,
+) -> RebuildResult:
+    """Drops the index and creates it again, with its alias and search
+    pipeline, then re-indexes every Document past chunking from its Chunk
+    rows, as Ingestion does, dead letters included. Each one's Chunks wait
+    for a vector again and its `embed_document` job is queued (ADR-0014): the
+    vectors were only in the index. Documents earlier in Ingestion, failed or
+    deleted are left alone. Each Document is its own transaction, and running
+    it again gives the same result."""
+    await search_index.recreate_index()
+    async with session_factory() as session:
+        documents = await DocumentsRepository(session).list_documents_past_chunking()
+
+    queued = 0
+    dead_lettered = 0
+    for listed in documents:
+        async with session_factory() as session:
+            repository = DocumentsRepository(session)
+            document = await repository.get_document(listed.id)
+            await repository.reset_chunks_embedding(document.id)
+            result = await index_document_chunks(
+                repository, document, search_index, retry_handler, settings
+            )
+            dead_lettered += result.dead_lettered
+            if is_ready_for_embedding(document):
+                # After the commit, so the job reads the Chunks as indexed.
+                await enqueue_embed_document(
+                    job_queue, document_id=document.id, tenant_id=document.tenant_id
+                )
+                queued += 1
+    return RebuildResult(
+        documents_reindexed=len(documents),
+        documents_queued_for_embedding=queued,
+        chunks_dead_lettered=dead_lettered,
+    )

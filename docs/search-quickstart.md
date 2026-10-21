@@ -60,6 +60,18 @@ make clean-documents
 
 It asks you to type `yes` first (`make clean-documents yes=1` skips that). It then deletes every Document, Chunk and Upload in every Tenant, including their pages and dead letters, deletes their files from storage, deletes the search index with all its versions and creates it again empty. It deletes only the files the Documents and Uploads point to, never the bucket or anything else in it. If it stops part-way, run it again.
 
+## Rebuild the index from Postgres
+
+When the search index is lost (the OpenSearch volume is gone), or to fill a fresh one on a new cluster, or after a mapping change `make refresh-index` cannot apply:
+
+```sh
+make rebuild-index
+```
+
+It asks you to type `yes` first (`make rebuild-index yes=1` skips that). It deletes the search index with all its versions and creates it again with its alias and search pipeline. Then, for every Document in every Tenant that is `ready`, `partial`, or `processing` at `indexing` or `embedding`, it re-indexes its Chunks from the text kept in Postgres, the same way ingestion does: it never reads the PDF or storage and does not re-chunk. A batch the store refuses becomes a Chunk Dead Letter, as in ingestion, for `make search-replay`. The vectors were only in the index, so each Document's Chunks wait for a vector again, it goes back to `processing` at `embedding` (or `partial` if some Chunks could not be indexed), and its `embed_document` job is queued (ADR-0019, ADR-0014). The worker (`worker-ingest`) and a working `VOYAGE_API_KEY` are needed for the vectors to come back; Voyage bills the tokens again.
+
+A Document still earlier in ingestion, `failed`, or deleted is left alone. It prints how many Documents were re-indexed, how many were queued for embedding and how many Chunks were dead-lettered. Running it again gives the same result.
+
 ## Look at Chunks in Dashboards
 
 1. Open http://localhost:5601 and choose **Dev Tools** from the menu.
