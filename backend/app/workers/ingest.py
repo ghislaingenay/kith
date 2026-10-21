@@ -32,8 +32,9 @@ async def startup(ctx: dict) -> None:
     # config rather than on the first job. Built first so a missing
     # VOYAGE_API_KEY stops the worker before it does anything else.
     ctx["embedding_provider"] = container.embedding_provider()
-    await warn_if_schema_out_of_date(container.db_engine())
-    ctx["db_session_factory"] =container.db_session_factory()
+    ctx["db_engine"] = container.db_engine()
+    await warn_if_schema_out_of_date(ctx["db_engine"])
+    ctx["db_session_factory"] = container.db_session_factory()
     ctx["storage_provider"] = container.storage_provider()
     ctx["ingestion_settings"] = container.ingestion_settings()
     ctx["search_index"] = container.search_index()
@@ -43,9 +44,14 @@ async def startup(ctx: dict) -> None:
 
 
 async def shutdown(ctx: dict) -> None:
-    await ctx["search_index"].close()
-    await ctx["job_queue"].close()
-    await container.db_engine().dispose()
+    # arq runs this even when `startup` raised part-way, so only what startup
+    # got to build is closed; otherwise a KeyError hides the real error.
+    if "search_index" in ctx:
+        await ctx["search_index"].close()
+    if "job_queue" in ctx:
+        await ctx["job_queue"].close()
+    if "db_engine" in ctx:
+        await ctx["db_engine"].dispose()
     logger.info("worker_ingest_stopped")
 
 

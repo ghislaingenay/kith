@@ -1,0 +1,141 @@
+# Production stack (docs/deploy-quickstart.md). Separate from the development
+# docker-compose.yml. Run with:
+#   docker compose -f docker-compose.prod.yml --env-file .env ...
+#
+# - Only Caddy publishes ports. Docker bypasses ufw for published ports, so
+#   Postgres and OpenSearch bind to 127.0.0.1 only (for SSH tunnels).
+# - No service sets `container_name`: `docker rollout` starts a second
+#   container of `app` and `frontend` next to the running one.
+# - Secrets have no defaults. `${VAR:?}` makes compose refuse to start when one
+#   is missing; the API's own settings refuse the rest.
+
+name: kith
+
+x-backend: &backend
+  image: ghcr.io/ghislaingenay/kith-backend:${IMAGE_TAG:?set IMAGE_TAG in .env}
+  restart: unless-stopped
+  env_file: .env
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    opensearch:
+      condition: service_healthy
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
+  REDIS_URL: redis://redis:6379/0
+  SEARCH_URL: http://opensearch:9200
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates survive restarts, so Caddy never re-asks Let's Encrypt.
+      - caddy-data:/data
+      - caddy-config:/config
+
+  app:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      # Only Caddy reaches the API, so its X-Forwarded-* headers are trusted.
+      FORWARDED_ALLOW_IPS: "*"
+    # Longer than GUNICORN_GRACEFUL_TIMEOUT (30 s by default), so a stop lets
+    # in-flight Ask streams finish before Docker kills the container.
+    stop_grace_period: 40s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker-ingest:
+    <<: *backend
+    command: arq workers.ingest.WorkerSettings
+    environment:
+      <<: *backend-env
+
+  frontend:
+    image: ghcr.io/ghislaingenay/kith-frontend:${IMAGE_TAG:?set IMAGE_TAG in .env}
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://app:8000
+      APP_URL: ${APP_URL:?set APP_URL in .env}
+    # The health check is in the image (frontend/Dockerfile).
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ADR-0012: security is off on the VPS (private network only); it is
+  # turned on with the move to AWS.
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms${OPENSEARCH_HEAP:-512m} -Xmx${OPENSEARCH_HEAP:-512m}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  redis-data:
+  opensearch-data:

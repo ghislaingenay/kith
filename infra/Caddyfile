@@ -1,0 +1,37 @@
+# The only public entry (docs/deploy-quickstart.md). With DOMAIN=localhost
+# (the CI smoke test) Caddy issues a local certificate itself, so the same
+# file serves production and CI.
+{$DOMAIN} {
+	log {
+		output stdout
+		format json
+	}
+
+	# Upstreams are looked up through Docker DNS every second, so the second
+	# container `docker rollout` starts gets traffic. lb_try_duration retries a
+	# request on the other container when one is stopping.
+	@api path /api/* /health
+	handle @api {
+		reverse_proxy {
+			dynamic a {
+				name app
+				port 8000
+				refresh 1s
+			}
+			lb_try_duration 5s
+			# Unbuffered, so an Ask's Answer reaches the browser as it streams.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy {
+			dynamic a {
+				name frontend
+				port 3000
+				refresh 1s
+			}
+			lb_try_duration 5s
+		}
+	}
+}

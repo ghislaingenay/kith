@@ -14,7 +14,11 @@ RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
+COPY release.sh ./
 
 ENV PYTHONPATH=/app/app
 
-CMD ["gunicorn", "-k", "uvicorn_worker.UvicornWorker", "main:app", "--bind", "0.0.0.0:8000"]
+# Workers and graceful timeout come from env. The graceful timeout lets
+# in-flight Ask streams finish when a deploy stops the container. `exec` so
+# gunicorn, not sh, receives the stop signal.
+CMD ["sh", "-c", "exec gunicorn -k uvicorn_worker.UvicornWorker main:app --bind 0.0.0.0:8000 --workers \"${GUNICORN_WORKERS:-2}\" --graceful-timeout \"${GUNICORN_GRACEFUL_TIMEOUT:-30}\""]
