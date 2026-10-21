@@ -10,7 +10,8 @@ from core.retry.handler import RetryHandler
 from core.search.provider import SearchIndex
 from documents.chunk_indexing import index_document_chunks
 from documents.config import IngestionSettings
-from documents.embed_jobs import enqueue_embed_document
+from documents.embed_jobs import INGEST_QUEUE, enqueue_embed_document
+from documents.exceptions import IngestionInProgressError
 from documents.ingestion_status import is_ready_for_embedding
 from documents.repository import DocumentsRepository
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -37,7 +38,18 @@ async def rebuild_index(
     vectors were only in the index. Documents earlier in Ingestion, failed or
     deleted are left alone. Each Document is its own transaction, and running
     it again gives the same result. A Document deleted while it runs is
-    skipped."""
+    skipped.
+
+    Its open Chunk Dead Letters are closed, since every Chunk is indexed and
+    embedded again; a batch that fails now gets a new row. Refuses to start
+    while ingestion jobs are waiting or running, so none writes to a Document
+    it rebuilds (the jobs it queues itself run behind it)."""
+    jobs = await job_queue.count_jobs(INGEST_QUEUE)
+    if jobs:
+        raise IngestionInProgressError(
+            f"{jobs} ingestion job(s) are waiting or running; "
+            "wait until the queue is empty"
+        )
     await search_index.recreate_index()
     async with session_factory() as session:
         documents = await DocumentsRepository(session).list_documents_past_chunking()
@@ -53,6 +65,7 @@ async def rebuild_index(
             )
             if document is None:
                 continue
+            await repository.resolve_open_chunk_dead_letters(document.id)
             await repository.mark_document_chunks_pending_embedding(document.id)
             dead_lettered += await index_document_chunks(
                 repository, document, search_index, retry_handler, settings

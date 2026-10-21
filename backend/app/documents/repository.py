@@ -490,6 +490,18 @@ class DocumentsRepository:
             .values(embedding_status=ChunkStatus.PENDING, embedding_error=None)
         )
 
+    async def resolve_open_chunk_dead_letters(self, document_id: uuid.UUID) -> None:
+        """Closes the Document's open rows of both stages. Does not commit:
+        the caller decides the transaction boundary."""
+        await self.session.execute(
+            update(ChunkDeadLetter)
+            .where(
+                ChunkDeadLetter.document_id == document_id,
+                ChunkDeadLetter.status == ChunkDeadLetterStatus.OPEN,
+            )
+            .values(status=ChunkDeadLetterStatus.RESOLVED, resolved_at=func.now())
+        )
+
     async def list_live_documents_by_ids(
         self, *, tenant_id: uuid.UUID, document_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, Document]:

@@ -4,8 +4,10 @@ embedding. Run with `make rebuild-index`; see `docs/search-quickstart.md`."""
 
 import argparse
 import asyncio
+import sys
 
 from core.container import container
+from documents.exceptions import IngestionInProgressError
 from documents.rebuild_index import rebuild_index
 
 
@@ -39,6 +41,8 @@ async def main() -> None:
             container.retry_handler(),
             container.ingestion_settings(),
         )
+    except IngestionInProgressError as exc:
+        sys.exit(f"Refused, nothing changed: {exc}")
     finally:
         await search_index.close()
         await job_queue.close()

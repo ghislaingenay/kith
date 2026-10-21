@@ -5,7 +5,7 @@ import uuid
 
 from core.jobs.provider import JobQueue
 
-_INGEST_QUEUE = "ingest"
+INGEST_QUEUE = "ingest"
 _EMBED_FUNCTION = "embed_document"
 
 
@@ -15,7 +15,7 @@ async def enqueue_embed_document(
     """Under the job id `embed:{document_id}`, so a Document already queued
     or running is not queued again."""
     await job_queue.enqueue(
-        _INGEST_QUEUE,
+        INGEST_QUEUE,
         _EMBED_FUNCTION,
         {"document_id": str(document_id), "tenant_id": str(tenant_id)},
         job_id=f"embed:{document_id}",

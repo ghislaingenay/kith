@@ -20,5 +20,10 @@ class JobQueue(ABC):
         running is not enqueued a second time."""
 
     @abstractmethod
+    async def count_jobs(self, queue: str) -> int:
+        """How many jobs on the named `queue` are waiting, waiting to retry,
+        or running."""
+
+    @abstractmethod
     async def close(self) -> None:
         """Release any held connections. Called once during app shutdown."""

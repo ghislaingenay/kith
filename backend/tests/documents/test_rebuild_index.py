@@ -11,11 +11,13 @@ import pytest
 from core.database import DatabaseSettings, create_engine, create_session_factory
 from documents.config import IngestionSettings
 from documents.embed import embed_document
+from documents.exceptions import IngestionInProgressError
 from documents.ingest import ingest_document
 from documents.keys import pending_upload_key
 from documents.models import (
     Chunk,
     ChunkDeadLetter,
+    ChunkDeadLetterStatus,
     ChunkStatus,
     Document,
     IngestionStage,
@@ -148,6 +150,16 @@ async def _chunks(db_session: AsyncSession, document_id: uuid.UUID) -> list[Chun
     db_session.expire_all()
     result = await db_session.execute(
         select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.ordinal)
+    )
+    return list(result.scalars())
+
+
+async def _dead_letters(
+    db_session: AsyncSession, document_id: uuid.UUID
+) -> list[ChunkDeadLetter]:
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(ChunkDeadLetter).where(ChunkDeadLetter.document_id == document_id)
     )
     return list(result.scalars())
 
@@ -370,6 +382,7 @@ async def test_running_it_twice_gives_the_same_result(
 
     first = await _rebuild(session_factory, fake_search_index, rebuild_queue)
     indexed_after_first = sorted(chunk.id for chunk in fake_search_index.indexed)
+    rebuild_queue.jobs = []  # the worker took the first run's jobs
     second = await _rebuild(session_factory, fake_search_index, rebuild_queue)
 
     assert first == second
@@ -433,3 +446,101 @@ async def test_a_document_deleted_while_it_runs_is_skipped(
     assert (await _document(db_session, second)).ingestion_status == (
         IngestionStatus.DELETED
     )
+
+
+async def test_it_refuses_to_start_while_the_ingest_queue_has_work(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker,
+    fake_search_index: FakeSearchIndex,
+    rebuild_queue: FakeJobQueue,
+) -> None:
+    document_id = await _ready(
+        client, storage, caller, session_factory, fake_search_index, ["Alpha."]
+    )
+    # A job queued, waiting to retry or running: it could write to the
+    # Document while the rebuild does.
+    await rebuild_queue.enqueue(
+        "ingest", "embed_document", {}, job_id=f"embed:{document_id}"
+    )
+
+    with pytest.raises(IngestionInProgressError):
+        await _rebuild(session_factory, fake_search_index, rebuild_queue)
+
+    assert fake_search_index.recreate_calls == 0
+    assert len(fake_search_index.indexed) == 1
+    assert (await _document(db_session, document_id)).ingestion_status == (
+        IngestionStatus.READY
+    )
+
+
+async def test_open_dead_letters_from_before_are_closed(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker,
+    fake_search_index: FakeSearchIndex,
+    rebuild_queue: FakeJobQueue,
+) -> None:
+    """The rebuild redoes every Chunk's indexing and embedding, so a replay
+    of the old rows would only embed Chunks a second time."""
+    settings = IngestionSettings.model_validate(
+        {"INGESTION_INDEX_BATCH_SIZE": 1, "INGESTION_EMBED_BATCH_MAX_CHUNKS": 1}
+    )
+    document_id = await _upload(
+        client, storage, caller, ["Alpha.", "Bravo.", "Charlie."]
+    )
+    # Page 3's batch fails all three attempts: an open `indexing` row.
+    fake_search_index.index_outcomes = [True, True, False, False, False]
+    await ingest_document(
+        {
+            "db_session_factory": session_factory,
+            "storage_provider": storage,
+            "ingestion_settings": settings,
+            "search_index": fake_search_index,
+            "retry_handler": fast_retry_handler(),
+            "job_queue": FakeJobQueue(),
+        },
+        document_id=str(document_id),
+        tenant_id=str(caller.tenant_id),
+    )
+    # Voyage refuses page 1's Chunk three times: an open `embedding` row.
+    # Page 2's is embedded, so the Document stays `partial`.
+    voyage = FakeEmbeddingProvider()
+    voyage.embed_outcomes = [False, False, False, True]
+    await embed_document(
+        {
+            "db_session_factory": session_factory,
+            "ingestion_settings": settings,
+            "search_index": fake_search_index,
+            "embedding_provider": voyage,
+            "retry_handler": fast_retry_handler(),
+        },
+        document_id=str(document_id),
+        tenant_id=str(caller.tenant_id),
+    )
+    old_rows = await _dead_letters(db_session, document_id)
+    assert {row.stage for row in old_rows} == {
+        IngestionStage.INDEXING,
+        IngestionStage.EMBEDDING,
+    }
+    assert {row.status for row in old_rows} == {ChunkDeadLetterStatus.OPEN}
+    assert (await _document(db_session, document_id)).ingestion_status == (
+        IngestionStatus.PARTIAL
+    )
+    _lose(fake_search_index)
+
+    result = await _rebuild(session_factory, fake_search_index, rebuild_queue, settings)
+
+    assert result.chunks_dead_lettered == 0
+    rows = await _dead_letters(db_session, document_id)
+    assert len(rows) == 2
+    assert {row.status for row in rows} == {ChunkDeadLetterStatus.RESOLVED}
+    assert all(row.resolved_at is not None for row in rows)
+    chunks = await _chunks(db_session, document_id)
+    assert {chunk.indexing_status for chunk in chunks} == {ChunkStatus.DONE}
+    assert {chunk.embedding_status for chunk in chunks} == {ChunkStatus.PENDING}
+    assert rebuild_queue.jobs == [_job(caller, document_id)]

@@ -194,3 +194,34 @@ async def test_a_job_for_a_document_already_past_uploaded_is_left_alone(
     await db_session.refresh(document)
     assert document.ingestion_status == IngestionStatus.FAILED
     assert document.ingestion_stage is None
+
+
+async def test_a_job_counts_as_waiting_until_the_worker_finishes_it(
+    caller: Caller,
+    storage: FakeStorageProvider,
+    _redis_settings: RedisSettings,
+    _database_url: str,
+    search_index: SearchIndex,
+    job_queue: ArqJobQueue,
+    embedding_provider: FakeEmbeddingProvider,
+) -> None:
+    before = await job_queue.count_jobs("ingest")
+    document_id = uuid.uuid4()
+    await job_queue.enqueue(
+        "ingest",
+        "embed_document",
+        {"document_id": str(document_id), "tenant_id": str(caller.tenant_id)},
+        job_id=f"embed:{document_id}",
+    )
+    assert await job_queue.count_jobs("ingest") == before + 1
+
+    await _run_ingest_worker_once(
+        _redis_settings,
+        _database_url,
+        storage,
+        search_index,
+        job_queue,
+        embedding_provider,
+    )
+
+    assert await job_queue.count_jobs("ingest") == 0
