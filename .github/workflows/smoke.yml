@@ -37,6 +37,7 @@ jobs:
         run: >
           docker build -t ghcr.io/ghislaingenay/kith-frontend:smoke
           --build-arg NEXT_PUBLIC_API_URL=https://localhost
+          --build-arg GIT_SHA=${{ github.sha }}
           ../frontend
 
       # Throwaway values. Empty AI keys: the API starts with warnings. Storage

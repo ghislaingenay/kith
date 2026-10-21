@@ -2,7 +2,7 @@
 
 How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
 
-> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR), the `pg-backup` service and the frontend's Sentry SDK setup (the backend's is in). Update this page as each one lands.
+> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR) and the `pg-backup` service. Update this page as each one lands.
 
 ## The shape
 
@@ -51,11 +51,14 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
 
 **Resend.** Add and verify your sending domain (SPF and DKIM records in DNS), then create an API key with "sending access" only. Its SMTP login is host `smtp.resend.com`, port `465`, user `resend`, password = the API key.
 
-**Sentry.** The `kith-frontend` project waits for the frontend's Sentry SDK setup.
+**Sentry.** It receives errors and a sample of traces from the API, the ingest worker and the frontend, with no personal data.
 
 1. Create three projects, `kith-api` (platform: FastAPI), `kith-worker` (platform: Python) and `kith-frontend` (Next.js), and note each DSN (project settings → Client Keys). For the products, tick Error monitoring and Tracing only: logs stay on the VPS.
 2. Add an **Uptime** monitor on `https://app.example.com/health`.
 3. Add a **Cron** monitor named `pg-backup`, scheduled daily, which the backup job checks in to.
+4. Limit the `kith-frontend` DSN. It is public (every browser sees it), and it can only send events, not read them, so the risk is someone flooding the project with fake errors:
+   - project settings → Security & Privacy → **Allowed Domains**: `app.example.com`, so browser events from other sites are rejected;
+   - project settings → Client Keys → the key → **Rate Limiting**: for example 100 events per minute, so a flood can't use up the quota.
 
 **GitHub** (repo settings → Secrets and variables → Actions).
 
@@ -63,6 +66,8 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
   - `NEXT_PUBLIC_API_URL` = `https://app.example.com`
   - `NEXT_PUBLIC_ASK_SHOW_SOURCES` = `true`
   - `NEXT_PUBLIC_ASK_CITATION_MARKERS` = `true`
+  - `NEXT_PUBLIC_SENTRY_DSN` = the `kith-frontend` DSN (leave it unset to turn Sentry off in the frontend). The browser can see it; a DSN only lets someone send events, not read them. The image reports as `production`, traces 10 % of page loads (never `/health`), and carries the release SHA.
+  - `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` (optional) = the frontend's share of traces, 0 to 1. Leave it unset for `0.1`. `SENTRY_TRACES_SAMPLE_RATE` in the server's `.env` sets only the backend's.
 - Secrets, used by the deploy job to reach the VPS:
   - `VPS_HOST`
   - `VPS_USER` (`deploy`)
