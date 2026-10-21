@@ -2,7 +2,7 @@
 
 How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
 
-> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `infra/docker-compose.prod.yml`, `infra/Caddyfile`, `frontend/Dockerfile`, `.github/workflows/deploy.yml`, the `pg-backup` service, `make rebuild-index`, and the Sentry SDK setup (`SENTRY_DSN`). Update this page as each one lands.
+> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR), the `pg-backup` service, `make rebuild-index`, and the Sentry SDK setup (`SENTRY_DSN`). Update this page as each one lands.
 
 ## The shape
 
@@ -93,6 +93,8 @@ apt update && apt install -y unattended-upgrades && dpkg-reconfigure -plow unatt
 
 Check you can still log in as `deploy` from a second terminal **before** closing the root session.
 
+**Provider firewall.** In your hosting provider's control panel, add a firewall for the VPS that allows only inbound TCP 22, 80 and 443 (and UDP 443 for HTTP/3). It runs outside the server, so Docker cannot bypass it the way it bypasses `ufw` (see below): if a container ever publishes a port by mistake, this still blocks it.
+
 **Docker.** Install Docker Engine and the compose plugin by following https://docs.docker.com/engine/install/ubuntu/, then:
 
 ```sh
@@ -149,17 +151,13 @@ touch /opt/kith/.env && chmod 600 /opt/kith/.env && nano /opt/kith/.env
 ```sh
 # ── site ──
 DOMAIN=app.example.com
-IMAGE_TAG=<commit sha to run; the deploy job sets this on later deploys>
+# tag of ghcr.io/ghislaingenay/kith-backend and kith-frontend to run
+IMAGE_TAG=<commit sha; the deploy job sets this on later deploys>
 
 # ── postgres (password: openssl rand -hex 24) ──
 POSTGRES_USER=kith
 POSTGRES_PASSWORD=<random>
 POSTGRES_DB=kith
-DATABASE_URL=postgresql+asyncpg://kith:<same random>@postgres:5432/kith
-
-# ── internal services ──
-REDIS_URL=redis://redis:6379/0
-SEARCH_URL=http://opensearch:9200
 
 # ── files: AWS S3 ──
 STORAGE_PROVIDER=s3
@@ -173,7 +171,6 @@ CORS_ALLOWED_ORIGINS=https://app.example.com
 MAGIC_LINK_VERIFY_URL=https://app.example.com/verify
 SESSION_COOKIE_SECURE=true
 APP_URL=https://app.example.com
-BACKEND_URL=http://app:8000
 
 # ── email: Resend over SMTP ──
 SMTP_HOST=smtp.resend.com
@@ -193,7 +190,9 @@ LOG_LEVEL=INFO
 SENTRY_DSN=<kith-backend dsn>
 ```
 
-The other settings (upload caps, retrieval sizes, `STARTING_CREDIT_GRANT`, ...) have working defaults. Add one here only to change it.
+The compose file reads this file twice: it fills in `${...}` values in `docker-compose.prod.yml` (missing ones stop it from starting), and it hands the whole file to `app` and `worker-ingest` as their settings. The other services get only what they need. The internal addresses (`DATABASE_URL`, built from the `POSTGRES_*` values, `REDIS_URL`, `SEARCH_URL`, the frontend's `BACKEND_URL`) are set in the compose file, so they are not in `.env`.
+
+The other settings (upload caps, retrieval sizes, `STARTING_CREDIT_GRANT`, ...) have working defaults. Add one here only to change it. Tuning knobs with defaults: `GUNICORN_WORKERS` (2), `GUNICORN_GRACEFUL_TIMEOUT` (30 seconds, how long an Ask stream gets to finish on a deploy), `OPENSEARCH_HEAP` (`512m`).
 
 ## 5. First start
 
@@ -208,9 +207,8 @@ dc pull
 dc up -d postgres redis opensearch
 dc ps
 
-# 2. the release step (ADR-0018): schema and search index
-dc run --rm app alembic upgrade head
-dc run --rm app python -m core.search.create_index
+# 2. the release step (ADR-0018): migrations, then the search index; exits non-zero if either fails
+dc run --rm app ./release.sh
 
 # 3. everything else
 dc up -d

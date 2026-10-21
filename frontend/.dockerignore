@@ -1,0 +1,11 @@
+node_modules
+.pnpm-store
+.next
+playwright-report
+test-results
+coverage
+tsconfig.tsbuildinfo
+Dockerfile
+.dockerignore
+.env
+.env.*
