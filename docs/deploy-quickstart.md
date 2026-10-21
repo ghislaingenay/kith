@@ -56,6 +56,9 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
 1. Create three projects, `kith-api` (platform: FastAPI), `kith-worker` (platform: Python) and `kith-frontend` (Next.js), and note each DSN (project settings → Client Keys). For the products, tick Error monitoring and Tracing only: logs stay on the VPS.
 2. Add an **Uptime** monitor on `https://app.example.com/health`.
 3. Add a **Cron** monitor named `pg-backup`, scheduled daily, which the backup job checks in to.
+4. Limit the `kith-frontend` DSN. It is public (every browser sees it), and it can only send events, not read them, so the risk is someone flooding the project with fake errors:
+   - project settings → Security & Privacy → **Allowed Domains**: `app.example.com`, so browser events from other sites are rejected;
+   - project settings → Client Keys → the key → **Rate Limiting**: for example 100 events per minute, so a flood can't use up the quota.
 
 **GitHub** (repo settings → Secrets and variables → Actions).
 
