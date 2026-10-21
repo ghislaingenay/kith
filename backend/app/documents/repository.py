@@ -481,7 +481,7 @@ class DocumentsRepository:
         )
         return result.scalars().all()
 
-    async def reset_chunks_embedding(self, document_id: uuid.UUID) -> None:
+    async def mark_document_chunks_pending_embedding(self, document_id: uuid.UUID) -> None:
         """Every Chunk of the Document waits for a vector again. Does not
         commit: the caller decides the transaction boundary."""
         await self.session.execute(

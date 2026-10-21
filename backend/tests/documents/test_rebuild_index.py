@@ -396,3 +396,40 @@ async def test_the_script_refuses_to_run_without_confirmation(
     await script.main()
 
     assert capsys.readouterr().out == "Nothing was changed\n"
+
+
+async def test_a_document_deleted_while_it_runs_is_skipped(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker,
+    fake_search_index: FakeSearchIndex,
+    rebuild_queue: FakeJobQueue,
+) -> None:
+    first = await _ready(
+        client, storage, caller, session_factory, fake_search_index, ["Alpha."]
+    )
+    second = await _ready(
+        client, storage, caller, session_factory, fake_search_index, ["Bravo."]
+    )
+    _lose(fake_search_index)
+    delete_document_chunks = fake_search_index.delete_document_chunks
+
+    async def delete_second_while_first_is_indexed(
+        *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        if document_id == first:
+            assert (await client.delete(f"/api/v1/documents/{second}")).is_success
+        await delete_document_chunks(tenant_id=tenant_id, document_id=document_id)
+
+    fake_search_index.delete_document_chunks = delete_second_while_first_is_indexed
+
+    result = await _rebuild(session_factory, fake_search_index, rebuild_queue)
+
+    assert result.documents_reindexed == 1
+    assert {chunk.document_id for chunk in fake_search_index.indexed} == {first}
+    assert rebuild_queue.jobs == [_job(caller, first)]
+    assert (await _document(db_session, second)).ingestion_status == (
+        IngestionStatus.DELETED
+    )

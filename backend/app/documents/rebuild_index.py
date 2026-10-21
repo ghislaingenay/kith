@@ -36,22 +36,28 @@ async def rebuild_index(
     for a vector again and its `embed_document` job is queued (ADR-0014): the
     vectors were only in the index. Documents earlier in Ingestion, failed or
     deleted are left alone. Each Document is its own transaction, and running
-    it again gives the same result."""
+    it again gives the same result. A Document deleted while it runs is
+    skipped."""
     await search_index.recreate_index()
     async with session_factory() as session:
         documents = await DocumentsRepository(session).list_documents_past_chunking()
 
+    reindexed = 0
     queued = 0
     dead_lettered = 0
-    for listed in documents:
+    for listed_document in documents:
         async with session_factory() as session:
             repository = DocumentsRepository(session)
-            document = await repository.get_document(listed.id)
-            await repository.reset_chunks_embedding(document.id)
-            result = await index_document_chunks(
+            document = await repository.get_live_document(
+                tenant_id=listed_document.tenant_id, document_id=listed_document.id
+            )
+            if document is None:
+                continue
+            await repository.mark_document_chunks_pending_embedding(document.id)
+            dead_lettered += await index_document_chunks(
                 repository, document, search_index, retry_handler, settings
             )
-            dead_lettered += result.dead_lettered
+            reindexed += 1
             if is_ready_for_embedding(document):
                 # After the commit, so the job reads the Chunks as indexed.
                 await enqueue_embed_document(
@@ -59,7 +65,7 @@ async def rebuild_index(
                 )
                 queued += 1
     return RebuildResult(
-        documents_reindexed=len(documents),
+        documents_reindexed=reindexed,
         documents_queued_for_embedding=queued,
         chunks_dead_lettered=dead_lettered,
     )

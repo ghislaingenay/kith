@@ -2,7 +2,6 @@
 Ingestion and by the index rebuild (ADR-0019)."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from core.logging import setup_logger
 from core.retry.handler import RetryHandler
@@ -16,20 +15,13 @@ from documents.search_calls import SearchFailure, call_search
 logger = setup_logger(__name__)
 
 
-@dataclass(frozen=True)
-class IndexingResult:
-    indexed: int
-    dead_lettered: int
-    """Chunks recorded in a Chunk Dead Letter instead of indexed."""
-
-
 async def index_document_chunks(
     repository: DocumentsRepository,
     document: Document,
     search_index: SearchIndex,
     retry_handler: RetryHandler,
     settings: IngestionSettings,
-) -> IndexingResult:
+) -> int:
     """Bulk-indexes the Document's Chunks in batches after the Postgres
     commit, under the Chunk rows' ids, replacing whatever an earlier attempt
     left in the index (ADR-0011).
@@ -38,7 +30,8 @@ async def index_document_chunks(
     outright, is recorded, not raised: its Chunks are marked `failed` and a dead-letter row is written,
     so the queue's own retry does not pile on top. The Document is then
     `partial` if any Chunk was indexed and `failed` if none was. Otherwise it
-    waits at `embedding`: keyword-searchable, not ready."""
+    waits at `embedding`: keyword-searchable, not ready. Returns how many
+    Chunks were dead-lettered."""
     chunks = list(await repository.list_chunks(document.id))
     # End the read's transaction before the search calls, which can take
     # minutes to fail: Postgres `now()` is the transaction's start, so the
@@ -107,6 +100,4 @@ async def index_document_chunks(
 
     set_status_after_indexing(document, indexed=indexed_count, total=len(chunks))
     await repository.session.commit()
-    return IndexingResult(
-        indexed=indexed_count, dead_lettered=len(chunks) - indexed_count
-    )
+    return len(chunks) - indexed_count
