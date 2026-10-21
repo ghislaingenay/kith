@@ -5,6 +5,11 @@ from arq.connections import ArqRedis, RedisSettings
 
 from core.jobs.provider import JobQueue
 
+KEEP_RESULT_SECONDS = 0
+"""For the workers' `keep_result`. arq refuses a job whose id has a kept
+result, so keeping none is what lets a job id be queued again once its job
+finished, as `JobQueue.enqueue` promises."""
+
 
 class ArqJobQueue(JobQueue):
     """Opens its Redis pool on first use, so building the queue at startup

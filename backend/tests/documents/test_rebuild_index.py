@@ -34,6 +34,7 @@ from tests.documents.conftest import (
     fast_retry_handler,
     finalize_upload,
     init_upload,
+    make_image_only_pdf,
     make_text_pdf,
 )
 from tests.support.fake_embedding_provider import FakeEmbeddingProvider
@@ -544,3 +545,94 @@ async def test_open_dead_letters_from_before_are_closed(
     assert {chunk.indexing_status for chunk in chunks} == {ChunkStatus.DONE}
     assert {chunk.embedding_status for chunk in chunks} == {ChunkStatus.PENDING}
     assert rebuild_queue.jobs == [_job(caller, document_id)]
+
+
+async def test_a_document_failed_at_embedding_is_rebuilt(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker,
+    fake_search_index: FakeSearchIndex,
+    rebuild_queue: FakeJobQueue,
+) -> None:
+    """Its Chunks were in the lost index; skipped, it could never be made
+    searchable again."""
+    document_id = await _upload(client, storage, caller, ["Alpha."])
+    await ingest_document(
+        {
+            "db_session_factory": session_factory,
+            "storage_provider": storage,
+            "ingestion_settings": IngestionSettings(),
+            "search_index": fake_search_index,
+            "retry_handler": fast_retry_handler(),
+            "job_queue": FakeJobQueue(),
+        },
+        document_id=str(document_id),
+        tenant_id=str(caller.tenant_id),
+    )
+    voyage_down = FakeEmbeddingProvider()
+    voyage_down.is_down = True
+    await embed_document(
+        {
+            "db_session_factory": session_factory,
+            "ingestion_settings": IngestionSettings(),
+            "search_index": fake_search_index,
+            "embedding_provider": voyage_down,
+            "retry_handler": fast_retry_handler(),
+        },
+        document_id=str(document_id),
+        tenant_id=str(caller.tenant_id),
+    )
+    assert (await _document(db_session, document_id)).ingestion_status == (
+        IngestionStatus.FAILED
+    )
+    _lose(fake_search_index)
+
+    result = await _rebuild(session_factory, fake_search_index, rebuild_queue)
+
+    assert result.documents_reindexed == 1
+    assert {chunk.document_id for chunk in fake_search_index.indexed} == {document_id}
+    document = await _document(db_session, document_id)
+    assert document.ingestion_status == IngestionStatus.PROCESSING
+    assert document.ingestion_stage == IngestionStage.EMBEDDING
+    assert document.ingestion_error is None
+    assert rebuild_queue.jobs == [_job(caller, document_id)]
+
+
+async def test_a_document_failed_with_no_chunks_is_untouched(
+    client: AsyncClient,
+    storage: FakeStorageProvider,
+    caller: Caller,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker,
+    fake_search_index: FakeSearchIndex,
+    rebuild_queue: FakeJobQueue,
+) -> None:
+    pdf = make_image_only_pdf()
+    upload_id = (await init_upload(client, pdf)).json()["upload_id"]
+    storage.put_object(pending_upload_key(caller.tenant_id, uuid.UUID(upload_id)), pdf)
+    document_id = uuid.UUID((await finalize_upload(client, upload_id)).json()["id"])
+    await ingest_document(
+        {
+            "db_session_factory": session_factory,
+            "storage_provider": storage,
+            "ingestion_settings": IngestionSettings(),
+            "search_index": fake_search_index,
+            "retry_handler": fast_retry_handler(),
+            "job_queue": FakeJobQueue(),
+        },
+        document_id=str(document_id),
+        tenant_id=str(caller.tenant_id),
+    )
+    before = await _document(db_session, document_id)
+    assert before.ingestion_status == IngestionStatus.FAILED
+    error = before.ingestion_error
+
+    result = await _rebuild(session_factory, fake_search_index, rebuild_queue)
+
+    assert result.documents_reindexed == 0
+    after = await _document(db_session, document_id)
+    assert after.ingestion_status == IngestionStatus.FAILED
+    assert after.ingestion_error == error
+    assert rebuild_queue.jobs == []

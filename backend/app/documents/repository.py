@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -460,8 +460,10 @@ class DocumentsRepository:
 
     async def list_documents_past_chunking(self) -> Sequence[Document]:
         """Documents with Chunks the search index should hold, across every
-        Tenant, oldest first: `ready`, `partial`, and those at `indexing` or
-        `embedding`. Not deleted, failed, or still earlier in Ingestion."""
+        Tenant, oldest first: `ready`, `partial`, those at `indexing` or
+        `embedding`, and `failed` ones that have Chunks (indexing or embedding
+        failed). Not deleted, failed with no Chunks, or still earlier in
+        Ingestion."""
         result = await self.session.execute(
             select(Document)
             .where(
@@ -475,13 +477,19 @@ class DocumentsRepository:
                             [IngestionStage.INDEXING, IngestionStage.EMBEDDING]
                         ),
                     ),
+                    and_(
+                        Document.ingestion_status == IngestionStatus.FAILED,
+                        exists().where(Chunk.document_id == Document.id),
+                    ),
                 )
             )
             .order_by(Document.created_at, Document.id)
         )
         return result.scalars().all()
 
-    async def mark_document_chunks_pending_embedding(self, document_id: uuid.UUID) -> None:
+    async def mark_document_chunks_pending_embedding(
+        self, document_id: uuid.UUID
+    ) -> None:
         """Every Chunk of the Document waits for a vector again. Does not
         commit: the caller decides the transaction boundary."""
         await self.session.execute(

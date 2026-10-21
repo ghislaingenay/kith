@@ -35,10 +35,10 @@ async def rebuild_index(
     pipeline, then re-indexes every Document past chunking from its Chunk
     rows, as Ingestion does, dead letters included. Each one's Chunks wait
     for a vector again and its `embed_document` job is queued (ADR-0014): the
-    vectors were only in the index. Documents earlier in Ingestion, failed or
-    deleted are left alone. Each Document is its own transaction, and running
-    it again gives the same result. A Document deleted while it runs is
-    skipped.
+    vectors were only in the index. Documents earlier in Ingestion, failed
+    with no Chunks, or deleted are left alone. Each Document is its own
+    transaction, and running it again gives the same result. A Document
+    deleted while it runs is skipped.
 
     Its open Chunk Dead Letters are closed, since every Chunk is indexed and
     embedded again; a batch that fails now gets a new row. Refuses to start
