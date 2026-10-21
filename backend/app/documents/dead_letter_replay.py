@@ -130,7 +130,8 @@ async def _replay_indexing_row(
     )
     if chunks:
         # End the read's transaction before the search call, so the timestamps
-        # written after it are not the start of the call (see `_index_chunks`).
+        # written after it are not the start of the call (see
+        # `index_document_chunks`).
         await session.commit()
         failure = await call_search(
             retry_handler,
