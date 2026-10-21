@@ -23,6 +23,9 @@ from documents.ingest import ingest_document
 # arq reads that class attribute to open its pool before `on_startup` ever
 # runs, so logging can't wait for startup to be configured first.
 container.logging_configured()
+# Before arq builds its `Worker`, so Sentry's arq integration wraps every job;
+# a no-op without a DSN.
+container.sentry_configured()
 
 logger = setup_logger(__name__)
 

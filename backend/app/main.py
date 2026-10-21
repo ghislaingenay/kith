@@ -22,6 +22,10 @@ from users.router import router as users_router
 
 logger = setup_logger(__name__)
 
+# Before `FastAPI(...)` below, so Sentry's FastAPI integration sees the app
+# being built; a no-op without a DSN.
+container.sentry_configured()
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
