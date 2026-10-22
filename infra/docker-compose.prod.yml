@@ -138,6 +138,40 @@ services:
       retries: 12
       start_period: 30s
 
+  # One-shot nightly backup (infra/pg-backup.sh). The `backup` profile keeps
+  # it out of `up -d`; `docker compose run --rm pg-backup` starts it, from
+  # the deploy user's crontab or by hand. It gets only its own S3 keys, which
+  # can put objects under backups/ and nothing else.
+  pg-backup:
+    profiles: ["backup"]
+    image: kith-pg-backup
+    build:
+      dockerfile_inline: |
+        FROM postgres:16-alpine
+        RUN apk add --no-cache aws-cli curl
+    # Rebuilt on every run (from cache), so a change above always applies.
+    pull_policy: build
+    entrypoint: ["sh", "/pg-backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      AWS_DEFAULT_REGION: ${S3_REGION:?set S3_REGION in .env}
+      AWS_ACCESS_KEY_ID: ${BACKUP_AWS_ACCESS_KEY_ID:?set BACKUP_AWS_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_AWS_SECRET_ACCESS_KEY:?set BACKUP_AWS_SECRET_ACCESS_KEY in .env}
+      # Checks in to the `pg-backup` Cron monitor in the kith-worker project;
+      # an empty DSN skips the check-ins.
+      SENTRY_DSN: ${SENTRY_WORKER_DSN:-}
+      SENTRY_CRON_MONITOR: pg-backup
+    volumes:
+      - ./pg-backup.sh:/pg-backup.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   caddy-data:
   caddy-config:

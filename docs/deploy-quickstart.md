@@ -2,7 +2,7 @@
 
 How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
 
-> **Not built yet.** This page describes the target setup. These pieces it relies on do not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR) and the `pg-backup` service. Update this page as each one lands.
+> **Not built yet.** This page describes the target setup. One piece it relies on does not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR). Update this page when it lands.
 
 ## The shape
 
@@ -47,7 +47,39 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
 3. Lifecycle rules:
    - prefix `pending/`: expire after 1 day. This is the backstop for abandoned uploads (ADR-0009).
    - prefix `backups/`: expire after 14 days.
-4. An IAM user, e.g. `kith-vps`, with access keys. Give it a policy limited to this bucket: `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on `arn:aws:s3:::kith-prod` and `arn:aws:s3:::kith-prod/*`.
+   - whole bucket: delete incomplete multipart uploads after 1 day. A large dump is uploaded in parts, and the backup's put-only keys cannot clean up after a failed upload.
+4. Two IAM users, each with access keys. The app's keys must not be able to touch backups, so that a compromised API cannot delete them; the backup's keys can only add new dumps.
+   - `kith-vps`, for the app (and for reading backups in the restore drill):
+
+     ```json
+     {
+       "Version": "2012-10-17",
+       "Statement": [
+         { "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::kith-prod" },
+         {
+           "Effect": "Allow",
+           "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+           "Resource": "arn:aws:s3:::kith-prod/*"
+         },
+         {
+           "Effect": "Deny",
+           "Action": ["s3:PutObject", "s3:DeleteObject"],
+           "Resource": "arn:aws:s3:::kith-prod/backups/*"
+         }
+       ]
+     }
+     ```
+
+   - `kith-backup`, for the `pg-backup` service only, put-only under `backups/`:
+
+     ```json
+     {
+       "Version": "2012-10-17",
+       "Statement": [
+         { "Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::kith-prod/backups/*" }
+       ]
+     }
+     ```
 
 **Resend.** Add and verify your sending domain (SPF and DKIM records in DNS), then create an API key with "sending access" only. Its SMTP login is host `smtp.resend.com`, port `465`, user `resend`, password = the API key.
 
@@ -55,7 +87,10 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
 
 1. Create three projects, `kith-api` (platform: FastAPI), `kith-worker` (platform: Python) and `kith-frontend` (Next.js), and note each DSN (project settings → Client Keys). For the products, tick Error monitoring and Tracing only: logs stay on the VPS.
 2. Add an **Uptime** monitor on `https://app.example.com/health`.
-3. Add a **Cron** monitor named `pg-backup`, scheduled daily, which the backup job checks in to.
+3. In the `kith-worker` project, add a **Cron** monitor with the slug `pg-backup`. The backup job checks in to it using the `kith-worker` DSN, so it needs no project of its own. Settings:
+   - schedule: crontab `0 3 * * *`, timezone UTC (the same line as the crontab in step 7);
+   - check-in margin: 30 minutes; max runtime: 30 minutes;
+   - alert: when 1 check-in is missed or failed. You are then told when a night is missed, when the dump or upload fails, and when it hangs.
 4. Limit the `kith-frontend` DSN. It is public (every browser sees it), and it can only send events, not read them, so the risk is someone flooding the project with fake errors:
    - project settings → Security & Privacy → **Allowed Domains**: `app.example.com`, so browser events from other sites are rejected;
    - project settings → Client Keys → the key → **Rate Limiting**: for example 100 events per minute, so a flood can't use up the quota.
@@ -145,7 +180,7 @@ Everything lives in `/opt/kith`, owned by `deploy`:
 sudo mkdir -p /opt/kith && sudo chown deploy:deploy /opt/kith
 ```
 
-The deploy job copies `docker-compose.prod.yml` and `Caddyfile` from the repo on every deploy, so the server always matches `master`. For the first run, copy them by hand (`scp infra/docker-compose.prod.yml infra/Caddyfile deploy@<vps>:/opt/kith/`).
+The deploy job copies `docker-compose.prod.yml`, `Caddyfile` and `pg-backup.sh` from the repo on every deploy, so the server always matches `master`. For the first run, copy them by hand (`scp infra/docker-compose.prod.yml infra/Caddyfile infra/pg-backup.sh deploy@<vps>:/opt/kith/`).
 
 The secrets go in `/opt/kith/.env`. Write it by hand, and never commit it.
 
@@ -170,6 +205,9 @@ S3_BUCKET=kith-prod
 S3_REGION=<bucket region>
 AWS_ACCESS_KEY_ID=<kith-vps key>
 AWS_SECRET_ACCESS_KEY=<kith-vps secret>
+# the pg-backup service's own keys (put-only under backups/)
+BACKUP_AWS_ACCESS_KEY_ID=<kith-backup key>
+BACKUP_AWS_SECRET_ACCESS_KEY=<kith-backup secret>
 
 # ── web ──
 CORS_ALLOWED_ORIGINS=https://app.example.com
@@ -196,6 +234,7 @@ LOG_LEVEL=INFO
 # empty to turn it off for that service. The compose file sets
 # SENTRY_ENVIRONMENT=production, and the image carries the release SHA.
 SENTRY_API_DSN=<kith-api dsn>
+# also used by pg-backup to check in to its Cron monitor
 SENTRY_WORKER_DSN=<kith-worker dsn>
 # share of requests and jobs traced (0 to 1; /health is never traced)
 SENTRY_TRACES_SAMPLE_RATE=0.1
@@ -245,16 +284,46 @@ To give Credits later: `dc run --rm app python -m scripts.adjust_credits --tenan
 
 ## 7. Backups: check them before you rely on them
 
-The `pg-backup` service dumps Postgres nightly to `s3://kith-prod/backups/` and checks in to the Sentry Cron monitor. Run it once by hand, then **do the restore drill once**:
+The `pg-backup` service dumps Postgres (`pg_dump` custom format, compressed) to `s3://kith-prod/backups/<POSTGRES_DB>-<UTC timestamp>.dump`, and checks in to the Sentry Cron monitor when it starts, succeeds or fails. It is in the `backup` profile, so `dc up -d` never starts it; `dc run` does, building its small image (Postgres client and AWS CLI) the first time. S3 deletes dumps after 14 days.
+
+**Take one by hand**, now and before any risky change:
 
 ```sh
-dc run --rm pg-backup            # take a dump now
-# restore it into a throwaway database and look at it
-dc exec postgres createdb -U kith restore_test
-aws s3 cp s3://kith-prod/backups/<file>.sql.gz - | gunzip | dc exec -T postgres psql -U kith restore_test
-dc exec postgres psql -U kith restore_test -c 'select count(*) from documents;'
-dc exec postgres dropdb -U kith restore_test
+dc run --rm pg-backup     # prints "pg-backup: uploaded s3://..." and exits 0
 ```
+
+**Schedule it nightly** in the `deploy` user's crontab (`crontab -e`). The time matches the Cron monitor's schedule (the VPS clock is UTC; check with `date`):
+
+```
+0 3 * * * cd /opt/kith && docker compose -f docker-compose.prod.yml --env-file .env run --rm -T pg-backup 2>&1 | logger -t pg-backup
+```
+
+Its output goes to the system log: `journalctl -t pg-backup`.
+
+**Do the restore drill once**, so you know a dump actually restores. It runs in the backup image with the `kith-vps` keys, which can read `backups/` (the backup's own keys can only write):
+
+```sh
+# the kith-vps keys from .env, passed into the container below
+export AWS_ACCESS_KEY_ID=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' .env)
+export AWS_SECRET_ACCESS_KEY=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' .env)
+restore() { dc run --rm -T -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY --entrypoint sh pg-backup -c "$1"; }
+
+# 1. pick a dump
+restore 'aws s3 ls "s3://$S3_BUCKET/backups/"'
+
+# 2. restore it into a throwaway database
+dc exec postgres createdb -U kith restore_test
+restore 'aws s3 cp --only-show-errors "s3://$S3_BUCKET/backups/<file>.dump" /tmp/restore.dump && pg_restore --no-owner --exit-on-error --dbname restore_test /tmp/restore.dump'
+
+# 3. the Documents count matches the live database (as of the dump)
+for db in kith restore_test; do dc exec postgres psql -U kith -d "$db" -tAc 'select count(*) from documents'; done
+
+# 4. clean up
+dc exec postgres dropdb -U kith restore_test
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+```
+
+To recover after losing the server, do the same into the `kith` database of a fresh stack (before the release step), then rebuild the search index as below.
 
 OpenSearch has no backup. If it is lost, rebuild it from Postgres in the API container (ADR-0019):
 
@@ -269,7 +338,7 @@ It asks you to type `yes` first (`--yes` skips that). Search comes back as each 
 Merge anything to `master`. Once the tests pass, `.github/workflows/deploy.yml` will:
 
 1. build both images, tagged with the commit SHA, and push them to GHCR;
-2. SSH in as `deploy`, copy the compose file and Caddyfile, and set `IMAGE_TAG`;
+2. SSH in as `deploy`, copy the compose file, Caddyfile and `pg-backup.sh`, and set `IMAGE_TAG`;
 3. pull the images and run the release step. If it fails, the deploy stops and the old version keeps serving;
 4. run `docker rollout app` and `docker rollout frontend`, then restart `worker-ingest`.
 
