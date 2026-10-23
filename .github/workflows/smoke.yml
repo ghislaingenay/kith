@@ -1,14 +1,14 @@
 name: Production stack smoke test
 
-# Starts infra/docker-compose.prod.yml from freshly built images and checks
-# Caddy's routing over HTTPS. It tests frontend/Dockerfile, the prod
-# compose file, the Caddyfile and the release command.
+# Builds both images and runs the smoke test (.github/actions/smoke-test) on
+# pull requests. deploy.yml runs the same test on master before the push.
 on:
   pull_request:
     paths:
       - "backend/**"
       - "frontend/**"
       - "infra/**"
+      - ".github/actions/smoke-test/**"
       - ".github/workflows/smoke.yml"
 
 concurrency:
@@ -20,92 +20,19 @@ jobs:
     name: Smoke-test the production stack
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      # Every `docker compose` below uses the prod file, and reads infra/.env.
-      COMPOSE_FILE: docker-compose.prod.yml
-      IMAGE_TAG: smoke
-    defaults:
-      run:
-        working-directory: infra
     steps:
       - uses: actions/checkout@v4
 
       - name: Build the backend image
-        run: docker build -t ghcr.io/ghislaingenay/kith-backend:smoke --build-arg GIT_SHA=${{ github.sha }} ../backend
+        run: docker build -t ghcr.io/ghislaingenay/kith-backend:smoke --build-arg GIT_SHA=${{ github.sha }} backend
 
       - name: Build the frontend image
         run: >
           docker build -t ghcr.io/ghislaingenay/kith-frontend:smoke
           --build-arg NEXT_PUBLIC_API_URL=https://localhost
           --build-arg GIT_SHA=${{ github.sha }}
-          ../frontend
+          frontend
 
-      # Throwaway values. Empty AI keys: the API starts with warnings. Storage
-      # points at S3 with dummy credentials; nothing here uploads.
-      - name: Write a throwaway .env
-        run: |
-          cat > .env <<'EOF'
-          DOMAIN=localhost
-          IMAGE_TAG=smoke
-          APP_URL=https://localhost
-          POSTGRES_USER=kith
-          POSTGRES_PASSWORD=smoke-password
-          POSTGRES_DB=kith
-          STORAGE_PROVIDER=s3
-          S3_BUCKET=kith-smoke
-          S3_REGION=us-east-1
-          AWS_ACCESS_KEY_ID=dummy
-          AWS_SECRET_ACCESS_KEY=dummy
-          BACKUP_AWS_ACCESS_KEY_ID=dummy
-          BACKUP_AWS_SECRET_ACCESS_KEY=dummy
-          CORS_ALLOWED_ORIGINS=https://localhost
-          MAGIC_LINK_VERIFY_URL=https://localhost/verify
-          SESSION_COOKIE_SECURE=true
-          SMTP_HOST=localhost
-          MAIL_FROM_ADDRESS=noreply@example.com
-          OPENAI_API_KEY=
-          VOYAGE_API_KEY=
-          LOG_FORMAT=json
-          EOF
-
-      - name: Start the data services
-        run: docker compose up -d --wait --wait-timeout 180 postgres redis opensearch
-
-      - name: Run the release command
-        run: docker compose run --rm app ./release.sh
-
-      # worker-ingest is started but not waited on: it refuses an empty
-      # VOYAGE_API_KEY at startup (ADR-0014).
-      - name: Start the rest of the stack
-        run: |
-          docker compose up -d
-          docker compose up -d --wait --wait-timeout 180 app frontend caddy
-
-      - name: Check Caddy's routing over HTTPS
-        run: |
-          set -eu
-          # Trust Caddy's local CA rather than skipping TLS verification.
-          docker compose exec -T caddy timeout 60 sh -c \
-            'until [ -f /data/caddy/pki/authorities/local/root.crt ]; do sleep 1; done; cat /data/caddy/pki/authorities/local/root.crt' > caddy-root.crt
-          https_get() { curl -sS --cacert caddy-root.crt --retry 10 --retry-connrefused --retry-delay 2 "$@"; }
-
-          echo "/health answers from FastAPI"
-          health=$(https_get https://localhost/health)
-          [ "$health" = '{"status":"ok"}' ]
-
-          echo "/api/v1/me answers from FastAPI (401 without a Session)"
-          body_and_status=$(https_get -w '\n%{http_code}' https://localhost/api/v1/me)
-          [ "$(echo "$body_and_status" | tail -n1)" = 401 ]
-          echo "$body_and_status" | grep -q '"error":"unauthorized"'
-
-          echo "/ answers from Next.js (redirects to /sign-in)"
-          page=$(https_get -L https://localhost/)
-          echo "$page" | grep -q '/_next/static/'
-
-      - name: Show logs on failure
-        if: failure()
-        run: docker compose logs --no-color
-
-      - name: Tear down
-        if: always()
-        run: docker compose down -v
+      - uses: ./.github/actions/smoke-test
+        with:
+          image-tag: smoke

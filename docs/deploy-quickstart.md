@@ -2,8 +2,6 @@
 
 How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
 
-> **Not built yet.** This page describes the target setup. One piece it relies on does not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR). Update this page when it lands.
-
 ## The shape
 
 ```
@@ -103,10 +101,13 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
   - `NEXT_PUBLIC_ASK_CITATION_MARKERS` = `true`
   - `NEXT_PUBLIC_SENTRY_DSN` = the `kith-frontend` DSN (leave it unset to turn Sentry off in the frontend). The browser can see it; a DSN only lets someone send events, not read them. The image reports as `production`, traces 10 % of page loads (never `/health`), and carries the release SHA.
   - `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` (optional) = the frontend's share of traces, 0 to 1. Leave it unset for `0.1`. `SENTRY_TRACES_SAMPLE_RATE` in the server's `.env` sets only the backend's.
-- Secrets, used by the deploy job to reach the VPS:
-  - `VPS_HOST`
+- Secrets, used by the deploy job to reach the VPS. Make a key used only for deploys, on your laptop: `ssh-keygen -t ed25519 -N '' -C kith-deploy -f kith-deploy`.
+  - `VPS_HOST` (the VPS's IP or hostname)
   - `VPS_USER` (`deploy`)
-  - `VPS_SSH_KEY` (the private half of a key made only for deploys)
+  - `VPS_SSH_KEY` (the content of `kith-deploy`, the private half; its `.pub` goes on the VPS in step 3)
+- One more variable, `VPS_KNOWN_HOSTS`: the VPS's SSH host key, so CI only talks to your server. After you have logged in to the VPS once from your laptop (step 3), print the line your laptop recorded with `ssh-keygen -F <VPS_HOST>` and paste it without the `#` comment line. It is not secret.
+
+Application secrets (API keys, database password) never go to GitHub: they live only in the VPS's `.env` (step 4).
 
 ## 3. Prepare the VPS
 
@@ -161,12 +162,13 @@ echo 'vm.max_map_count=262144' > /etc/sysctl.d/99-opensearch.conf && sysctl --sy
 
 ```sh
 mkdir -p ~/.docker/cli-plugins
-curl -fsSL https://raw.githubusercontent.com/wowu/docker-rollout/main/docker-rollout -o ~/.docker/cli-plugins/docker-rollout
+# the version CI's smoke test uses (.github/actions/smoke-test)
+curl -fsSL https://raw.githubusercontent.com/wowu/docker-rollout/v0.14/docker-rollout -o ~/.docker/cli-plugins/docker-rollout
 chmod +x ~/.docker/cli-plugins/docker-rollout
 docker rollout --help
 ```
 
-**GHCR login**, needed only if the images are private. As `deploy`, with a GitHub personal access token that has `read:packages` only:
+**GHCR login**, needed only if the images are private (GHCR makes them private when the deploy workflow first pushes them; you can make each package public in its settings instead). As `deploy`, with a GitHub personal access token that has `read:packages` only:
 
 ```sh
 echo <token> | docker login ghcr.io -u <github-user> --password-stdin
@@ -180,7 +182,7 @@ Everything lives in `/opt/kith`, owned by `deploy`:
 sudo mkdir -p /opt/kith && sudo chown deploy:deploy /opt/kith
 ```
 
-The deploy job copies `docker-compose.prod.yml`, `Caddyfile` and `pg-backup.sh` from the repo on every deploy, so the server always matches `master`. For the first run, copy them by hand (`scp infra/docker-compose.prod.yml infra/Caddyfile infra/pg-backup.sh deploy@<vps>:/opt/kith/`).
+The deploy job copies `docker-compose.prod.yml`, `Caddyfile`, `pg-backup.sh` and `deploy.sh` from the repo on every deploy, so the server always matches the commit it runs. Only `.env` is yours to write.
 
 The secrets go in `/opt/kith/.env`. Write it by hand, and never commit it.
 
@@ -191,8 +193,8 @@ touch /opt/kith/.env && chmod 600 /opt/kith/.env && nano /opt/kith/.env
 ```sh
 # ── site ──
 DOMAIN=app.example.com
-# tag of ghcr.io/ghislaingenay/kith-backend and kith-frontend to run
-IMAGE_TAG=<commit sha; the deploy job sets this on later deploys>
+# IMAGE_TAG (the commit SHA running) is added and kept up to date by
+# deploy.sh; leave it out.
 
 # ── postgres (password: openssl rand -hex 24) ──
 POSTGRES_USER=kith
@@ -246,22 +248,14 @@ The other settings (upload caps, retrieval sizes, `STARTING_CREDIT_GRANT`, ...) 
 
 ## 5. First start
 
-As `deploy` in `/opt/kith`. From here on `dc` means `docker compose -f docker-compose.prod.yml --env-file .env`.
+The deploy workflow pushes both images to GHCR on every merge to `master`. If the VPS was not ready when it ran, that run's deploy job failed at SSH; that is expected, and its images are in GHCR all the same.
+
+Start the stack by running the deploy workflow by hand: GitHub → Actions → **Deploy** → Run workflow, with `image_tag` = the full SHA of that `master` commit (`git rev-parse origin/master`). It is the same job every later deploy runs (step 8), and `deploy.sh` also starts a fresh server: it starts Postgres, Redis and OpenSearch and waits for them, runs the release step, then the API, frontend, worker and Caddy start.
+
+From here on `dc` means `docker compose -f docker-compose.prod.yml --env-file .env`, run as `deploy` in `/opt/kith`:
 
 ```sh
 alias dc='docker compose -f docker-compose.prod.yml --env-file .env'
-
-dc pull
-
-# 1. the data services first, and wait until they report healthy
-dc up -d postgres redis opensearch
-dc ps
-
-# 2. the release step (ADR-0018): migrations, then the search index; exits non-zero if either fails
-dc run --rm app ./release.sh
-
-# 3. everything else
-dc up -d
 dc ps
 ```
 
@@ -333,16 +327,28 @@ dc exec app python -m scripts.rebuild_index
 
 It asks you to type `yes` first (`--yes` skips that). Search comes back as each Document is re-indexed, and hybrid results once the worker has embedded it again. See `docs/search-quickstart.md` for what it does.
 
-## 8. Turn on automatic deploys
+## 8. Automatic deploys
 
-Merge anything to `master`. Once the tests pass, `.github/workflows/deploy.yml` will:
+`.github/workflows/deploy.yml` runs on every push to `master`:
 
-1. build both images, tagged with the commit SHA, and push them to GHCR;
-2. SSH in as `deploy`, copy the compose file, Caddyfile and `pg-backup.sh`, and set `IMAGE_TAG`;
-3. pull the images and run the release step. If it fails, the deploy stops and the old version keeps serving;
-4. run `docker rollout app` and `docker rollout frontend`, then restart `worker-ingest`.
+1. the backend tests and the frontend build and tests;
+2. it builds both images, tagged with the commit SHA and `latest`;
+3. it smoke-tests those images as a running stack: Caddy's routing, then a second deploy while `/health` and `/` are polled, where no request may fail;
+4. it pushes those same images to GHCR;
+5. it SSHes in as `deploy`, copies the compose file, Caddyfile, `pg-backup.sh` and `deploy.sh` into `/opt/kith`, and runs `deploy.sh <sha>`, which:
+   1. pulls the images, and starts Postgres, Redis and OpenSearch if they are not running;
+   2. runs the release step. If it fails, the deploy stops there and the old version keeps serving;
+   3. records the SHA as `IMAGE_TAG` in `.env`;
+   4. runs `docker rollout app` and `docker rollout frontend`, then restarts `worker-ingest`;
+   5. starts anything not running yet and reloads Caddy's config.
+
+A failed test or smoke check stops it before the push. Only one deploy runs at a time: a running deploy is never cancelled, and when several merges queue up behind it, only the newest one deploys.
 
 Every migration must work with the code that is still running (ADR-0018).
+
+A change to a data service in `docker-compose.prod.yml` (Postgres, Redis, OpenSearch) is copied but not applied, so a deploy never restarts the database by surprise. Apply it by hand: `dc up -d <service>`.
+
+**Roll back** by running the workflow by hand (Actions → Deploy → Run workflow) with an older full commit SHA as `image_tag`. It skips testing and building, and deploys that commit's images with that commit's compose file and Caddyfile. The schema is never downgraded. A rollback waits behind a running deploy like any run, and a merge that arrives while it waits replaces it, so check it ran. After each deploy the VPS prunes images built over a week ago that no container uses; a rollback pulls an older one again from GHCR.
 
 ## Day-to-day
 
@@ -353,5 +359,6 @@ Every migration must work with the code that is still running (ADR-0018).
 | Run a script | `dc exec app python -m scripts.<name> ...` |
 | DB from your laptop | `ssh -L 5432:localhost:5432 deploy@<vps>`, then connect to `localhost:5432` |
 | OpenSearch from your laptop | `ssh -L 9200:localhost:9200 deploy@<vps>`, then `curl localhost:9200/_cat/indices` |
-| Roll back | re-run the deploy workflow with an older commit SHA (the schema is never downgraded) |
+| Roll back | Actions → Deploy → Run workflow with an older full commit SHA (step 8) |
+| Deploy by hand | `sh deploy.sh <full commit sha>` (what the workflow runs) |
 | Memory use | `docker stats --no-stream` |
