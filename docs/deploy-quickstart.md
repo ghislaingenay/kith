@@ -148,7 +148,7 @@ cat kith-deploy.pub                # goes on the VPS in step 3
   # ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... root@srv123
   ```
 
-  The value is one line: the VPS's IP, a space, then the first two parts of that output (drop the trailing label):
+  The value is one line: exactly what you put in `VPS_HOST` (the IP, or the hostname if you used one), a space, then the first two parts of that output (drop the trailing label):
 
   ```
   203.0.113.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
