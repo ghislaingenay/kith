@@ -2,6 +2,20 @@
 
 How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
 
+## Checklist
+
+Everything you do by hand, in order. The steps below say how.
+
+1. Rent the VPS and point the domain at it (steps 1 and 2, DNS).
+2. Create the outside resources: S3 bucket and IAM users, Resend, Sentry (step 2).
+3. Make the deploy SSH key and fill in GitHub's secrets and variables (step 2, GitHub).
+4. Prepare the VPS: the `deploy` user, firewall, Docker, the rollout plugin, GHCR login (step 3).
+5. Write `/opt/kith/.env` on the VPS (step 4).
+6. Run the first deploy from GitHub (step 5), then sign in (step 6).
+7. Take a backup, schedule it, and do the restore drill once (step 7).
+
+After that, merges to `master` deploy by themselves (step 8).
+
 ## The shape
 
 ```
@@ -102,14 +116,16 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
   - `NEXT_PUBLIC_SENTRY_DSN` = the `kith-frontend` DSN (leave it unset to turn Sentry off in the frontend). The browser can see it; a DSN only lets someone send events, not read them. The image reports as `production`, traces 10 % of page loads (never `/health`), and carries the release SHA.
   - `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` (optional) = the frontend's share of traces, 0 to 1. Leave it unset for `0.1`. `SENTRY_TRACES_SAMPLE_RATE` in the server's `.env` sets only the backend's.
 - Secrets, used by the deploy job to reach the VPS. Make a key used only for deploys, on your laptop: `ssh-keygen -t ed25519 -N '' -C kith-deploy -f kith-deploy`.
-  - `VPS_HOST` (the VPS's IP or hostname)
-  - `VPS_USER` (`deploy`)
+  - `VPS_HOST`: the address CI connects to, the VPS's public IP (e.g. `203.0.113.10`, from your hosting provider's panel) or a hostname pointing at it
+  - `VPS_USER`: the Linux user CI logs in as on the VPS, `deploy` (created in step 3)
   - `VPS_SSH_KEY` (the content of `kith-deploy`, the private half; its `.pub` goes on the VPS in step 3)
 - One more variable, `VPS_KNOWN_HOSTS`: the VPS's SSH host key, so CI only talks to your server. After you have logged in to the VPS once from your laptop (step 3), print the line your laptop recorded with `ssh-keygen -F <VPS_HOST>` and paste it without the `#` comment line. It is not secret.
 
 Application secrets (API keys, database password) never go to GitHub: they live only in the VPS's `.env` (step 4).
 
 ## 3. Prepare the VPS
+
+### The `deploy` user, SSH and firewall
 
 Run these as root, or with `sudo`, the first time.
 
@@ -134,9 +150,13 @@ apt update && apt install -y unattended-upgrades && dpkg-reconfigure -plow unatt
 
 Check you can still log in as `deploy` from a second terminal **before** closing the root session.
 
-**Provider firewall.** In your hosting provider's control panel, add a firewall for the VPS that allows only inbound TCP 22, 80 and 443 (and UDP 443 for HTTP/3). It runs outside the server, so Docker cannot bypass it the way it bypasses `ufw` (see below): if a container ever publishes a port by mistake, this still blocks it.
+### Provider firewall
 
-**Docker.** Install Docker Engine and the compose plugin by following https://docs.docker.com/engine/install/ubuntu/, then:
+In your hosting provider's control panel, add a firewall for the VPS that allows only inbound TCP 22, 80 and 443 (and UDP 443 for HTTP/3). It runs outside the server, so Docker cannot bypass it the way it bypasses `ufw` (see below): if a container ever publishes a port by mistake, this still blocks it.
+
+### Docker
+
+Install Docker Engine and the compose plugin by following https://docs.docker.com/engine/install/ubuntu/, then:
 
 ```sh
 usermod -aG docker deploy   # being in the docker group is the same as being root, so only this user gets it
@@ -144,7 +164,9 @@ usermod -aG docker deploy   # being in the docker group is the same as being roo
 
 > Docker bypasses `ufw` for published ports. A `ports: "5432:5432"` line would open Postgres to the internet whatever `ufw` says. That is why the prod compose file publishes only Caddy's ports, and binds Postgres and OpenSearch to `127.0.0.1`.
 
-**Log rotation**, so container logs cannot fill the disk. In `/etc/docker/daemon.json`:
+### Log rotation
+
+So container logs cannot fill the disk. In `/etc/docker/daemon.json`:
 
 ```json
 { "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }
@@ -152,13 +174,17 @@ usermod -aG docker deploy   # being in the docker group is the same as being roo
 
 Then `systemctl restart docker`.
 
-**OpenSearch memory maps.** OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
+### OpenSearch memory maps
+
+OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
 
 ```sh
 echo 'vm.max_map_count=262144' > /etc/sysctl.d/99-opensearch.conf && sysctl --system
 ```
 
-**The rollout plugin**, which deploys `app` and `frontend` without downtime. Run as `deploy`:
+### Install the rollout plugin (`docker rollout`)
+
+Every deploy needs it: `deploy.sh` uses it to replace `app` and `frontend` without downtime, and fails without it. Run as `deploy`:
 
 ```sh
 mkdir -p ~/.docker/cli-plugins
@@ -168,7 +194,9 @@ chmod +x ~/.docker/cli-plugins/docker-rollout
 docker rollout --help
 ```
 
-**GHCR login**, needed only if the images are private (GHCR makes them private when the deploy workflow first pushes them; you can make each package public in its settings instead). As `deploy`, with a GitHub personal access token that has `read:packages` only:
+### GHCR login
+
+Needed only if the images are private (GHCR makes them private when the deploy workflow first pushes them; you can make each package public in its settings instead). As `deploy`, with a GitHub personal access token that has `read:packages` only:
 
 ```sh
 echo <token> | docker login ghcr.io -u <github-user> --password-stdin
@@ -184,7 +212,7 @@ sudo mkdir -p /opt/kith && sudo chown deploy:deploy /opt/kith
 
 The deploy job copies `docker-compose.prod.yml`, `Caddyfile`, `pg-backup.sh` and `deploy.sh` from the repo on every deploy, so the server always matches the commit it runs. Only `.env` is yours to write.
 
-The secrets go in `/opt/kith/.env`. Write it by hand, and never commit it.
+The secrets go in `/opt/kith/.env`: the database password, the S3, Resend, Sentry, OpenAI and Voyage keys, and the site's address. The containers read their settings from it, and it is the only place those secrets exist: not in git, not in GitHub, and CI never sees them. Write it by hand, keep it readable by `deploy` only (`chmod 600`), and never commit it. The deploy never overwrites it; it only updates the `IMAGE_TAG` line.
 
 ```sh
 touch /opt/kith/.env && chmod 600 /opt/kith/.env && nano /opt/kith/.env
@@ -345,6 +373,8 @@ It asks you to type `yes` first (`--yes` skips that). Search comes back as each 
 A failed test or smoke check stops it before the push. Only one deploy runs at a time: a running deploy is never cancelled, and when several merges queue up behind it, only the newest one deploys.
 
 Every migration must work with the code that is still running (ADR-0018).
+
+During the swap, a request that reaches the old `app` container while it shuts down can take 1 to 3 seconds longer. None fail (the smoke test checks that).
 
 A change to a data service in `docker-compose.prod.yml` (Postgres, Redis, OpenSearch) is copied but not applied, so a deploy never restarts the database by surprise. Apply it by hand: `dc up -d <service>`.
 
