@@ -127,19 +127,45 @@ Application secrets (API keys, database password) never go to GitHub: they live 
 
 ### The `deploy` user, SSH and firewall
 
-Run these as root, or with `sudo`, the first time.
+Your hosting provider's panel (on Hostinger, the VPS's SSH keys setting) puts your SSH key on **root**, so the first login is `ssh root@<VPS_IP>` from your laptop. Each account has its own list of allowed keys, so root's key does not let you in as any other user.
+
+These steps add a second account, `deploy`. You and CI log in to it to run Kith, and root login is then turned off:
+
+- bots try `ssh root@…` on every server all day, so it should not be open;
+- CI's key gets its own line, which you can delete if the GitHub secret ever leaks, without touching your own access;
+- `/opt/kith`, its `.env` and the backup's crontab belong to `deploy`, so Kith never runs as root by accident.
+
+`deploy` is in the `docker` group (below), which can do almost anything root can, so treat its keys as carefully as root's.
+
+**1. Create `deploy` and give it the keys.** As root on the VPS:
 
 ```sh
-# a user for deploys; you and CI log in as it
-adduser --disabled-password deploy
+# a new login account, with no password: only SSH keys get in
+adduser --disabled-password --gecos "" deploy
 mkdir -p /home/deploy/.ssh
-# paste your own public key AND the CI deploy public key, one per line
+# your own key, the one the provider's panel put on root
+cp /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+# add one line: the content of kith-deploy.pub (CI's key, step 2 → GitHub)
 nano /home/deploy/.ssh/authorized_keys
 chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
+```
 
-# keys only, no root login
-sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/; s/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
-systemctl restart ssh
+**2. Check `deploy` works before going further.** Keep the root session open. In a **second terminal on your laptop**:
+
+```sh
+ssh deploy@<VPS_IP>    # must log you in without a password
+```
+
+If it fails, fix it from the root session first. The next step locks root out, and you'd be left with only the provider's browser terminal.
+
+**3. Keys only, no root login, firewall, automatic security updates.** Back in the root session:
+
+```sh
+# a drop-in file read before the others in sshd_config.d (the first value set wins), so a
+# provider's own file there (e.g. 50-cloud-init.conf) cannot turn password login back on
+printf 'PasswordAuthentication no\nPermitRootLogin no\n' > /etc/ssh/sshd_config.d/00-kith.conf
+sshd -t && systemctl restart ssh
+sshd -T | grep -E '^(passwordauthentication|permitrootlogin) '   # both must say "no"
 
 # firewall
 ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable
@@ -148,7 +174,7 @@ ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable
 apt update && apt install -y unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades
 ```
 
-Check you can still log in as `deploy` from a second terminal **before** closing the root session.
+From now on, log in with `ssh deploy@<VPS_IP>`. Admin tasks that need root later (`apt`, `ufw`, SSH settings) go through the provider's panel. Open its browser terminal now and check it still gets you a root shell. Some panels log in over SSH, which root login being off now blocks. If it does not, the panel's recovery mode still gives root access, or you can undo the lock by deleting `/etc/ssh/sshd_config.d/00-kith.conf` from there.
 
 ### Provider firewall
 
