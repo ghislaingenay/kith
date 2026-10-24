@@ -127,7 +127,11 @@ cat kith-deploy                    # the GitHub secret VPS_SSH_KEY (the whole fi
 cat kith-deploy.pub                # goes on the VPS in step 3
 ```
 
-`-C` is only a label at the end of the public key, so you can tell keys apart in `authorized_keys`. It does not choose a user. Once `VPS_SSH_KEY` is saved in GitHub and `kith-deploy.pub` is on the VPS, delete the local `kith-deploy` files, so the private key exists only in GitHub (`rm kith-deploy kith-deploy.pub`). If you need it again, make a new pair.
+`-C` is only a label at the end of the public key, so you can tell keys apart in `authorized_keys`. It does not choose a user.
+
+Never copy the private `kith-deploy` file to the VPS. Only `kith-deploy.pub` goes there: the server only checks keys and never logs in with one, and a private key left on it would let anyone who broke in reuse it. You can tell the halves apart: the private file is several lines between `-----BEGIN OPENSSH PRIVATE KEY-----` and `-----END OPENSSH PRIVATE KEY-----`; the `.pub` is one line starting with `ssh-ed25519`.
+
+Once `VPS_SSH_KEY` is saved in GitHub and `kith-deploy.pub` is on the VPS, delete the local `kith-deploy` files, so the private key exists only in GitHub (`rm kith-deploy kith-deploy.pub`). If you need it again, make a new pair.
 
 **GitHub** (repo settings → Secrets and variables → Actions).
 
