@@ -107,6 +107,28 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
    - project settings → Security & Privacy → **Allowed Domains**: `app.example.com`, so browser events from other sites are rejected;
    - project settings → Client Keys → the key → **Rate Limiting**: for example 100 events per minute, so a flood can't use up the quota.
 
+**SSH keys** (on your laptop, e.g. WSL). Two key pairs, both for logging in to the VPS's `deploy` account (step 3). Each has a private half (no extension, stays secret) and a public half (`.pub`, given to the VPS).
+
+| Key | Used by | Private half | Public half |
+|---|---|---|---|
+| yours, e.g. `~/.ssh/id_ed25519` | you, from your laptop | stays on your laptop | the provider's panel puts it on root; step 3 copies it to `deploy` |
+| `kith-deploy` | GitHub Actions | GitHub secret `VPS_SSH_KEY` | added to `deploy` in step 3 |
+
+Separate keys keep them independent: if the GitHub secret ever leaks, you delete CI's line on the VPS and yours keeps working.
+
+```sh
+# your own key; skip if ~/.ssh/id_ed25519 exists. Set a passphrase when asked.
+ssh-keygen -t ed25519 -C "<you>-laptop"
+cat ~/.ssh/id_ed25519.pub          # paste this into the provider's panel (SSH keys)
+
+# CI's key: no passphrase (-N ''), since CI cannot type one. Writes kith-deploy and kith-deploy.pub.
+ssh-keygen -t ed25519 -N '' -C kith-deploy -f kith-deploy
+cat kith-deploy                    # the GitHub secret VPS_SSH_KEY (the whole file, BEGIN/END lines included)
+cat kith-deploy.pub                # goes on the VPS in step 3
+```
+
+`-C` is only a label at the end of the public key, so you can tell keys apart in `authorized_keys`. It does not choose a user. Once `VPS_SSH_KEY` is saved in GitHub and `kith-deploy.pub` is on the VPS, delete the local `kith-deploy` files, so the private key exists only in GitHub (`rm kith-deploy kith-deploy.pub`). If you need it again, make a new pair.
+
 **GitHub** (repo settings → Secrets and variables → Actions).
 
 - Variables, which get baked into the frontend image at build time:
@@ -115,11 +137,22 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
   - `NEXT_PUBLIC_ASK_CITATION_MARKERS` = `true`
   - `NEXT_PUBLIC_SENTRY_DSN` = the `kith-frontend` DSN (leave it unset to turn Sentry off in the frontend). The browser can see it; a DSN only lets someone send events, not read them. The image reports as `production`, traces 10 % of page loads (never `/health`), and carries the release SHA.
   - `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` (optional) = the frontend's share of traces, 0 to 1. Leave it unset for `0.1`. `SENTRY_TRACES_SAMPLE_RATE` in the server's `.env` sets only the backend's.
-- Secrets, used by the deploy job to reach the VPS. Make a key used only for deploys, on your laptop: `ssh-keygen -t ed25519 -N '' -C kith-deploy -f kith-deploy`.
+- Secrets, used by the deploy job to reach the VPS:
   - `VPS_HOST`: the address CI connects to, the VPS's public IP (e.g. `203.0.113.10`, from your hosting provider's panel) or a hostname pointing at it
   - `VPS_USER`: the Linux user CI logs in as on the VPS, `deploy` (created in step 3)
-  - `VPS_SSH_KEY` (the content of `kith-deploy`, the private half; its `.pub` goes on the VPS in step 3)
-- One more variable, `VPS_KNOWN_HOSTS`: the VPS's SSH host key, so CI only talks to your server. After you have logged in to the VPS once from your laptop (step 3), print the line your laptop recorded with `ssh-keygen -F <VPS_HOST>` and paste it without the `#` comment line. It is not secret.
+  - `VPS_SSH_KEY`: the content of `kith-deploy`, CI's private key (above)
+- One more variable, `VPS_KNOWN_HOSTS`: the VPS's own SSH key (its host key), so CI refuses to deploy to any other machine answering at `VPS_HOST`. It already exists on the VPS; you don't create it. It is public, so it is a variable, not a secret. Print it on the VPS:
+
+  ```sh
+  cat /etc/ssh/ssh_host_ed25519_key.pub
+  # ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... root@srv123
+  ```
+
+  The value is one line: the VPS's IP, a space, then the first two parts of that output (drop the trailing label):
+
+  ```
+  203.0.113.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
+  ```
 
 Application secrets (API keys, database password) never go to GitHub: they live only in the VPS's `.env` (step 4).
 
