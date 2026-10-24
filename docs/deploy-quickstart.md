@@ -9,7 +9,7 @@ Everything you do by hand, in order. The steps below say how.
 1. Rent the VPS and point the domain at it (steps 1 and 2, DNS).
 2. Create the outside resources: S3 bucket and IAM users, Resend, Sentry (step 2).
 3. Make the deploy SSH key and fill in GitHub's secrets and variables (step 2, GitHub).
-4. Prepare the VPS: the `deploy` user, firewall, Docker, the rollout plugin, GHCR login (step 3).
+4. Prepare the VPS: the `deploy` user, then everything that needs root (firewall, Docker, `/opt/kith`), then lock root out; then, as `deploy`, the rollout plugin and GHCR login (step 3).
 5. Write `/opt/kith/.env` on the VPS (step 4).
 6. Run the first deploy from GitHub (step 5), then sign in (step 6).
 7. Take a backup, schedule it, and do the restore drill once (step 7).
@@ -172,7 +172,7 @@ These steps add a second account, `deploy`. You and CI log in to it to run Kith,
 - CI's key gets its own line, which you can delete if the GitHub secret ever leaks, without touching your own access;
 - `/opt/kith`, its `.env` and the backup's crontab belong to `deploy`, so Kith never runs as root by accident.
 
-`deploy` is in the `docker` group (below), which can do almost anything root can, so treat its keys as carefully as root's.
+`deploy` is in the `docker` group (step 3 below), which can do almost anything root can, so treat its keys as carefully as root's.
 
 **1. Create `deploy` and give it the keys.** As root on the VPS:
 
@@ -204,9 +204,45 @@ nano /home/deploy/.ssh/authorized_keys
 ssh deploy@<VPS_IP>    # must log you in without a password
 ```
 
-If it fails, fix it from the root session first. The next step locks root out, and you'd be left with only the provider's browser terminal.
+If it fails, fix it from the root session first. Step 4 locks root out, and you'd be left with only the provider's browser terminal.
 
-**3. Keys only, no root login, firewall, automatic security updates.** Back in the root session:
+**3. Everything that needs root.** Back in the root session. `deploy` has no `sudo`, so all of this must be done now, before step 4 locks root out.
+
+Firewall, and security updates that install themselves:
+
+```sh
+ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable
+apt update && apt install -y unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades
+```
+
+Docker Engine and the compose plugin: follow https://docs.docker.com/engine/install/ubuntu/ ("Install using the apt repository"). Its commands start with `sudo`; as root they work with or without it. Then put `deploy` in the `docker` group. Being in it is the same as being root, so only this user gets it:
+
+```sh
+usermod -aG docker deploy
+```
+
+> Docker bypasses `ufw` for published ports. A `ports: "5432:5432"` line would open Postgres to the internet whatever `ufw` says. That is why the prod compose file publishes only Caddy's ports, and binds Postgres and OpenSearch to `127.0.0.1`.
+
+Log rotation, so container logs cannot fill the disk:
+
+```sh
+echo '{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }' > /etc/docker/daemon.json
+systemctl restart docker
+```
+
+Memory maps: OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
+
+```sh
+echo 'vm.max_map_count=262144' > /etc/sysctl.d/99-opensearch.conf && sysctl --system
+```
+
+The folder Kith lives in, owned by `deploy` (step 4 fills it):
+
+```sh
+mkdir -p /opt/kith && chown deploy:deploy /opt/kith
+```
+
+**4. Keys only, no root login.** Still in the root session:
 
 ```sh
 # a drop-in file read before the others in sshd_config.d (the first value set wins), so a
@@ -214,47 +250,32 @@ If it fails, fix it from the root session first. The next step locks root out, a
 printf 'PasswordAuthentication no\nPermitRootLogin no\n' > /etc/ssh/sshd_config.d/00-kith.conf
 sshd -t && systemctl restart ssh
 sshd -T | grep -E '^(passwordauthentication|permitrootlogin) '   # both must say "no"
-
-# firewall
-ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable
-
-# security updates install themselves
-apt update && apt install -y unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades
 ```
 
-From now on, log in with `ssh deploy@<VPS_IP>`. Admin tasks that need root later (`apt`, `ufw`, SSH settings) go through the provider's panel. Open its browser terminal now and check it still gets you a root shell. Some panels log in over SSH, which root login being off now blocks. If it does not, the panel's recovery mode still gives root access, or you can undo the lock by deleting `/etc/ssh/sshd_config.d/00-kith.conf` from there.
+From now on, log in with `ssh deploy@<VPS_IP>`. If you were already logged in as `deploy`, log out and back in: the `docker` group only applies to new sessions. `docker ps` must print an empty table, not "permission denied".
+
+### Getting root back later
+
+Some later admin tasks need root (`apt`, `ufw`, SSH settings, anything you missed in step 3). Two ways in:
+
+- **The provider's panel.** Its browser terminal or its recovery mode gives you a root shell. Check now that one of them works. Some browser terminals log in over SSH, which root login being off now blocks; recovery mode works either way.
+- **Turn root SSH back on for a while, keys only.** From the panel's root shell:
+
+  ```sh
+  sed -i 's/^PermitRootLogin no$/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config.d/00-kith.conf
+  sshd -t && systemctl restart ssh
+  ```
+
+  `ssh root@<VPS_IP>` works again with your key (passwords stay off). When you are done, lock it again:
+
+  ```sh
+  sed -i 's/^PermitRootLogin prohibit-password$/PermitRootLogin no/' /etc/ssh/sshd_config.d/00-kith.conf
+  sshd -t && systemctl restart ssh
+  ```
 
 ### Provider firewall
 
-In your hosting provider's control panel, add a firewall for the VPS that allows only inbound TCP 22, 80 and 443 (and UDP 443 for HTTP/3). It runs outside the server, so Docker cannot bypass it the way it bypasses `ufw` (see below): if a container ever publishes a port by mistake, this still blocks it.
-
-### Docker
-
-Install Docker Engine and the compose plugin by following https://docs.docker.com/engine/install/ubuntu/, then:
-
-```sh
-usermod -aG docker deploy   # being in the docker group is the same as being root, so only this user gets it
-```
-
-> Docker bypasses `ufw` for published ports. A `ports: "5432:5432"` line would open Postgres to the internet whatever `ufw` says. That is why the prod compose file publishes only Caddy's ports, and binds Postgres and OpenSearch to `127.0.0.1`.
-
-### Log rotation
-
-So container logs cannot fill the disk. In `/etc/docker/daemon.json`:
-
-```json
-{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }
-```
-
-Then `systemctl restart docker`.
-
-### OpenSearch memory maps
-
-OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
-
-```sh
-echo 'vm.max_map_count=262144' > /etc/sysctl.d/99-opensearch.conf && sysctl --system
-```
+In your hosting provider's control panel, add a firewall for the VPS that allows only inbound TCP 22, 80 and 443 (and UDP 443 for HTTP/3). It runs outside the server, so Docker cannot bypass it the way it bypasses `ufw` (see above): if a container ever publishes a port by mistake, this still blocks it.
 
 ### Install the rollout plugin (`docker rollout`)
 
@@ -278,11 +299,7 @@ echo <token> | docker login ghcr.io -u <github-user> --password-stdin
 
 ## 4. Put the config on the VPS
 
-Everything lives in `/opt/kith`, owned by `deploy`:
-
-```sh
-sudo mkdir -p /opt/kith && sudo chown deploy:deploy /opt/kith
-```
+Everything lives in `/opt/kith`, which step 3 created and gave to `deploy`. Run this step as `deploy`.
 
 The deploy job copies `docker-compose.prod.yml`, `Caddyfile`, `pg-backup.sh` and `deploy.sh` from the repo on every deploy, so the server always matches the commit it runs. Only `.env` is yours to write.
 
