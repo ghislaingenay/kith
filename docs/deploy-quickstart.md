@@ -145,7 +145,7 @@ Once `VPS_SSH_KEY` is saved in GitHub and `kith-deploy.pub` is on the VPS, delet
   - `VPS_HOST`: the address CI connects to, the VPS's public IP (e.g. `203.0.113.10`, from your hosting provider's panel) or a hostname pointing at it
   - `VPS_USER`: the Linux user CI logs in as on the VPS, `deploy` (created in step 3)
   - `VPS_SSH_KEY`: the content of `kith-deploy`, CI's private key (above)
-- One more variable, `VPS_KNOWN_HOSTS`: the VPS's own SSH key (its host key), so CI refuses to deploy to any other machine answering at `VPS_HOST`. It already exists on the VPS; you don't create it. It is public, so it is a variable, not a secret. Print it on the VPS:
+- One more variable, `VPS_KNOWN_HOSTS`: the VPS's **host key**, the server's own SSH key that proves which machine it is. CI checks it before connecting, so it refuses any other machine answering at that address. The host key was made when the VPS was installed, so you don't create it, only copy it. It is public, so `VPS_KNOWN_HOSTS` is a variable, not a secret. Print the host key on the VPS:
 
   ```sh
   cat /etc/ssh/ssh_host_ed25519_key.pub
