@@ -139,15 +139,26 @@ These steps add a second account, `deploy`. You and CI log in to it to run Kith,
 
 **1. Create `deploy` and give it the keys.** As root on the VPS:
 
+Create the account. It has no password: only SSH keys get in.
+
 ```sh
-# a new login account, with no password: only SSH keys get in
 adduser --disabled-password --gecos "" deploy
+```
+
+Copy your own key (the one the provider's panel put on root) to it:
+
+```sh
 mkdir -p /home/deploy/.ssh
-# your own key, the one the provider's panel put on root
 cp /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
-# add one line: the content of kith-deploy.pub (CI's key, step 2 → GitHub)
+chown -R deploy:deploy /home/deploy/.ssh
+chmod 700 /home/deploy/.ssh
+chmod 600 /home/deploy/.ssh/authorized_keys
+```
+
+Add CI's key: open the file and paste the content of `kith-deploy.pub` (made in step 2 → GitHub) as a new line at the end.
+
+```sh
 nano /home/deploy/.ssh/authorized_keys
-chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
 ```
 
 **2. Check `deploy` works before going further.** Keep the root session open. In a **second terminal on your laptop**:
