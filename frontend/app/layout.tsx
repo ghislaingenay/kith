@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans, Source_Serif_4 } from "next/font/google";
+import { IBM_Plex_Mono, Source_Serif_4 } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Toaster } from "@/components/ui/sonner";
@@ -10,10 +11,14 @@ const sourceSerif = Source_Serif_4({
   subsets: ["latin"],
 });
 
-const plexSans = IBM_Plex_Sans({
+// Self-hosted: on CI runners Google serves IBM Plex Sans in a form Turbopack
+// can't resolve ("next/font/google queries have exactly one entry"), which
+// broke the image build intermittently. One variable file covers 400–600.
+const plexSans = localFont({
   variable: "--font-plex-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  src: "./fonts/ibm-plex-sans-latin.woff2",
+  weight: "400 600",
+  display: "swap",
 });
 
 const plexMono = IBM_Plex_Mono({
