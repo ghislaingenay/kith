@@ -198,17 +198,51 @@ function mockAsk(
   return seen;
 }
 
+/** The finished default Answer: its superscript Citation number reads as a
+ * bare "1". */
+const MARKED_ANSWER = "Payment is due in 30 days1.";
+
+function mockFileUrl(documentId: string, name: string) {
+  server.use(
+    http.get(`${API_URL}/documents/${documentId}/file-url`, () =>
+      HttpResponse.json({
+        url: `http://localhost:9000/kith-dev/${name}?signature=abc`,
+        expires_in: 300,
+      }),
+    ),
+  );
+}
+
 /** Waits for the Answer to read `text`, markers included. */
 async function expectAnswer(text: string) {
   await waitFor(() => expect(screen.getByLabelText("Answer")).toHaveTextContent(text));
 }
 
-/** Types the Query, clicks Ask AI and waits for the finished Answer. */
+/** Selects Ask AI on the toggle; this alone runs nothing. */
+async function chooseAskAi() {
+  await userEvent.click(await screen.findByRole("radio", { name: "Ask AI" }));
+}
+
+/** Selects Ask AI, types the Query and submits it. */
+async function askFor(query: string) {
+  await chooseAskAi();
+  await userEvent.type(screen.getByRole("searchbox"), query);
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+}
+
+/** Asks and waits for the finished Answer. */
 async function askAndFinish(query = "terms") {
-  await userEvent.type(await screen.findByRole("searchbox"), query);
-  await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Ask AI" })).toBeEnabled());
+  await askFor(query);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Ask" })).toBeEnabled());
   return screen.getByLabelText("Answer");
+}
+
+/** The empty states' line drawing is there, and hidden from assistive
+ * technology. */
+function expectDecorativeDrawing() {
+  const drawing = document.querySelector("svg");
+  expect(drawing).not.toBeNull();
+  expect(drawing).toHaveAttribute("aria-hidden", "true");
 }
 
 beforeEach(() => {
@@ -218,25 +252,31 @@ beforeEach(() => {
   navigation.push.mockReset();
   askFlags.showSources = true;
   askFlags.citationMarkers = true;
-  // jsdom doesn't implement scrolling.
-  Element.prototype.scrollIntoView = vi.fn();
 });
 
 describe("SearchPanel", () => {
-  it("shows the placeholder and a Search button, and no Ask AI button to a Role that may not Ask", async () => {
+  it("shows a plain Search box, with no toggle and no credit line, to a Role that may not Ask", async () => {
     renderPanel();
     expect(await screen.findByPlaceholderText("Search documents…")).toBeInTheDocument();
-    expect(screen.queryByText(/ask ai/i)).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Search"]);
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.queryByText(/ask/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/credits/i)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button")).toHaveAccessibleName("Search");
   });
 
-  it("shows an Ask AI button beside Search to a Role that may Ask", async () => {
+  it("shows a Search | Ask AI toggle, on Search, to a Role that may Ask", async () => {
     renderAskingPanel();
-    await screen.findByRole("searchbox");
-    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([
+    const toggle = await screen.findByRole("radiogroup", { name: "Mode" });
+    expect(within(toggle).getAllByRole("radio").map((r) => r.closest("label")?.textContent)).toEqual([
       "Search",
       "Ask AI",
     ]);
+    expect(within(toggle).getByRole("radio", { name: "Search" })).toBeChecked();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button")).toHaveAccessibleName("Search");
+    // The toggle is the only place "Search" is written, so it never reads twice.
+    expect(screen.getAllByText("Search")).toHaveLength(1);
   });
 
   it("shows the workspace name and how many Documents there are to search before a Query", async () => {
@@ -269,7 +309,9 @@ describe("SearchPanel", () => {
     const seen = mockSearch();
     renderPanel();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("No documents available");
+    expect(await screen.findByText("No documents yet")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expectDecorativeDrawing();
     expect(screen.getByRole("link", { name: "Go to uploads" })).toHaveAttribute(
       "href",
       "/w/acme/uploads",
@@ -399,6 +441,7 @@ describe("SearchPanel", () => {
     mockSearch([]);
     renderPanel();
     expect(await screen.findByText("No passages match “zebra”.")).toBeInTheDocument();
+    expectDecorativeDrawing();
   });
 
   it("offers a Retry on 503 that keeps the Query", async () => {
@@ -443,20 +486,23 @@ describe("SearchPanel", () => {
 });
 
 describe("SearchPanel's Ask", () => {
-  it("streams the Answer, then shows its markers and Citations once it ends", async () => {
+  it("streams the Answer, then shows its markers and footnotes once it ends", async () => {
     const ask = mockAskStream();
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "payment terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("payment terms");
 
+    const finding = await screen.findByRole("status");
+    expect(finding).toHaveTextContent("Finding passages…");
+    expect(finding).toHaveAttribute("aria-live", "polite");
     ask.send("citations", {
       passages: [citedPassage(), citedPassage({ n: 2, chunk_id: "c2", page_number: 9 })],
     });
     expect(await screen.findByLabelText("Answer")).toBeEmptyDOMElement();
-    expect(screen.getByRole("status", { name: "Finding passages" })).toBeInTheDocument();
+    expect(screen.getByText("Finding passages…")).toBeInTheDocument();
 
     ask.send("answer_delta", { text: "Payment is due " });
     await expectAnswer("Payment is due");
+    expect(screen.queryByText("Finding passages…")).not.toBeInTheDocument();
 
     ask.send("answer_delta", { text: "in 30 days [1]." });
     await expectAnswer("Payment is due in 30 days.");
@@ -466,19 +512,23 @@ describe("SearchPanel's Ask", () => {
     const citations = await screen.findByRole("list", { name: "Citations" });
     expect(within(citations).getAllByRole("listitem")).toHaveLength(1);
     expect(within(citations).getAllByRole("listitem")[0]).toHaveTextContent(
-      "contract.pdfPage 7Payment is due within 30 days.",
+      "1contract.pdfp. 7Payment is due within 30 days.",
     );
-    await expectAnswer("Payment is due in 30 days [1].");
+    await expectAnswer(MARKED_ANSWER);
+    // The Answer reads first, its footnotes after.
+    expect(
+      screen.getByLabelText("Answer").compareDocumentPosition(citations) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(ask.seen.queries).toEqual(["payment terms"]);
     expect(ask.seen.tenantIds).toEqual([TENANT_ID]);
   });
 
-  it("disables the Ask AI button while the Answer streams", async () => {
+  it("disables submitting in Ask AI mode while the Answer streams", async () => {
     const ask = mockAskStream();
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "payment terms");
-    const button = screen.getByRole("button", { name: "Ask AI" });
-    await userEvent.click(button);
+    await askFor("payment terms");
+    const button = screen.getByRole("button", { name: "Ask" });
 
     expect(button).toBeDisabled();
     ask.send("citations", { passages: [citedPassage()] });
@@ -497,14 +547,13 @@ describe("SearchPanel's Ask", () => {
       ["<b>bold</b> answer [1]"],
     );
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
     const citations = await screen.findByRole("list", { name: "Citations" });
     expect(citations.querySelector("img")).toBeNull();
     expect(citations).toHaveTextContent("<img src=x onerror=alert(1)> terms");
     const answer = await screen.findByLabelText("Answer");
-    expect(answer).toHaveTextContent("<b>bold</b> answer [1]");
+    expect(answer).toHaveTextContent("<b>bold</b> answer1");
     expect(answer.querySelector("b")).toBeNull();
   });
 
@@ -515,10 +564,9 @@ describe("SearchPanel's Ask", () => {
       expect(client.getQueryData(["credit-balance", TENANT_ID])).toMatchObject({ credits: 142 }),
     );
     mockCreditBalance({ credits: 138, tokens: 138_310 });
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
-    await expectAnswer("Payment is due in 30 days [1].");
+    await expectAnswer(MARKED_ANSWER);
     await waitFor(() =>
       expect(client.getQueryData(["credit-balance", TENANT_ID])).toMatchObject({ credits: 138 }),
     );
@@ -537,22 +585,20 @@ describe("SearchPanel's Ask", () => {
   it("does nothing for a blank Query", async () => {
     const seen = mockAsk();
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "   ");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("   ");
     expect(seen.queries).toEqual([]);
   });
 
   it("says the Answer failed and cost nothing when the stream ends failed", async () => {
     mockAsk([citedPassage()], [], { ...DONE, status: "failed", credits_charged: 0 });
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The answer failed. No credits were used. Try again.",
     );
     expect(screen.getByRole("list", { name: "Citations" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask AI" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeEnabled();
   });
 
   it("says a cut-off Answer was interrupted and what it cost", async () => {
@@ -562,8 +608,7 @@ describe("SearchPanel's Ask", () => {
       credits_charged: 9,
     });
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
     expect(await screen.findByText("Payment is due")).toBeInTheDocument();
     expect(
@@ -577,8 +622,7 @@ describe("SearchPanel's Ask", () => {
   it("says no passages match when the Ask found none", async () => {
     mockAsk([], [], { ...DONE, status: "no_chunks", credits_charged: 0 });
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
     expect(
       await screen.findByText("No passages in your Documents match this."),
@@ -591,10 +635,9 @@ describe("SearchPanel's Ask", () => {
   it("shows no failure or interruption note for a completed Answer", async () => {
     mockAsk();
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
-    await expectAnswer("Payment is due in 30 days [1].");
+    await expectAnswer(MARKED_ANSWER);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/interrupted/)).not.toBeInTheDocument();
   });
@@ -606,13 +649,12 @@ describe("SearchPanel's Ask", () => {
       ),
     );
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Answers are unavailable right now.",
     );
-    expect(screen.getByRole("button", { name: "Ask AI" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeEnabled();
   });
 
   it("explains an Ask refused for asking too fast", async () => {
@@ -622,8 +664,7 @@ describe("SearchPanel's Ask", () => {
       ),
     );
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/asking too fast/i);
   });
@@ -632,9 +673,8 @@ describe("SearchPanel's Ask", () => {
     mockAsk();
     renderAskingPanel();
     expect(await screen.findByText("Search 1 document")).toBeInTheDocument();
-    await userEvent.type(screen.getByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
-    await expectAnswer("Payment is due in 30 days [1].");
+    await askFor("terms");
+    await expectAnswer(MARKED_ANSWER);
     expect(screen.queryByText("Search 1 document")).not.toBeInTheDocument();
     // The box kept the Query through the move.
     expect(screen.getByRole("searchbox")).toHaveValue("terms");
@@ -643,13 +683,67 @@ describe("SearchPanel's Ask", () => {
   it("leaves the Ask's Answer when a Search runs", async () => {
     mockAsk();
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
-    await expectAnswer("Payment is due in 30 days [1].");
+    await askFor("terms");
+    await expectAnswer(MARKED_ANSWER);
 
+    await userEvent.click(screen.getByRole("radio", { name: "Search" }));
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(navigation.push).toHaveBeenCalledWith("/w/acme?q=terms&type=search");
     expect(screen.queryByLabelText("Answer")).not.toBeInTheDocument();
+  });
+
+  it("runs the selected mode on Enter", async () => {
+    const seen = mockAsk();
+    renderAskingPanel();
+    await chooseAskAi();
+    await userEvent.type(screen.getByRole("searchbox"), "terms{Enter}");
+
+    await expectAnswer(MARKED_ANSWER);
+    expect(seen.queries).toEqual(["terms"]);
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it("runs nothing when the mode changes, and leaves the Search results on screen", async () => {
+    navigation.url = "q=cat&type=search";
+    const searches = mockSearch();
+    const asks = mockAsk();
+    renderAskingPanel();
+    await screen.findByRole("list", { name: "Search results" });
+
+    await chooseAskAi();
+    await userEvent.click(screen.getByRole("radio", { name: "Search" }));
+    await chooseAskAi();
+
+    expect(screen.getByRole("list", { name: "Search results" })).toBeInTheDocument();
+    expect(asks.queries).toEqual([]);
+    expect(searches.queries).toEqual(["cat"]);
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it("leaves the Answer on screen when the mode changes", async () => {
+    const seen = mockAsk();
+    renderAskingPanel();
+    await askAndFinish();
+
+    await userEvent.click(screen.getByRole("radio", { name: "Search" }));
+
+    expect(screen.getByLabelText("Answer")).toHaveTextContent(MARKED_ANSWER);
+    expect(seen.queries).toEqual(["terms"]);
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it("says what an Ask costs and what is left only while Ask AI is selected", async () => {
+    renderAskingPanel();
+    await screen.findByRole("radiogroup", { name: "Mode" });
+    expect(screen.queryByText(/credits per Ask/)).not.toBeInTheDocument();
+
+    await chooseAskAi();
+    expect(await screen.findByText(/credits per Ask/)).toHaveTextContent(
+      "About 4 credits per Ask · 142 left",
+    );
+
+    await userEvent.click(screen.getByRole("radio", { name: "Search" }));
+    expect(screen.queryByText(/credits per Ask/)).not.toBeInTheDocument();
   });
 });
 
@@ -659,9 +753,9 @@ describe("SearchPanel's Ask with no credits left", () => {
     renderAskingPanel();
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled(),
+      expect(screen.getByRole("radio", { name: "Ask AI" })).toBeDisabled(),
     );
-    expect(screen.getByRole("button", { name: "Ask AI" })).toHaveAccessibleDescription(
+    expect(screen.getByRole("radio", { name: "Ask AI" })).toHaveAccessibleDescription(
       NO_CREDITS_MESSAGE,
     );
     expect(screen.getByText(NO_CREDITS_MESSAGE)).toBeInTheDocument();
@@ -682,7 +776,7 @@ describe("SearchPanel's Ask with no credits left", () => {
   it("keeps Ask AI enabled with no message while credits are left", async () => {
     renderAskingPanel();
 
-    expect(await screen.findByRole("button", { name: "Ask AI" })).toBeEnabled();
+    expect(await screen.findByRole("radio", { name: "Ask AI" })).toBeEnabled();
     expect(screen.queryByText(NO_CREDITS_MESSAGE)).not.toBeInTheDocument();
   });
 
@@ -702,13 +796,16 @@ describe("SearchPanel's Ask with no credits left", () => {
       }),
     );
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("No credits left.");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled(),
+      expect(screen.getByRole("radio", { name: "Ask AI" })).toBeDisabled(),
     );
+    // Back on Search, which still runs.
+    expect(screen.getByRole("radio", { name: "Search" })).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(navigation.push).toHaveBeenCalledWith("/w/acme?q=terms&type=search");
   });
 });
 
@@ -718,27 +815,30 @@ describe("SearchPanel's Ask citations", () => {
     citedPassage({ n: 2, chunk_id: "c2", document_id: "d2", document_name: "terms.pdf", page_number: 2 }),
   ];
 
-  it("links a marker to its Citation card, which opens the Document at its page", async () => {
+  it("opens the Document preview at a marker's page, and closes back to the Answer", async () => {
     mockAsk(TWO_SOURCES, ["Payment is due in 30 days [2]."]);
-    server.use(
-      http.get(`${API_URL}/documents/d2/file-url`, () =>
-        HttpResponse.json({
-          url: "http://localhost:9000/kith-dev/terms.pdf?signature=abc",
-          expires_in: 300,
-        }),
-      ),
-    );
+    mockFileUrl("d2", "terms.pdf");
     renderAskingPanel();
     const answer = await askAndFinish();
 
-    await userEvent.click(within(answer).getByRole("link", { name: "Citation 1" }));
-    const card = screen.getByRole("button", { name: /terms\.pdf/ });
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts[0]).toBe(card);
-    expect(card).toHaveFocus();
+    await userEvent.click(within(answer).getByRole("button", { name: "Citation 1" }));
+    expect(await screen.findByRole("dialog", { name: "terms.pdf" })).toBeInTheDocument();
+    expect(await screen.findByText("PDF page 2")).toBeInTheDocument();
     expect(navigation.push).not.toHaveBeenCalled();
 
-    await userEvent.click(card);
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Answer")).toHaveTextContent(MARKED_ANSWER);
+  });
+
+  it("opens the Document preview at a footnote's page", async () => {
+    mockAsk(TWO_SOURCES, ["Due [1], or 60 days [2]."]);
+    mockFileUrl("d2", "terms.pdf");
+    renderAskingPanel();
+    await askAndFinish();
+
+    const citations = screen.getByRole("list", { name: "Citations" });
+    await userEvent.click(within(citations).getByRole("button", { name: /terms\.pdf/ }));
     expect(await screen.findByRole("dialog", { name: "terms.pdf" })).toBeInTheDocument();
     expect(await screen.findByText("PDF page 2")).toBeInTheDocument();
   });
@@ -746,27 +846,22 @@ describe("SearchPanel's Ask citations", () => {
   it("shows only the Citations the finished Answer marks, renumbered from 1", async () => {
     const ask = mockAskStream();
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
     ask.send("citations", { passages: TWO_SOURCES });
     ask.send("answer_delta", { text: "Due in 30 days [2]." });
     // Not yet: the Answer may still mark the first one.
     await expectAnswer("Due in 30 days.");
-    expect(screen.getByRole("status", { name: "Finding passages" })).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Citations" })).not.toBeInTheDocument();
 
     ask.send("done", DONE);
     ask.end();
     const citations = await screen.findByRole("list", { name: "Citations" });
     expect(within(citations).getAllByRole("listitem")).toHaveLength(1);
-    expect(screen.queryByRole("status", { name: "Finding passages" })).not.toBeInTheDocument();
+    expect(within(citations).getByRole("listitem")).toHaveTextContent("1terms.pdfp. 2");
     const answer = screen.getByLabelText("Answer");
-    expect(answer).toHaveTextContent("Due in 30 days [1].");
-    await userEvent.click(within(answer).getByRole("link", { name: "Citation 1" }));
-    const card = screen.getByRole("button", { name: /terms\.pdf/ });
-    expect(card).toHaveTextContent("[1]");
-    expect(card).toHaveFocus();
+    expect(answer).toHaveTextContent("Due in 30 days1.");
+    expect(within(answer).getByRole("button", { name: "Citation 1" })).toBeInTheDocument();
   });
 
   it("removes the markers when they are turned off, and still lists the Citations", async () => {
@@ -776,7 +871,7 @@ describe("SearchPanel's Ask citations", () => {
     const answer = await askAndFinish();
 
     expect(answer).toHaveTextContent("Due in 30 days, or 60.");
-    expect(within(answer).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(answer).queryByRole("button")).not.toBeInTheDocument();
     expect(
       within(screen.getByRole("list", { name: "Citations" })).getAllByRole("listitem"),
     ).toHaveLength(2);
@@ -789,25 +884,25 @@ describe("SearchPanel's Ask citations", () => {
     const answer = await askAndFinish();
 
     expect(answer).toHaveTextContent("Due in 30 days.");
-    expect(within(answer).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(answer).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Citations" })).not.toBeInTheDocument();
   });
 
-  it("shows no Citations placeholder while streaming when sources are turned off", async () => {
+  it("still says it is finding passages when sources are turned off", async () => {
     askFlags.showSources = false;
     const ask = mockAskStream();
     renderAskingPanel();
-    await userEvent.type(await screen.findByRole("searchbox"), "terms");
-    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await askFor("terms");
 
-    expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled();
-    expect(screen.queryByRole("status", { name: "Finding passages" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Finding passages…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
 
     ask.send("citations", { passages: TWO_SOURCES });
     ask.send("answer_delta", { text: "Due in 30 days [1]." });
     ask.send("done", DONE);
     ask.end();
     await expectAnswer("Due in 30 days.");
+    expect(screen.queryByRole("list", { name: "Citations" })).not.toBeInTheDocument();
   });
 
   it("shows a marker with no Citation as plain text", async () => {
@@ -815,8 +910,8 @@ describe("SearchPanel's Ask citations", () => {
     renderAskingPanel();
     const answer = await askAndFinish();
 
-    expect(answer).toHaveTextContent("Due [1], or later [7].");
-    expect(within(answer).getAllByRole("link")).toHaveLength(1);
-    expect(within(answer).getByRole("link", { name: "Citation 1" })).toBeInTheDocument();
+    expect(answer).toHaveTextContent("Due1, or later [7].");
+    expect(within(answer).getAllByRole("button")).toHaveLength(1);
+    expect(within(answer).getByRole("button", { name: "Citation 1" })).toBeInTheDocument();
   });
 });

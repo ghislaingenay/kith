@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import { renumberCitations, splitCitationMarkers, stripCitationMarkers } from "./citation_markers";
 
 describe("splitCitationMarkers", () => {
-  it("splits the Answer into text and the markers of known sources", () => {
+  it("splits the Answer into text and the markers of known sources, dropping the space before each", () => {
     expect(splitCitationMarkers("Due in 30 days [1], or 60 [2].", new Set([1, 2]))).toEqual([
-      { text: "Due in 30 days " },
+      { text: "Due in 30 days" },
       { n: 1 },
-      { text: ", or 60 " },
+      { text: ", or 60" },
       { n: 2 },
       { text: "." },
     ]);
@@ -15,6 +15,14 @@ describe("splitCitationMarkers", () => {
 
   it("keeps a marker for a number with no source as plain text", () => {
     expect(splitCitationMarkers("Due [7].", new Set([1, 2]))).toEqual([{ text: "Due [7]." }]);
+  });
+
+  it("keeps the space before a marker that stays text", () => {
+    expect(splitCitationMarkers("Due [7] [1].", new Set([1]))).toEqual([
+      { text: "Due [7]" },
+      { n: 1 },
+      { text: "." },
+    ]);
   });
 
   it("splits adjacent markers", () => {
