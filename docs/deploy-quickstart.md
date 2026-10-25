@@ -379,13 +379,24 @@ The other settings (upload caps, retrieval sizes, `STARTING_CREDIT_GRANT`, ...) 
 
 ### Changing `.env` later
 
-Containers read `.env` only when they are created, so `dc restart` keeps the old values (`dc` is set up in step 5). Recreate them instead:
+Containers read `.env` only when they are created. A restart keeps the old values, so the containers have to be recreated. From your laptop:
 
 ```sh
-dc up -d --no-deps app worker-ingest frontend caddy
+# 1. log in to the VPS as deploy
+ssh deploy@<vps>
+
+# 2. edit the file, save (Ctrl+O, Enter) and quit (Ctrl+X)
+nano /opt/kith/.env
+
+# 3. recreate the containers that use .env
+docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env up -d --no-deps app worker-ingest frontend caddy
+
+# 4. check they started with the new values (an error such as
+#    STORAGE_PROVIDER=S3 being rejected shows up here)
+docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env logs --tail 50 app worker-ingest
 ```
 
-Compose recreates only the services whose settings changed and leaves the rest running. `--no-deps` keeps Postgres, Redis and OpenSearch out of it, as `deploy.sh` does. `app` is down for a few seconds while it is recreated. Then check the new values were accepted: `dc logs --tail 50 app worker-ingest`. A typo like `STORAGE_PROVIDER=S3` shows up here as a validation error.
+Step 3 recreates only the containers whose settings changed; the others keep running. `--no-deps` leaves Postgres, Redis and OpenSearch alone, as `deploy.sh` does. The site is down for a few seconds while `app` is recreated.
 
 Changing a `POSTGRES_*` value does not change the database itself: Postgres reads them only when it first creates its data. Change the password inside Postgres first, then in `.env`.
 
@@ -395,10 +406,10 @@ The deploy workflow pushes both images to GHCR on every merge to `master`. If th
 
 Start the stack by running the deploy workflow by hand: GitHub → Actions → **Deploy** → Run workflow, with `image_tag` = the full SHA of that `master` commit (`git rev-parse origin/master`). It is the same job every later deploy runs (step 8), and `deploy.sh` also starts a fresh server: it starts Postgres, Redis and OpenSearch and waits for them, runs the release step, then the API, frontend, worker and Caddy start.
 
-From here on `dc` means `docker compose -f docker-compose.prod.yml --env-file .env`, run as `deploy` in `/opt/kith`:
+From here on `dc` means `docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env`, run as `deploy`. The full paths make it work from any folder:
 
 ```sh
-alias dc='docker compose -f docker-compose.prod.yml --env-file .env'
+alias dc='docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env'
 dc ps
 ```
 
@@ -432,7 +443,7 @@ dc run --rm pg-backup     # prints "pg-backup: uploaded s3://..." and exits 0
 **Schedule it nightly** in the `deploy` user's crontab (`crontab -e`). The time matches the Cron monitor's schedule (the VPS clock is UTC; check with `date`):
 
 ```
-0 3 * * * cd /opt/kith && docker compose -f docker-compose.prod.yml --env-file .env run --rm -T pg-backup 2>&1 | logger -t pg-backup
+0 3 * * * docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env run --rm -T pg-backup 2>&1 | logger -t pg-backup
 ```
 
 Its output goes to the system log: `journalctl -t pg-backup`.
@@ -441,8 +452,8 @@ Its output goes to the system log: `journalctl -t pg-backup`.
 
 ```sh
 # the kith-vps keys from .env, passed into the container below
-export AWS_ACCESS_KEY_ID=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' .env)
-export AWS_SECRET_ACCESS_KEY=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' .env)
+export AWS_ACCESS_KEY_ID=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' /opt/kith/.env)
+export AWS_SECRET_ACCESS_KEY=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' /opt/kith/.env)
 restore() { dc run --rm -T -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY --entrypoint sh pg-backup -c "$1"; }
 
 # 1. pick a dump
