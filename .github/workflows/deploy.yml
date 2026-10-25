@@ -124,8 +124,14 @@ jobs:
           VPS_KNOWN_HOSTS: ${{ vars.VPS_KNOWN_HOSTS || secrets.VPS_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          # Windows line endings (a copy through the Windows clipboard) break
+          # the key, so they are stripped.
+          printf '%s\n' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          if ! ssh-keygen -y -P '' -f ~/.ssh/deploy_key > /dev/null; then
+            echo "::error::VPS_SSH_KEY is not a usable private key. Paste the whole kith-deploy file (not the .pub), BEGIN and END lines included; it must have no passphrase."
+            exit 1
+          fi
           if [ -z "$VPS_KNOWN_HOSTS" ]; then
             echo "::error::VPS_KNOWN_HOSTS is set neither as a repository variable nor as a secret (docs/deploy-quickstart.md, step 2 → GitHub)."
             exit 1
