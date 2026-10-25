@@ -120,13 +120,14 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          VPS_KNOWN_HOSTS: ${{ vars.VPS_KNOWN_HOSTS }}
+          # Public, so a variable; a secret of the same name works too.
+          VPS_KNOWN_HOSTS: ${{ vars.VPS_KNOWN_HOSTS || secrets.VPS_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           if [ -z "$VPS_KNOWN_HOSTS" ]; then
-            echo "::error::The repository variable VPS_KNOWN_HOSTS is not set (docs/deploy-quickstart.md, step 2 → GitHub)."
+            echo "::error::VPS_KNOWN_HOSTS is set neither as a repository variable nor as a secret (docs/deploy-quickstart.md, step 2 → GitHub)."
             exit 1
           fi
           # A line pasted straight from ssh_host_ed25519_key.pub has no
