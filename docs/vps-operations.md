@@ -25,10 +25,14 @@ The prompt starts with the database's name, e.g. `kith=#`. Then:
 
 A prompt ending in `-#` (e.g. `kith-#`) means a line without `;` is still waiting, and psql joins it to whatever you type next, usually into a syntax error. `\r` or Ctrl+C clears it.
 
-One query without opening the shell:
+### One query, without the psql prompt
+
+`-c` runs one command and returns to the VPS shell. Nothing can be left waiting from an earlier line, so it is the simplest way to look something up. Put the query in double quotes:
 
 ```sh
-docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env exec postgres psql -U kith -d kith -c '\dt'
+docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env exec postgres psql -U kith -d kith -c "SELECT * FROM tenants;"
 ```
+
+Change only the text inside the quotes for another query, e.g. `-c "\dt"` to list the tables.
 
 From a graphical tool on your laptop instead: open a tunnel with `ssh -L 5432:localhost:5432 deploy@<vps>`, then connect the tool to `localhost:5432` with the user and password from `/opt/kith/.env`. Postgres listens on the VPS's `127.0.0.1` only, so the tunnel is the only way in from outside.
