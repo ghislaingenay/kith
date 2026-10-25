@@ -21,9 +21,13 @@ test("sign-in -> onboarding -> landing for a brand-new user", async ({ page }) =
 
   const workspaceNameInput = page.getByLabel("Workspace name");
   await expect(workspaceNameInput).not.toHaveValue("");
+  const workspaceName = await workspaceNameInput.inputValue();
 
   await page.getByRole("button", { name: /create workspace/i }).click();
 
   await expect(page).toHaveURL(/\/w\/[^/]+$/);
-  await expect(page.getByRole("heading", { name: /^Welcome to / })).toBeVisible();
+  // The dashboard sets the workspace name as its wordmark.
+  await expect(
+    page.getByRole("heading", { level: 1, name: workspaceName }),
+  ).toBeVisible();
 });

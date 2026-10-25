@@ -32,12 +32,16 @@ class SMTPMailer(Mailer):
         self._password = password
         self._use_tls = use_tls
 
-    async def send(self, to: str, subject: str, body: str) -> None:
+    async def send(
+        self, to: str, subject: str, body: str, html: str | None = None
+    ) -> None:
         message = EmailMessage()
         message["From"] = self._from_address
         message["To"] = to
         message["Subject"] = subject
         message.set_content(body)
+        if html is not None:
+            message.add_alternative(html, subtype="html")
 
         try:
             await aiosmtplib.send(

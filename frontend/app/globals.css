@@ -29,6 +29,7 @@
   --color-warning: var(--warning);
   --color-highlight-foreground: var(--highlight-foreground);
   --color-highlight: var(--highlight);
+  --color-glow: var(--glow);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -70,6 +71,8 @@
   --warning: #b45309;
   --highlight: #e9e3a6;
   --highlight-foreground: #1f231f;
+  /* The pale green the sign-in gradient fades into from the paper. */
+  --glow: #dce8df;
   --border: #dcddd3;
   --input: #b9bcb0;
   --ring: #2f5d4a;
@@ -109,6 +112,7 @@
     --warning: #f2b04a;
     --highlight: #4a4520;
     --highlight-foreground: #e6e8e1;
+    --glow: #102a1e;
     --border: #323a34;
     --input: #535c55;
     --ring: #86c2a4;

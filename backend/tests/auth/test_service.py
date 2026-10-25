@@ -2,6 +2,7 @@
 
 import hashlib
 import uuid
+from html import unescape
 
 import pytest
 
@@ -60,6 +61,38 @@ async def test_sends_email_containing_a_verify_link_with_the_token() -> None:
     token = message["body"].split("token=")[1].split("&")[0]
     stored_hash = await cache.get("magic_link:token:jane@example.com")
     assert hashlib.sha256(token.encode()).hexdigest() == stored_hash
+
+
+async def test_sends_plain_text_and_html_bodies_with_the_same_link_and_expiry() -> None:
+    mailer = FakeMailer()
+    service = _service(FakeCacheProvider(), mailer)
+
+    await service.request_magic_link("jane@example.com")
+
+    message = mailer.sent[0]
+    plain, html = message["body"], message["html"]
+    assert html is not None
+    link = next(word for word in plain.split() if word.startswith(_VERIFY_URL))
+    # The plain text keeps the link as a bare URL; the HTML escapes its `&`.
+    assert link in unescape(html)
+    ttl_minutes = MAGIC_LINK_TOKEN_TTL_SECONDS // 60
+    assert f"{ttl_minutes} minutes" in plain
+    assert f"Expires in {ttl_minutes} minutes and works once" in html
+
+
+async def test_html_email_uses_no_images_or_external_fonts() -> None:
+    mailer = FakeMailer()
+    service = _service(FakeCacheProvider(), mailer)
+
+    await service.request_magic_link("jane@example.com")
+
+    html = mailer.sent[0]["html"]
+    assert html is not None
+    assert "<img" not in html
+    assert "@import" not in html
+    assert "<link" not in html
+    assert "Sign in to Kith" in html
+    assert "ignore this email" in html
 
 
 async def test_normalizes_email_case_for_the_cache_key() -> None:

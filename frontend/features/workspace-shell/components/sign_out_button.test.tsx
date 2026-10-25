@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
+import { Toaster } from "@/components/ui/sonner";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/render_with_providers";
 
@@ -33,7 +34,7 @@ describe("SignOutButton", () => {
     expect(logoutCalls).toBe(1);
   });
 
-  it("stays put and says so when signing out fails", async () => {
+  it("stays put and shows a human toast when signing out fails", async () => {
     server.use(
       http.post(`${API_URL}/auth/logout`, () =>
         HttpResponse.json(
@@ -43,11 +44,20 @@ describe("SignOutButton", () => {
       ),
     );
     const user = userEvent.setup();
-    renderWithProviders(<SignOutButton />);
+    renderWithProviders(
+      <>
+        <SignOutButton />
+        <Toaster />
+      </>,
+    );
 
     await user.click(screen.getByRole("button", { name: "Sign out" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not sign you out.");
+    expect(
+      await screen.findByText("We couldn't sign you out. Please try again."),
+    ).toBeInTheDocument();
+    // The backend's own wording never reaches the screen.
+    expect(screen.queryByText("Could not sign you out.")).not.toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 });

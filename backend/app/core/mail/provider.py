@@ -10,5 +10,8 @@ class Mailer(ABC):
     boundary, so callers can catch one exception type."""
 
     @abstractmethod
-    async def send(self, to: str, subject: str, body: str) -> None:
-        """Send a plain-text email to `to`."""
+    async def send(
+        self, to: str, subject: str, body: str, html: str | None = None
+    ) -> None:
+        """Send an email to `to`: plain text, or plain text plus an HTML
+        alternative when `html` is given."""
