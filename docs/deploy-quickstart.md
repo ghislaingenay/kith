@@ -508,6 +508,8 @@ A change to a data service in `docker-compose.prod.yml` (Postgres, Redis, OpenSe
 
 ## Day-to-day
 
+Looking after the running server (checking the database, ...) is in `vps-operations.md`.
+
 | Task | Command (on the VPS, in `/opt/kith`) |
 |---|---|
 | Follow logs | `dc logs -f app` (or `worker-ingest`, `frontend`, `caddy`) |
