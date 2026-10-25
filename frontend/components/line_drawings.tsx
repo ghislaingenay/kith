@@ -23,18 +23,3 @@ export function StackedPages({ className }: { readonly className?: string }) {
     </svg>
   );
 }
-
-export function BookmarkRibbon({ className }: { readonly className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 16 24"
-      aria-hidden="true"
-      focusable="false"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-      className={cn("h-6 w-4 fill-primary stroke-primary", className)}
-    >
-      <path d="M3 1h10v21l-5-5-5 5z" />
-    </svg>
-  );
-}
