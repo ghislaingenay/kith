@@ -38,16 +38,16 @@ export function SignInForm({
   if (linkError) {
     return (
       <div role="alert" className="text-center">
-        <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+        <h2 className="text-lg font-semibold text-foreground">
           {linkError}
         </h2>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-sm text-muted-foreground">
           Request a new link to sign in.
         </p>
         <button
           type="button"
           onClick={backToLogin}
-          className="mt-4 w-full rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+          className="mt-4 w-full rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/85"
         >
           Back to login
         </button>
@@ -58,10 +58,10 @@ export function SignInForm({
   if (submittedEmail) {
     return (
       <div role="status" className="text-center">
-        <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+        <h2 className="text-lg font-semibold text-foreground">
           Check your email
         </h2>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-sm text-muted-foreground">
           If {submittedEmail} has an account, we&rsquo;ve sent a sign-in link to it.
           The link expires in 15 minutes.
         </p>
@@ -72,7 +72,7 @@ export function SignInForm({
   return (
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-4" noValidate>
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="email" className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
+        <label htmlFor="email" className="text-sm font-medium text-foreground">
           Work email
         </label>
         <input
@@ -82,18 +82,18 @@ export function SignInForm({
           placeholder="you@company.com"
           aria-invalid={errors.email ? "true" : "false"}
           aria-describedby={errors.email ? "email-error" : undefined}
-          className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 dark:border-zinc-700 dark:bg-black dark:text-zinc-50"
+          className="rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground"
           {...register("email")}
         />
         {errors.email && (
-          <p id="email-error" role="alert" className="text-sm text-red-600">
+          <p id="email-error" role="alert" className="text-sm text-destructive">
             {errors.email.message}
           </p>
         )}
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-destructive">
           {error.message}
         </p>
       )}
@@ -101,7 +101,7 @@ export function SignInForm({
       <button
         type="submit"
         disabled={isPending}
-        className="rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
+        className="rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/85 disabled:opacity-50"
       >
         {isPending ? "Sending…" : "Send Magic Link"}
       </button>

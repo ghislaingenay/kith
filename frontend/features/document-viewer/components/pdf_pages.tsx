@@ -43,7 +43,7 @@ export default function PdfPages({
         >
           <ChevronLeft />
         </Button>
-        <span className="text-sm tabular-nums">
+        <span className="font-mono text-xs tabular-nums">
           {pageCount === null ? "Loading…" : `Page ${page} of ${pageCount}`}
         </span>
         <Button

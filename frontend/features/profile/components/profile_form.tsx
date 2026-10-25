@@ -37,7 +37,7 @@ export function ProfileForm({ profile: initialProfile }: { readonly profile: Pro
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-6" noValidate>
       <div className="flex items-center gap-3">
         <AvatarEditor profile={profile} />
-        <h2 className="text-base font-medium text-zinc-950 dark:text-zinc-50">
+        <h2 className="text-base font-medium text-foreground">
           {shownName}
         </h2>
       </div>
@@ -45,7 +45,7 @@ export function ProfileForm({ profile: initialProfile }: { readonly profile: Pro
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="name"
-          className="text-sm font-medium text-zinc-950 dark:text-zinc-50"
+          className="text-sm font-medium text-foreground"
         >
           Name
         </label>
@@ -56,23 +56,23 @@ export function ProfileForm({ profile: initialProfile }: { readonly profile: Pro
           placeholder={profile.email}
           aria-invalid={errors.name ? "true" : "false"}
           aria-describedby={errors.name ? "name-error" : undefined}
-          className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 dark:border-zinc-700 dark:bg-black dark:text-zinc-50"
+          className="rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground"
           {...register("name", { onChange: () => reset() })}
         />
         {errors.name && (
-          <p id="name-error" role="alert" className="text-sm text-red-600">
+          <p id="name-error" role="alert" className="text-sm text-destructive">
             {errors.name.message}
           </p>
         )}
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-destructive">
           {error.message}
         </p>
       )}
       {isSuccess && (
-        <p role="status" className="text-sm text-green-700 dark:text-green-500">
+        <p role="status" className="text-sm text-primary">
           Profile saved
         </p>
       )}
@@ -80,7 +80,7 @@ export function ProfileForm({ profile: initialProfile }: { readonly profile: Pro
       <button
         type="submit"
         disabled={isPending}
-        className="self-start rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
+        className="self-start rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/85 disabled:opacity-50"
       >
         {isPending ? "Saving…" : "Save"}
       </button>
