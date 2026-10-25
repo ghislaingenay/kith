@@ -31,13 +31,13 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
 ## 1. What you need before starting
 
 - A VPS: Ubuntu 24.04, **4 GB RAM minimum**, 2 vCPU, 40 GB disk. The stack uses about 2.7 GB, and a deploy briefly runs a second `app` and `frontend`.
-- A domain you can add DNS records to. Below it is `app.example.com`.
+- A domain you can add DNS records to. Below it is `example.com`; Kith is served on it, and `www.example.com` redirects to it.
 - Accounts: AWS, Resend, Sentry, OpenAI, Voyage.
 - Admin access to the GitHub repo.
 
 ## 2. Outside resources (one time, by hand)
 
-**DNS.** An `A` record (and `AAAA` if the VPS has IPv6) for `app.example.com` pointing at the VPS. Caddy needs it in place before it can get the HTTPS certificate.
+**DNS.** `A` records (and `AAAA` if the VPS has IPv6) for `example.com` and `www.example.com`, both pointing at the VPS. Caddy needs them in place before it can get the HTTPS certificates. It gets one for each, and redirects `www.example.com/<path>` to `example.com/<path>` permanently (`DOMAIN` in `.env` is the bare domain; the `www.` site comes from it).
 
 **AWS S3.** Use the region closest to the VPS.
 
@@ -47,7 +47,7 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
    ```json
    [
      {
-       "AllowedOrigins": ["https://app.example.com"],
+       "AllowedOrigins": ["https://example.com"],
        "AllowedMethods": ["GET", "PUT"],
        "AllowedHeaders": ["*"],
        "ExposeHeaders": ["ETag"],
@@ -98,13 +98,13 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
 **Sentry.** It receives errors and a sample of traces from the API, the ingest worker and the frontend, with no personal data.
 
 1. Create three projects, `kith-api` (platform: FastAPI), `kith-worker` (platform: Python) and `kith-frontend` (Next.js), and note each DSN (project settings → Client Keys). For the products, tick Error monitoring and Tracing only: logs stay on the VPS.
-2. Add an **Uptime** monitor on `https://app.example.com/health`.
+2. Add an **Uptime** monitor on `https://example.com/health`.
 3. In the `kith-worker` project, add a **Cron** monitor with the slug `pg-backup`. The backup job checks in to it using the `kith-worker` DSN, so it needs no project of its own. Settings:
    - schedule: crontab `0 3 * * *`, timezone UTC (the same line as the crontab in step 7);
    - check-in margin: 30 minutes; max runtime: 30 minutes;
    - alert: when 1 check-in is missed or failed. You are then told when a night is missed, when the dump or upload fails, and when it hangs.
 4. Limit the `kith-frontend` DSN. It is public (every browser sees it), and it can only send events, not read them, so the risk is someone flooding the project with fake errors:
-   - project settings → Security & Privacy → **Allowed Domains**: `app.example.com`, so browser events from other sites are rejected;
+   - project settings → Security & Privacy → **Allowed Domains**: `example.com`, so browser events from other sites are rejected;
    - project settings → Client Keys → the key → **Rate Limiting**: for example 100 events per minute, so a flood can't use up the quota.
 
 **SSH keys** (on your laptop, e.g. WSL). Two key pairs, both for logging in to the VPS's `deploy` account (step 3). Each has a private half (no extension, stays secret) and a public half (`.pub`, given to the VPS).
@@ -136,7 +136,7 @@ Once `VPS_SSH_KEY` is saved in GitHub and `kith-deploy.pub` is on the VPS, delet
 **GitHub** (repo settings → Secrets and variables → Actions).
 
 - Variables, which get baked into the frontend image at build time:
-  - `NEXT_PUBLIC_API_URL` = `https://app.example.com`
+  - `NEXT_PUBLIC_API_URL` = `https://example.com`
   - `NEXT_PUBLIC_ASK_SHOW_SOURCES` = `true`
   - `NEXT_PUBLIC_ASK_CITATION_MARKERS` = `true`
   - `NEXT_PUBLIC_SENTRY_DSN` = the `kith-frontend` DSN (leave it unset to turn Sentry off in the frontend). The browser can see it; a DSN only lets someone send events, not read them. The image reports as `production`, traces 10 % of page loads (never `/health`), and carries the release SHA.
@@ -323,7 +323,7 @@ touch /opt/kith/.env && chmod 600 /opt/kith/.env && nano /opt/kith/.env
 
 ```sh
 # ── site ──
-DOMAIN=app.example.com
+DOMAIN=example.com
 # IMAGE_TAG (the commit SHA running) is added and kept up to date by
 # deploy.sh; leave it out.
 
@@ -343,10 +343,10 @@ BACKUP_AWS_ACCESS_KEY_ID=<kith-backup key>
 BACKUP_AWS_SECRET_ACCESS_KEY=<kith-backup secret>
 
 # ── web ──
-CORS_ALLOWED_ORIGINS=https://app.example.com
-MAGIC_LINK_VERIFY_URL=https://app.example.com/verify
+CORS_ALLOWED_ORIGINS=https://example.com
+MAGIC_LINK_VERIFY_URL=https://example.com/verify
 SESSION_COOKIE_SECURE=true
-APP_URL=https://app.example.com
+APP_URL=https://example.com
 
 # ── email: Resend over SMTP ──
 SMTP_HOST=smtp.resend.com
@@ -393,7 +393,7 @@ dc ps
 Check that it works:
 
 ```sh
-curl -fsS https://app.example.com/health   # Caddy got a certificate and reaches the API
+curl -fsS https://example.com/health   # Caddy got a certificate and reaches the API
 dc logs --tail 50 app worker-ingest caddy
 ```
 
@@ -401,7 +401,7 @@ If Caddy logs certificate errors, the DNS record is not pointing at the VPS yet,
 
 ## 6. First User and Tenant
 
-1. Open `https://app.example.com` and sign in with a magic link. The email comes through Resend, so check spam the first time.
+1. Open `https://example.com` and sign in with a magic link. The email comes through Resend, so check spam the first time.
 2. Onboarding creates the Tenant, and its Owner gets the starting Credit grant (ADR-0017).
 3. Upload a small PDF and wait until it is searchable. Then run one Search and one Ask. This checks S3 CORS, the worker, OpenSearch, Voyage and OpenAI in one go.
 

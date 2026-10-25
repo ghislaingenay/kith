@@ -125,7 +125,20 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          if [ -z "$VPS_KNOWN_HOSTS" ]; then
+            echo "::error::The repository variable VPS_KNOWN_HOSTS is not set (docs/deploy-quickstart.md, step 2 → GitHub)."
+            exit 1
+          fi
+          # A line pasted straight from ssh_host_ed25519_key.pub has no
+          # address in front; it is the key of the server at VPS_HOST.
+          case "$VPS_KNOWN_HOSTS" in
+            ssh-*|ecdsa-*) printf '%s %s\n' "$VPS_HOST" "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts ;;
+            *) printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts ;;
+          esac
+          if ! ssh-keygen -F "$VPS_HOST" -f ~/.ssh/known_hosts > /dev/null; then
+            echo "::error::VPS_KNOWN_HOSTS has no line for the address in VPS_HOST. Its line must start with exactly that address."
+            exit 1
+          fi
           cat > ~/.ssh/config <<EOF
           Host vps
             HostName $VPS_HOST
