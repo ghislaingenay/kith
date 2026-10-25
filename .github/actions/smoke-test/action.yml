@@ -89,6 +89,11 @@ runs:
         page=$(https_get -L https://localhost/)
         echo "$page" | grep -q '/_next/static/'
 
+        echo "www. redirects to the bare domain, keeping the path"
+        redirect=$(https_get --resolve www.localhost:443:127.0.0.1 -o /dev/null -w '%{http_code} %{redirect_url}' https://www.localhost/sign-in?next=x)
+        echo "  got: $redirect"
+        [ "$redirect" = "301 https://localhost/sign-in?next=x" ]
+
     # Deploys again while polling /health (the API) and / (the frontend)
     # through Caddy, with no retries: every request must succeed while both
     # containers are replaced.
