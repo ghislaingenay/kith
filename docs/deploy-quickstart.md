@@ -144,7 +144,7 @@ Once `VPS_SSH_KEY` is saved in GitHub and `kith-deploy.pub` is on the VPS, delet
 - Secrets, used by the deploy job to reach the VPS:
   - `VPS_HOST`: the address CI connects to, the VPS's public IP (e.g. `203.0.113.10`, from your hosting provider's panel) or a hostname pointing at it
   - `VPS_USER`: the Linux user CI logs in as on the VPS, `deploy` (created in step 3)
-  - `VPS_SSH_KEY`: the content of `kith-deploy`, CI's private key (above)
+  - `VPS_SSH_KEY`: the whole `kith-deploy` file, CI's private key (above). Not the `.pub`. Run `cat kith-deploy` and paste everything it prints, from `-----BEGIN OPENSSH PRIVATE KEY-----` to `-----END OPENSSH PRIVATE KEY-----`, both lines included. The deploy job checks it before connecting, and stops with an error if it is the `.pub`, cut short, or has a passphrase.
 - One more variable, `VPS_KNOWN_HOSTS`: the VPS's **host key**, the server's own SSH key that proves which machine it is. CI checks it before connecting, so it refuses any other machine answering at that address. The host key was made when the VPS was installed, so you don't create it, only copy it. It is public, so `VPS_KNOWN_HOSTS` is a variable, not a secret. Print the host key on the VPS:
 
   ```sh
@@ -377,16 +377,39 @@ The compose file reads this file twice: it fills in `${...}` values in `docker-c
 
 The other settings (upload caps, retrieval sizes, `STARTING_CREDIT_GRANT`, ...) have working defaults. Add one here only to change it. Tuning knobs with defaults: `GUNICORN_WORKERS` (2), `GUNICORN_GRACEFUL_TIMEOUT` (30 seconds, how long an Ask stream gets to finish on a deploy), `OPENSEARCH_HEAP` (`512m`).
 
+### Changing `.env` later
+
+Containers read `.env` only when they are created. A restart keeps the old values, so the containers have to be recreated. From your laptop:
+
+```sh
+# 1. log in to the VPS as deploy
+ssh deploy@<vps>
+
+# 2. edit the file, save (Ctrl+O, Enter) and quit (Ctrl+X)
+nano /opt/kith/.env
+
+# 3. recreate the containers that use .env
+docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env up -d --no-deps app worker-ingest frontend caddy
+
+# 4. check they started with the new values (an error such as
+#    STORAGE_PROVIDER=S3 being rejected shows up here)
+docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env logs --tail 50 app worker-ingest
+```
+
+Step 3 recreates only the containers whose settings changed; the others keep running. `--no-deps` leaves Postgres, Redis and OpenSearch alone, as `deploy.sh` does. The site is down for a few seconds while `app` is recreated.
+
+Changing a `POSTGRES_*` value does not change the database itself: Postgres reads them only when it first creates its data. Change the password inside Postgres first, then in `.env`.
+
 ## 5. First start
 
 The deploy workflow pushes both images to GHCR on every merge to `master`. If the VPS was not ready when it ran, that run's deploy job failed at SSH; that is expected, and its images are in GHCR all the same.
 
 Start the stack by running the deploy workflow by hand: GitHub → Actions → **Deploy** → Run workflow, with `image_tag` = the full SHA of that `master` commit (`git rev-parse origin/master`). It is the same job every later deploy runs (step 8), and `deploy.sh` also starts a fresh server: it starts Postgres, Redis and OpenSearch and waits for them, runs the release step, then the API, frontend, worker and Caddy start.
 
-From here on `dc` means `docker compose -f docker-compose.prod.yml --env-file .env`, run as `deploy` in `/opt/kith`:
+From here on `dc` means `docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env`, run as `deploy`. The full paths make it work from any folder:
 
 ```sh
-alias dc='docker compose -f docker-compose.prod.yml --env-file .env'
+alias dc='docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env'
 dc ps
 ```
 
@@ -420,7 +443,7 @@ dc run --rm pg-backup     # prints "pg-backup: uploaded s3://..." and exits 0
 **Schedule it nightly** in the `deploy` user's crontab (`crontab -e`). The time matches the Cron monitor's schedule (the VPS clock is UTC; check with `date`):
 
 ```
-0 3 * * * cd /opt/kith && docker compose -f docker-compose.prod.yml --env-file .env run --rm -T pg-backup 2>&1 | logger -t pg-backup
+0 3 * * * docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env run --rm -T pg-backup 2>&1 | logger -t pg-backup
 ```
 
 Its output goes to the system log: `journalctl -t pg-backup`.
@@ -429,8 +452,8 @@ Its output goes to the system log: `journalctl -t pg-backup`.
 
 ```sh
 # the kith-vps keys from .env, passed into the container below
-export AWS_ACCESS_KEY_ID=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' .env)
-export AWS_SECRET_ACCESS_KEY=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' .env)
+export AWS_ACCESS_KEY_ID=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' /opt/kith/.env)
+export AWS_SECRET_ACCESS_KEY=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' /opt/kith/.env)
 restore() { dc run --rm -T -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY --entrypoint sh pg-backup -c "$1"; }
 
 # 1. pick a dump
@@ -485,6 +508,8 @@ A change to a data service in `docker-compose.prod.yml` (Postgres, Redis, OpenSe
 
 ## Day-to-day
 
+Looking after the running server (checking the database, ...) is in `vps-operations.md`.
+
 | Task | Command (on the VPS, in `/opt/kith`) |
 |---|---|
 | Follow logs | `dc logs -f app` (or `worker-ingest`, `frontend`, `caddy`) |
@@ -494,4 +519,5 @@ A change to a data service in `docker-compose.prod.yml` (Postgres, Redis, OpenSe
 | OpenSearch from your laptop | `ssh -L 9200:localhost:9200 deploy@<vps>`, then `curl localhost:9200/_cat/indices` |
 | Roll back | Actions → Deploy → Run workflow with an older full commit SHA (step 8) |
 | Deploy by hand | `sh deploy.sh <full commit sha>` (what the workflow runs) |
+| Apply a `.env` change | `dc up -d --no-deps app worker-ingest frontend caddy` (step 4); `dc restart` keeps the old values |
 | Memory use | `docker stats --no-stream` |
