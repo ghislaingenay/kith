@@ -4,12 +4,12 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useId, useState, type FormEvent } from "react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { StackedPages } from "@/components/line_drawings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { AskView, useAsk } from "@/features/ask";
-import { useCreditBalance } from "@/features/credits";
+import { TYPICAL_ASK_CREDITS, useCreditBalance } from "@/features/credits";
 import { useHasDocuments } from "@/features/uploads";
 
 import { useSearch } from "../api/use_search";
@@ -18,8 +18,9 @@ import { SearchResults } from "./search_results";
 
 /** The dashboard's Search box and results. The URL (`?q=…&type=search`) holds
  * the Query, so refresh, Back and shared links all rerun the same Search. An
- * Ask is never in the URL, so a reload never charges again. With the Credit
- * Balance used up, Ask AI is disabled and Search still works (ADR-0017).
+ * Ask is never in the URL, so a reload never charges again. A Search | Ask AI
+ * toggle picks what the box runs; with the Credit Balance used up, Ask AI is
+ * disabled and Search still works (ADR-0017).
  *
  * Laid out like a search engine: before a Query, a large centred box under
  * the workspace name; once a Search or an Ask is shown, a slim top bar with
@@ -51,15 +52,13 @@ export function SearchPanel({
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-8 px-4 pb-[20vh] pt-16">
         <Wordmark tenantName={tenantName} />
-        <Alert className="w-full max-w-2xl">
-          <AlertTitle>No documents available</AlertTitle>
-          <AlertDescription className="space-y-3">
-            <p>Upload a document to start searching.</p>
-            <Button asChild>
-              <Link href={`${pathname}/uploads`}>Go to uploads</Link>
-            </Button>
-          </AlertDescription>
-        </Alert>
+        <div className="flex flex-col items-center gap-4 text-center">
+          <StackedPages />
+          <p className="font-heading text-lg text-foreground">No documents yet</p>
+          <Button asChild>
+            <Link href={`${pathname}/uploads`}>Go to uploads</Link>
+          </Button>
+        </div>
       </div>
     );
   }
@@ -76,6 +75,7 @@ export function SearchPanel({
       initialQuery={activeQuery}
       canAsk={canAsk}
       isAsking={askState.phase === "streaming"}
+      creditsLeft={balance?.credits}
       noCreditsMessage={noCreditsMessage}
       onSearch={resetAsk}
       onAsk={(query) => void ask(query)}
@@ -157,6 +157,7 @@ function SearchBox({
   initialQuery,
   canAsk,
   isAsking,
+  creditsLeft,
   noCreditsMessage,
   onSearch,
   onAsk,
@@ -165,6 +166,7 @@ function SearchBox({
   readonly initialQuery: string;
   readonly canAsk: boolean;
   readonly isAsking: boolean;
+  readonly creditsLeft: number | undefined;
   readonly noCreditsMessage: string | null;
   readonly onSearch: () => void;
   readonly onAsk: (query: string) => void;
@@ -172,13 +174,23 @@ function SearchBox({
   const router = useRouter();
   const pathname = usePathname();
   const [value, setValue] = useState(initialQuery);
+  // Never stored or in the URL, so every page load starts on Search.
+  const [selectedMode, setSelectedMode] = useState<Mode>("search");
   const noCreditsId = useId();
+  const askDisabled = noCreditsMessage !== null;
+  // Back on Search once the Credit Balance runs out.
+  const mode: Mode = canAsk && !askDisabled ? selectedMode : "search";
   const controlHeight = size === "hero" ? "h-12" : "h-9";
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const query = value.trim();
     if (query === "") return;
+    if (mode === "ask") {
+      // Also guarded on the button, so a double submit never charges twice.
+      if (!isAsking) onAsk(query);
+      return;
+    }
     onSearch();
     router.push(
       `${pathname}?${new URLSearchParams({ q: query, type: "search" })}`,
@@ -187,42 +199,106 @@ function SearchBox({
 
   return (
     <div className="space-y-2">
-      <form role="search" onSubmit={submit} className="flex gap-2">
+      <form role="search" onSubmit={submit} className="flex flex-wrap gap-2">
         <Input
           type="search"
           aria-label="Search documents"
           placeholder="Search documents…"
           value={value}
           onChange={(event) => setValue(event.target.value)}
-          className={cn(controlHeight, size === "hero" && "px-4 text-base md:text-base")}
+          className={cn(
+            controlHeight,
+            "min-w-48 flex-1",
+            size === "hero" && "px-4 text-base md:text-base",
+          )}
         />
-        {/* The Query is embedded for each Search, so it runs on submit only. */}
-        <Button type="submit" className={cn(controlHeight, "px-4")}>
-          Search
-        </Button>
         {canAsk && (
-          // Disabled while an Answer streams, so a double click never charges
-          // twice, and once the Credit Balance is used up.
-          <Button
-            type="button"
-            variant="outline"
-            className={cn(controlHeight, "px-4")}
-            disabled={isAsking || noCreditsMessage !== null}
-            aria-describedby={noCreditsMessage !== null ? noCreditsId : undefined}
-            onClick={() => {
-              const query = value.trim();
-              if (query !== "") onAsk(query);
-            }}
-          >
-            Ask AI
-          </Button>
+          <ModeToggle
+            mode={mode}
+            askDisabled={askDisabled}
+            noCreditsId={noCreditsId}
+            className={controlHeight}
+            onChange={setSelectedMode}
+          />
         )}
+        {/* The Query is embedded for each Search, so it runs on submit only. */}
+        <Button
+          type="submit"
+          className={cn(controlHeight, "px-4")}
+          disabled={mode === "ask" && isAsking}
+        >
+          {mode === "ask" ? "Ask" : "Search"}
+        </Button>
       </form>
+      {mode === "ask" && (
+        <p className="text-sm text-muted-foreground">
+          About {TYPICAL_ASK_CREDITS} credits per Ask
+          {creditsLeft !== undefined && (
+            <>
+              {" · "}
+              <span className="font-mono text-xs">{creditsLeft}</span> left
+            </>
+          )}
+        </p>
+      )}
       {noCreditsMessage !== null && (
         <p id={noCreditsId} className="text-sm text-muted-foreground">
           {noCreditsMessage}
         </p>
       )}
+    </div>
+  );
+}
+
+/** Search | Ask AI as one segmented control: native radios, so arrow keys and
+ * screen readers work as for any radio group. */
+function ModeToggle({
+  mode,
+  askDisabled,
+  noCreditsId,
+  className,
+  onChange,
+}: {
+  readonly mode: Mode;
+  readonly askDisabled: boolean;
+  readonly noCreditsId: string;
+  readonly className: string;
+  readonly onChange: (mode: Mode) => void;
+}) {
+  const name = useId();
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Mode"
+      className={cn("flex shrink-0 rounded-md border bg-card p-0.5 text-sm", className)}
+    >
+      {MODES.map((option) => {
+        const disabled = option.value === "ask" && askDisabled;
+        return (
+          <label
+            key={option.value}
+            className={cn(
+              "flex items-center rounded-sm px-3 has-focus-visible:outline-2 has-focus-visible:outline-ring",
+              mode === option.value
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
+              disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+            )}
+          >
+            <input
+              type="radio"
+              name={name}
+              value={option.value}
+              checked={mode === option.value}
+              disabled={disabled}
+              aria-describedby={disabled ? noCreditsId : undefined}
+              onChange={() => onChange(option.value)}
+              className="sr-only"
+            />
+            {option.label}
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -249,3 +325,10 @@ function ActiveSearch({
     />
   );
 }
+
+const MODES: readonly { value: Mode; label: string }[] = [
+  { value: "search", label: "Search" },
+  { value: "ask", label: "Ask AI" },
+];
+
+type Mode = "search" | "ask";

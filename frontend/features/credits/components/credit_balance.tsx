@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 import { useCreditBalance } from "../api/use_credit_balance";
 import type { CreditBalance as CreditBalanceData } from "../types";
+import { TYPICAL_ASK_CREDITS } from "../utils/typical_ask_credits";
 
 /** The sidebar's "N credits left", in the warning colour when low; a
  * skeleton while the balance loads, and a toast (not an empty gap) if it
@@ -57,8 +58,7 @@ function balanceLabel(balance: CreditBalanceData): string {
   return `${balance.credits} ${balance.credits === 1 ? "credit" : "credits"} left`;
 }
 
-const CREDITS_EXPLANATION =
-  "Each Ask uses credits for the text the AI reads and writes, about 4 for a typical Ask. 1 credit = 1,000 tokens. Search is free.";
+const CREDITS_EXPLANATION = `Each Ask uses credits for the text the AI reads and writes, about ${TYPICAL_ASK_CREDITS} for a typical Ask. 1 credit = 1,000 tokens. Search is free.`;
 
 const LOAD_FAILED = "Your credit balance couldn't load.";
 const LOAD_FAILED_TOAST_ID = "credit-balance-load-failed";

@@ -5,8 +5,10 @@ export type AnswerSegment = Readonly<{ text: string }> | Readonly<{ n: number }>
 
 const MARKER = /\[(\d+)\]/g;
 
-/** Splits the Answer around its `[n]` markers. A marker for a number not in
- * `passageNumbers` stays in the text, so it never becomes a broken link. */
+/** Splits the Answer around its `[n]` markers, dropping the spaces before
+ * each, so its number sits against the word it cites. A marker for a number
+ * not in `passageNumbers` stays in the text, so it never becomes a broken
+ * link. */
 export function splitCitationMarkers(
   answer: string,
   passageNumbers: ReadonlySet<number>,
@@ -17,7 +19,7 @@ export function splitCitationMarkers(
   for (const match of answer.matchAll(MARKER)) {
     const n = Number(match[1]);
     if (!passageNumbers.has(n)) continue;
-    text += answer.slice(last, match.index);
+    text = (text + answer.slice(last, match.index)).replace(/ +$/, "");
     if (text !== "") segments.push({ text });
     segments.push({ n });
     text = "";

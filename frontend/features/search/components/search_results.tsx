@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { StackedPages } from "@/components/line_drawings";
 import { DocumentViewerDialog } from "@/features/document-viewer";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api_client";
@@ -40,7 +41,10 @@ export function SearchResults({
         </p>
       )}
       {data.results.length === 0 ? (
-        <p className="py-8 text-sm text-muted-foreground">No passages match “{query}”.</p>
+        <div className="flex flex-col items-start gap-4 py-8">
+          <StackedPages />
+          <p className="text-sm text-muted-foreground">No passages match “{query}”.</p>
+        </div>
       ) : (
         <ol aria-label="Search results" className="-mx-3 space-y-1">
           {data.results.map((result) => (
