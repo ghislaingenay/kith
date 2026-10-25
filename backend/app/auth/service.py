@@ -9,6 +9,7 @@ from auth.config import (
     MAGIC_LINK_RATE_LIMIT_WINDOW_SECONDS,
     MAGIC_LINK_TOKEN_TTL_SECONDS,
 )
+from auth import magic_link_email
 from auth.exceptions import MagicLinkTokenInvalidError
 from auth.session import SessionService
 from core.cache.provider import CacheProvider
@@ -69,11 +70,9 @@ class MagicLinkService:
         ttl_minutes = MAGIC_LINK_TOKEN_TTL_SECONDS // 60
         await self._mailer.send(
             to=email,
-            subject="Your Kith sign-in link",
-            body=(
-                f"Use the link below to sign in. It expires in {ttl_minutes} minutes "
-                f"and can only be used once.\n\n{link}"
-            ),
+            subject=magic_link_email.SUBJECT,
+            body=magic_link_email.plain_text_body(link, ttl_minutes),
+            html=magic_link_email.html_body(link, ttl_minutes),
         )
 
 

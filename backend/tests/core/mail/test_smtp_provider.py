@@ -72,3 +72,32 @@ async def test_send_wraps_smtp_exceptions_in_mail_unavailable_error() -> None:
         pytest.raises(MailUnavailableError),
     ):
         await mailer.send(to="jane@example.com", subject="Hi", body="Hello")
+
+
+async def test_send_without_html_stays_plain_text() -> None:
+    mailer = _mailer()
+
+    with patch("core.mail.smtp_provider.aiosmtplib.send", new=AsyncMock()) as mock_send:
+        await mailer.send(to="jane@example.com", subject="Hi", body="Hello there")
+
+    (message,), _ = mock_send.await_args
+    assert message.get_content_type() == "text/plain"
+
+
+async def test_send_with_html_sends_plain_text_and_html_alternatives() -> None:
+    mailer = _mailer()
+
+    with patch("core.mail.smtp_provider.aiosmtplib.send", new=AsyncMock()) as mock_send:
+        await mailer.send(
+            to="jane@example.com",
+            subject="Hi",
+            body="Hello there",
+            html="<p>Hello there</p>",
+        )
+
+    (message,), _ = mock_send.await_args
+    assert message.get_content_type() == "multipart/alternative"
+    plain = message.get_body(preferencelist=("plain",))
+    html = message.get_body(preferencelist=("html",))
+    assert plain.get_content().strip() == "Hello there"
+    assert html.get_content().strip() == "<p>Hello there</p>"
