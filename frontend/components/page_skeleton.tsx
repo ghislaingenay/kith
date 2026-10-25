@@ -7,9 +7,9 @@ export function CardPageSkeleton() {
     <div
       role="status"
       aria-label="Loading"
-      className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-4 py-16 dark:bg-black"
+      className="flex flex-1 flex-col items-center justify-center bg-background px-4 py-16"
     >
-      <div className="w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-8 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="w-full max-w-sm rounded-lg border bg-card p-8">
         <Skeleton className="h-6 w-2/3" />
         <Skeleton className="mt-2 h-4 w-full" />
         <Skeleton className="mt-6 h-9 w-full" />

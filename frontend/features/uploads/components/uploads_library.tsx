@@ -302,11 +302,11 @@ function DocumentRow({
           {document.name}
         </button>
       </td>
-      <td className="whitespace-nowrap px-4 py-3">
+      <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
         {formatFileSize(document.size_bytes)}
       </td>
       <td className="px-4 py-3">{document.uploader}</td>
-      <td className="whitespace-nowrap px-4 py-3">
+      <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
         {formatDate(document.created_at)}
       </td>
       <td className="px-4 py-3">

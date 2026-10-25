@@ -26,7 +26,7 @@ export function CreditBalance({ tenantId }: { readonly tenantId: string }) {
         <button
           type="button"
           data-balance={state}
-          className={`truncate px-2 text-left text-sm ${STATE_CLASSES[state]}`}
+          className={`truncate px-2 text-left font-mono text-xs ${STATE_CLASSES[state]}`}
         >
           {balanceLabel(balance)}
         </button>
@@ -52,8 +52,8 @@ const CREDITS_EXPLANATION =
 
 const STATE_CLASSES: Record<BalanceState, string> = {
   normal: "text-sidebar-foreground/70",
-  low: "text-amber-600 dark:text-amber-400",
-  exhausted: "text-amber-600 dark:text-amber-400",
+  low: "text-warning",
+  exhausted: "text-warning",
 };
 
 type BalanceState = "normal" | "low" | "exhausted";

@@ -67,7 +67,7 @@ export function AskView({
         )
       )}
       {hasPassages && passages && (
-        <p aria-label="Answer" aria-live="polite" className="whitespace-pre-wrap text-sm">
+        <p aria-label="Answer" aria-live="polite" className="whitespace-pre-wrap font-serif text-base leading-relaxed">
           {showMarkers && !isWriting ? (
             <MarkedAnswer answer={answer} passages={passages} cardId={cardId} />
           ) : (
@@ -150,11 +150,11 @@ function CitationCard({
       <p className="text-sm font-medium">
         <span className="mr-2 text-muted-foreground">[{passage.n}]</span>
         {passage.document_name}
-        <span className="ml-2 font-normal text-muted-foreground">
+        <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
           Page {passage.page_number}
         </span>
       </p>
-      <p className="mt-1 line-clamp-3 whitespace-pre-line text-sm text-muted-foreground">
+      <p className="mt-1 line-clamp-3 whitespace-pre-line font-serif text-sm text-muted-foreground">
         {passage.text}
       </p>
     </button>

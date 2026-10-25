@@ -103,7 +103,7 @@ export function WorkspaceShell({
       </Sidebar>
 
       <SidebarInset>
-        <header className="flex h-12 shrink-0 items-center border-b border-zinc-200 px-4 dark:border-zinc-800">
+        <header className="flex h-12 shrink-0 items-center border-b px-4">
           <SidebarTrigger />
         </header>
         <div className="flex flex-1 flex-col">{children}</div>

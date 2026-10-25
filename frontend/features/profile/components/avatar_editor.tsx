@@ -156,7 +156,7 @@ export function AvatarEditor({ profile }: { readonly profile: Profile }) {
         {isSuccess && (
           <p
             role="status"
-            className="text-sm text-green-700 dark:text-green-500"
+            className="text-sm text-primary"
           >
             Photo updated
           </p>

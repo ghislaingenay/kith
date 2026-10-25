@@ -13,7 +13,7 @@ export default async function WorkspacePage({
 
   return (
     <div className="flex flex-1 flex-col items-center px-4 py-16">
-      <h1 className="text-xl font-semibold text-zinc-950 dark:text-zinc-50">
+      <h1 className="text-xl font-semibold text-foreground">
         Welcome to {tenantName}
       </h1>
       <p className="mb-8 mt-1 text-sm text-muted-foreground">

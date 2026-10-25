@@ -78,17 +78,17 @@ function ResultRow({ result }: { readonly result: SearchResult }) {
     <>
       <p className="text-sm font-medium">
         {result.document_name}
-        <span className="ml-2 font-normal text-muted-foreground">
+        <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
           Page {result.page_number}
         </span>
       </p>
-      <p className="mt-1 text-sm text-muted-foreground">
+      <p className="mt-1 font-serif text-sm text-muted-foreground">
         {result.highlights.length > 0 ? (
           result.highlights.map((fragment, index) => (
             <span key={index} className="mr-1">
               {parseHighlight(fragment).map((segment, i) =>
                 segment.marked ? (
-                  <mark key={i} className="rounded bg-yellow-200 text-foreground dark:bg-yellow-500/40">
+                  <mark key={i} className="rounded-sm bg-highlight text-highlight-foreground">
                     {segment.text}
                   </mark>
                 ) : (

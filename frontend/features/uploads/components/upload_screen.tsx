@@ -37,7 +37,7 @@ export function UploadScreen({ tenantId }: { readonly tenantId: string }) {
   return (
     <div className="flex w-full flex-col items-center px-4 pb-8 pt-16">
       <div className="w-full max-w-xl">
-        <h1 className="text-xl font-semibold text-zinc-950 dark:text-zinc-50">
+        <h1 className="text-xl font-semibold text-foreground">
           Upload
         </h1>
 
@@ -82,7 +82,7 @@ export function UploadScreen({ tenantId }: { readonly tenantId: string }) {
                 <span className="truncate">{chosen.name}</span>
                 {isPending && <span role="status">Uploading…</span>}
                 {isSuccess && (
-                  <span role="status" className="text-green-700 dark:text-green-500">
+                  <span role="status" className="text-primary">
                     Accepted
                   </span>
                 )}
