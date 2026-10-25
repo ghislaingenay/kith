@@ -377,6 +377,18 @@ The compose file reads this file twice: it fills in `${...}` values in `docker-c
 
 The other settings (upload caps, retrieval sizes, `STARTING_CREDIT_GRANT`, ...) have working defaults. Add one here only to change it. Tuning knobs with defaults: `GUNICORN_WORKERS` (2), `GUNICORN_GRACEFUL_TIMEOUT` (30 seconds, how long an Ask stream gets to finish on a deploy), `OPENSEARCH_HEAP` (`512m`).
 
+### Changing `.env` later
+
+Containers read `.env` only when they are created, so `dc restart` keeps the old values (`dc` is set up in step 5). Recreate them instead:
+
+```sh
+dc up -d --no-deps app worker-ingest frontend caddy
+```
+
+Compose recreates only the services whose settings changed and leaves the rest running. `--no-deps` keeps Postgres, Redis and OpenSearch out of it, as `deploy.sh` does. `app` is down for a few seconds while it is recreated. Then check the new values were accepted: `dc logs --tail 50 app worker-ingest`. A typo like `STORAGE_PROVIDER=S3` shows up here as a validation error.
+
+Changing a `POSTGRES_*` value does not change the database itself: Postgres reads them only when it first creates its data. Change the password inside Postgres first, then in `.env`.
+
 ## 5. First start
 
 The deploy workflow pushes both images to GHCR on every merge to `master`. If the VPS was not ready when it ran, that run's deploy job failed at SSH; that is expected, and its images are in GHCR all the same.
@@ -494,4 +506,5 @@ A change to a data service in `docker-compose.prod.yml` (Postgres, Redis, OpenSe
 | OpenSearch from your laptop | `ssh -L 9200:localhost:9200 deploy@<vps>`, then `curl localhost:9200/_cat/indices` |
 | Roll back | Actions → Deploy → Run workflow with an older full commit SHA (step 8) |
 | Deploy by hand | `sh deploy.sh <full commit sha>` (what the workflow runs) |
+| Apply a `.env` change | `dc up -d --no-deps app worker-ingest frontend caddy` (step 4); `dc restart` keeps the old values |
 | Memory use | `docker stats --no-stream` |
