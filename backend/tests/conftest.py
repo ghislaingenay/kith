@@ -8,17 +8,30 @@ can't touch real data. Skipped entirely when Docker isn't reachable.
 
 Domain-specific `repository` fixtures (AuthRepository, TenantsRepository,
 ...) stay in each domain's own tests/<domain>/conftest.py — only the
-container/session plumbing that's identical across domains lives here."""
+container/session plumbing that's identical across domains lives here.
+
+Also `sentry_events`, shared by every domain that checks what reaches
+Sentry (see tests/support/sentry_recorder.py)."""
 
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from arq.connections import RedisSettings
 from core.database import Base, DatabaseSettings, create_engine, create_session_factory
+from sentry_sdk.types import Event
 from sqlalchemy.ext.asyncio import AsyncSession
 from testcontainers.community.opensearch import OpenSearchContainer
 from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
+
+from tests.support.sentry_recorder import record_sentry_events
+
+
+@pytest.fixture
+def sentry_events() -> Iterator[list[Event]]:
+    """Every event Sentry would receive during the test, after scrubbing."""
+    with record_sentry_events() as events:
+        yield events
 
 
 @pytest.fixture(scope="session")

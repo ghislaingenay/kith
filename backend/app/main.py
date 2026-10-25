@@ -11,6 +11,7 @@ from core.container import container
 from core.exceptions import register_exception_handlers
 from core.migrations import warn_if_schema_out_of_date
 from core.logging import setup_logger
+from core.logging.middleware import RequestIDMiddleware
 from core.search.startup import require_search_index
 from credits.router import router as credits_router
 from documents.router import library_router
@@ -80,6 +81,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],  # must cover X-Tenant-ID + Content-Type
 )
+# Added last, so outermost: CORS preflights get `X-Request-ID` too.
+app.add_middleware(RequestIDMiddleware)
 app.include_router(auth_router, prefix=set_api_version())
 app.include_router(me_router, prefix=set_api_version())
 app.include_router(tenants_router, prefix=set_api_version())

@@ -7,7 +7,12 @@ from typing import Annotated
 from fastapi import APIRouter, Cookie, Depends, Response
 from pydantic import EmailStr
 
-from auth.config import SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, SessionCookieSettings
+from auth.config import (
+    MAGIC_LINK_IP_RATE_LIMIT_PER_HOUR,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_SECONDS,
+    SessionCookieSettings,
+)
 from auth.dependencies import (
     get_current_user,
     get_magic_link_service,
@@ -24,6 +29,7 @@ from auth.schemas import (
 )
 from auth.service import MagicLinkService, MagicLinkVerificationService
 from auth.session import SessionService
+from core.ratelimit.dependencies import IPRateLimitDependency
 from core.security.dependencies import require_allowed_origin
 from tenants.dependencies import get_tenants_service
 from tenants.service import TenantsService
@@ -58,18 +64,28 @@ def _set_session_cookie(response: Response, raw_session_id: str) -> None:
     )
 
 
+# Per-minute equals per-hour, so only the hourly limit binds (IP: ADR-0020).
+_magic_link_ip_rate_limit = IPRateLimitDependency(
+    per_minute=MAGIC_LINK_IP_RATE_LIMIT_PER_HOUR,
+    per_hour=MAGIC_LINK_IP_RATE_LIMIT_PER_HOUR,
+)
+
+
 @router.post(
     "/magic-link",
     response_model=MagicLinkRequestResponse,
-    dependencies=[Depends(require_allowed_origin)],
+    dependencies=[
+        Depends(require_allowed_origin),
+        Depends(_magic_link_ip_rate_limit),
+    ],
 )
 async def request_magic_link(
     data: MagicLinkRequest,
     service: Annotated[MagicLinkService, Depends(get_magic_link_service)],
 ) -> MagicLinkRequestResponse:
     """Always returns the same response regardless of whether `data.email`
-    has an account (ADR-0006's enumeration guard) — the per-email rate
-    limit is the only thing that can produce a different status (429)."""
+    has an account (ADR-0006's enumeration guard) — only the per-IP and
+    per-email rate limits can produce a different status (429)."""
     await service.request_magic_link(data.email)
     return _MAGIC_LINK_RESPONSE
 
@@ -87,7 +103,8 @@ async def verify_magic_link(
     routes): this is called server-to-server by the frontend's verify
     route, forwarding no browser `Origin` at all — see
     core/security/dependencies.py's docstring on why an absent Origin is
-    let through."""
+    let through. No per-IP limit either, for the same reason: every call
+    comes from the frontend container's IP."""
     _, raw_session_id = await service.verify(email=email, token=token)
     _set_session_cookie(response, raw_session_id)
     return VerifyMagicLinkResponse(message="Signed in.")

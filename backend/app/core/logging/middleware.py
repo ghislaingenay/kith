@@ -2,6 +2,7 @@
 
 import uuid
 
+import sentry_sdk
 import structlog
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -11,7 +12,8 @@ REQUEST_ID_HEADER = "X-Request-ID"
 class RequestIDMiddleware:
     """Generates a UUID v4 `request_id` per request, binds it to structlog's
     contextvars so every log statement made within this request's async
-    context includes it (FR-2's "Logged"), and returns it in the
+    context includes it (FR-2's "Logged"), sets it as a Sentry tag so events
+    from this request lead back to its log lines, and returns it in the
     `X-Request-ID` response header (FR-2's "Header").
     """
 
@@ -25,6 +27,8 @@ class RequestIDMiddleware:
 
         request_id = str(uuid.uuid4())
         bind_request_id(request_id)
+        # Per request: Sentry's Starlette integration forks the scope outside us.
+        sentry_sdk.set_tag("request_id", request_id)
 
         async def send_with_request_id(message: Message) -> None:
             if message["type"] == "http.response.start":

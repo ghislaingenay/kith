@@ -6,6 +6,8 @@ from structlog.testing import capture_logs
 
 from core import migrations
 from core.migrations import warn_if_schema_out_of_date
+from sentry_sdk.types import Event
+from tests.support.sentry_recorder import exception_types
 
 
 class _FakeConnection:
@@ -64,12 +66,21 @@ async def test_warns_when_database_has_no_migrations_applied(head_revisions) -> 
     assert logs[0]["current_revisions"] == []
 
 
-async def test_a_failing_check_is_logged_and_never_raised(head_revisions) -> None:
-    class _BrokenEngine:
-        def connect(self):
-            raise ConnectionError("database unreachable")
+class _BrokenEngine:
+    def connect(self) -> None:
+        raise ConnectionError("database unreachable")
 
+
+async def test_a_failing_check_is_logged_and_never_raised(head_revisions) -> None:
     with capture_logs() as logs:
         await warn_if_schema_out_of_date(_BrokenEngine())
 
     assert [log["event"] for log in logs] == ["db_schema_check_failed"]
+
+
+async def test_a_failing_check_is_reported_to_sentry(
+    head_revisions, sentry_events: list[Event]
+) -> None:
+    await warn_if_schema_out_of_date(_BrokenEngine())
+
+    assert exception_types(sentry_events) == ["ConnectionError"]

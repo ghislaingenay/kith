@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from structlog.testing import capture_logs
 
 from tests.support.fake_db import FakeAsyncSession, FakeResult
 from users.exceptions import UserNotFound
@@ -138,6 +139,20 @@ async def test_get_or_create_user_raises_user_not_found_when_recovery_finds_noth
 
     with pytest.raises(UserNotFound):
         await repository.get_or_create_user("a@example.com")
+
+
+async def test_get_or_create_user_failure_is_logged_without_the_email() -> None:
+    session = FakeAsyncSession(
+        execute_results=[FakeResult(scalar=None), FakeResult(scalar=None)],
+        commit_side_effects=[IntegrityError("INSERT", {}, Exception("dup key"))],
+    )
+    repository = UserRepository(session)
+
+    with capture_logs() as logs, pytest.raises(UserNotFound):
+        await repository.get_or_create_user("a@example.com")
+
+    assert [log["event"] for log in logs] == ["user_get_or_create_failed"]
+    assert "a@example.com" not in str(logs)
 
 
 async def test_update_user_commits_and_refreshes_without_re_adding() -> None:

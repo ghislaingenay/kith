@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MAGIC_LINK_TOKEN_TTL_SECONDS = 15 * 60
 MAGIC_LINK_RATE_LIMIT_PER_HOUR = 5
+# Stops a bot cycling addresses; a team signing up from one office fits.
+MAGIC_LINK_IP_RATE_LIMIT_PER_HOUR = 20
 MAGIC_LINK_RATE_LIMIT_WINDOW_SECONDS = 60 * 60
 
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
