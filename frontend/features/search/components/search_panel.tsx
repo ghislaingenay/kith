@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowRight, Search as SearchIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useId, useState, type FormEvent } from "react";
@@ -221,13 +222,19 @@ function SearchBox({
             onChange={setSelectedMode}
           />
         )}
-        {/* The Query is embedded for each Search, so it runs on submit only. */}
+        {/* The Query is embedded for each Search, so it runs on submit only.
+            An icon, so the toggle is the only place "Search" is written. */}
         <Button
           type="submit"
-          className={cn(controlHeight, "px-4")}
+          aria-label={mode === "ask" ? "Ask" : "Search"}
+          className={cn(controlHeight, "aspect-square px-0")}
           disabled={mode === "ask" && isAsking}
         >
-          {mode === "ask" ? "Ask" : "Search"}
+          {mode === "ask" ? (
+            <ArrowRight className="size-5" aria-hidden="true" />
+          ) : (
+            <SearchIcon className="size-5" aria-hidden="true" />
+          )}
         </Button>
       </form>
       {mode === "ask" && (
@@ -279,8 +286,10 @@ function ModeToggle({
             key={option.value}
             className={cn(
               "flex items-center rounded-sm px-3 has-focus-visible:outline-2 has-focus-visible:outline-ring",
+              // Quieter than the submit button, so only one control reads as
+              // the action.
               mode === option.value
-                ? "bg-primary text-primary-foreground"
+                ? "bg-muted font-medium text-foreground"
                 : "text-muted-foreground hover:text-foreground",
               disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
             )}

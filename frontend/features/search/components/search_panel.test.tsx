@@ -261,7 +261,8 @@ describe("SearchPanel", () => {
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
     expect(screen.queryByText(/ask/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/credits/i)).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Search"]);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button")).toHaveAccessibleName("Search");
   });
 
   it("shows a Search | Ask AI toggle, on Search, to a Role that may Ask", async () => {
@@ -272,7 +273,10 @@ describe("SearchPanel", () => {
       "Ask AI",
     ]);
     expect(within(toggle).getByRole("radio", { name: "Search" })).toBeChecked();
-    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Search"]);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button")).toHaveAccessibleName("Search");
+    // The toggle is the only place "Search" is written, so it never reads twice.
+    expect(screen.getAllByText("Search")).toHaveLength(1);
   });
 
   it("shows the workspace name and how many Documents there are to search before a Query", async () => {
