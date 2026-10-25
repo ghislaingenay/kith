@@ -71,6 +71,9 @@ export function SignInForm({
 
   return (
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-4" noValidate>
+      <p className="text-center text-sm text-muted-foreground">
+        Enter your work email and we&rsquo;ll send you a link to sign in.
+      </p>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="email" className="text-sm font-medium text-foreground">
           Work email
