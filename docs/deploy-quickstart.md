@@ -2,7 +2,19 @@
 
 How to bring Kith up on a fresh VPS behind Caddy, from an empty server to a signed-in first User. After this first run, every merge to `master` deploys by itself. Why it is shaped this way: ADR-0018 (migrations as a release step), ADR-0019 (OpenSearch is rebuilt, not backed up), ADR-0012 (OpenSearch security off on the VPS).
 
-> **Not built yet.** This page describes the target setup. One piece it relies on does not exist in the repo yet: `.github/workflows/deploy.yml` (until it lands, nothing pushes the images to GHCR). Update this page when it lands.
+## Checklist
+
+Everything you do by hand, in order. The steps below say how.
+
+1. Rent the VPS and point the domain at it (steps 1 and 2, DNS).
+2. Create the outside resources: S3 bucket and IAM users, Resend, Sentry (step 2).
+3. Make the deploy SSH key and fill in GitHub's secrets and variables (step 2, GitHub).
+4. Prepare the VPS: the `deploy` user, then everything that needs root (firewall, Docker, `/opt/kith`), then lock root out; then, as `deploy`, the rollout plugin and the GHCR login with a GitHub token (step 3).
+5. Write `/opt/kith/.env` on the VPS (step 4).
+6. Run the first deploy from GitHub (step 5), then sign in (step 6).
+7. Take a backup, schedule it, and do the restore drill once (step 7).
+
+After that, merges to `master` deploy by themselves (step 8).
 
 ## The shape
 
@@ -95,6 +107,32 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
    - project settings → Security & Privacy → **Allowed Domains**: `app.example.com`, so browser events from other sites are rejected;
    - project settings → Client Keys → the key → **Rate Limiting**: for example 100 events per minute, so a flood can't use up the quota.
 
+**SSH keys** (on your laptop, e.g. WSL). Two key pairs, both for logging in to the VPS's `deploy` account (step 3). Each has a private half (no extension, stays secret) and a public half (`.pub`, given to the VPS).
+
+| Key | Used by | Private half | Public half |
+|---|---|---|---|
+| yours, e.g. `~/.ssh/id_ed25519` | you, from your laptop | stays on your laptop | the provider's panel puts it on root; step 3 copies it to `deploy` |
+| `kith-deploy` | GitHub Actions | GitHub secret `VPS_SSH_KEY` | added to `deploy` in step 3 |
+
+Separate keys keep them independent: if the GitHub secret ever leaks, you delete CI's line on the VPS and yours keeps working.
+
+```sh
+# your own key; skip if ~/.ssh/id_ed25519 exists. Set a passphrase when asked.
+ssh-keygen -t ed25519 -C "<you>-laptop"
+cat ~/.ssh/id_ed25519.pub          # paste this into the provider's panel (SSH keys)
+
+# CI's key: no passphrase (-N ''), since CI cannot type one. Writes kith-deploy and kith-deploy.pub.
+ssh-keygen -t ed25519 -N '' -C kith-deploy -f kith-deploy
+cat kith-deploy                    # the GitHub secret VPS_SSH_KEY (the whole file, BEGIN/END lines included)
+cat kith-deploy.pub                # goes on the VPS in step 3
+```
+
+`-C` is only a label at the end of the public key, so you can tell keys apart in `authorized_keys`. It does not choose a user.
+
+Never copy the private `kith-deploy` file to the VPS. Only `kith-deploy.pub` goes there: the server only checks keys and never logs in with one, and a private key left on it would let anyone who broke in reuse it. You can tell the halves apart: the private file is several lines between `-----BEGIN OPENSSH PRIVATE KEY-----` and `-----END OPENSSH PRIVATE KEY-----`; the `.pub` is one line starting with `ssh-ed25519`.
+
+Once `VPS_SSH_KEY` is saved in GitHub and `kith-deploy.pub` is on the VPS, delete the local `kith-deploy` files, so the private key exists only in GitHub (`rm kith-deploy kith-deploy.pub`). If you need it again, make a new pair.
+
 **GitHub** (repo settings → Secrets and variables → Actions).
 
 - Variables, which get baked into the frontend image at build time:
@@ -104,85 +142,180 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
   - `NEXT_PUBLIC_SENTRY_DSN` = the `kith-frontend` DSN (leave it unset to turn Sentry off in the frontend). The browser can see it; a DSN only lets someone send events, not read them. The image reports as `production`, traces 10 % of page loads (never `/health`), and carries the release SHA.
   - `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` (optional) = the frontend's share of traces, 0 to 1. Leave it unset for `0.1`. `SENTRY_TRACES_SAMPLE_RATE` in the server's `.env` sets only the backend's.
 - Secrets, used by the deploy job to reach the VPS:
-  - `VPS_HOST`
-  - `VPS_USER` (`deploy`)
-  - `VPS_SSH_KEY` (the private half of a key made only for deploys)
+  - `VPS_HOST`: the address CI connects to, the VPS's public IP (e.g. `203.0.113.10`, from your hosting provider's panel) or a hostname pointing at it
+  - `VPS_USER`: the Linux user CI logs in as on the VPS, `deploy` (created in step 3)
+  - `VPS_SSH_KEY`: the content of `kith-deploy`, CI's private key (above)
+- One more variable, `VPS_KNOWN_HOSTS`: the VPS's **host key**, the server's own SSH key that proves which machine it is. CI checks it before connecting, so it refuses any other machine answering at that address. The host key was made when the VPS was installed, so you don't create it, only copy it. It is public, so `VPS_KNOWN_HOSTS` is a variable, not a secret. Print the host key on the VPS:
+
+  ```sh
+  cat /etc/ssh/ssh_host_ed25519_key.pub
+  # ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... root@srv123
+  ```
+
+  The value is one line: exactly what you put in `VPS_HOST` (the IP, or the hostname if you used one), a space, then the first two parts of that output (drop the trailing label):
+
+  ```
+  203.0.113.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
+  ```
+
+Application secrets (API keys, database password) never go to GitHub: they live only in the VPS's `.env` (step 4).
 
 ## 3. Prepare the VPS
 
-Run these as root, or with `sudo`, the first time.
+### The `deploy` user, SSH and firewall
+
+Your hosting provider's panel (on Hostinger, the VPS's SSH keys setting) puts your SSH key on **root**, so the first login is `ssh root@<VPS_IP>` from your laptop. Each account has its own list of allowed keys, so root's key does not let you in as any other user.
+
+These steps add a second account, `deploy`. You and CI log in to it to run Kith, and root login is then turned off:
+
+- bots try `ssh root@…` on every server all day, so it should not be open;
+- CI's key gets its own line, which you can delete if the GitHub secret ever leaks, without touching your own access;
+- `/opt/kith`, its `.env` and the backup's crontab belong to `deploy`, so Kith never runs as root by accident.
+
+`deploy` is in the `docker` group (step 3 below), which can do almost anything root can, so treat its keys as carefully as root's.
+
+**1. Create `deploy` and give it the keys.** As root on the VPS:
+
+Create the account. It has no password: only SSH keys get in.
 
 ```sh
-# a user for deploys; you and CI log in as it
-adduser --disabled-password deploy
+adduser --disabled-password --gecos "" deploy
+```
+
+Copy your own key (the one the provider's panel put on root) to it:
+
+```sh
 mkdir -p /home/deploy/.ssh
-# paste your own public key AND the CI deploy public key, one per line
+cp /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+chown -R deploy:deploy /home/deploy/.ssh
+chmod 700 /home/deploy/.ssh
+chmod 600 /home/deploy/.ssh/authorized_keys
+```
+
+Add CI's key: open the file and paste the content of `kith-deploy.pub` (made in step 2 → GitHub) as a new line at the end.
+
+```sh
 nano /home/deploy/.ssh/authorized_keys
-chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
+```
 
-# keys only, no root login
-sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/; s/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
-systemctl restart ssh
+**2. Check `deploy` works before going further.** Keep the root session open. In a **second terminal on your laptop**:
 
-# firewall
+```sh
+ssh deploy@<VPS_IP>    # must log you in without a password
+```
+
+If it fails, fix it from the root session first. Step 4 locks root out, and you'd be left with only the provider's browser terminal.
+
+**3. Everything that needs root.** Back in the root session. `deploy` has no `sudo`, so all of this must be done now, before step 4 locks root out.
+
+Firewall, and security updates that install themselves:
+
+```sh
 ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable
-
-# security updates install themselves
 apt update && apt install -y unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades
 ```
 
-Check you can still log in as `deploy` from a second terminal **before** closing the root session.
-
-**Provider firewall.** In your hosting provider's control panel, add a firewall for the VPS that allows only inbound TCP 22, 80 and 443 (and UDP 443 for HTTP/3). It runs outside the server, so Docker cannot bypass it the way it bypasses `ufw` (see below): if a container ever publishes a port by mistake, this still blocks it.
-
-**Docker.** Install Docker Engine and the compose plugin by following https://docs.docker.com/engine/install/ubuntu/, then:
+Docker Engine and the compose plugin: follow https://docs.docker.com/engine/install/ubuntu/ ("Install using the apt repository"). Its commands start with `sudo`; as root they work with or without it. Then put `deploy` in the `docker` group. Being in it is the same as being root, so only this user gets it:
 
 ```sh
-usermod -aG docker deploy   # being in the docker group is the same as being root, so only this user gets it
+usermod -aG docker deploy
 ```
 
 > Docker bypasses `ufw` for published ports. A `ports: "5432:5432"` line would open Postgres to the internet whatever `ufw` says. That is why the prod compose file publishes only Caddy's ports, and binds Postgres and OpenSearch to `127.0.0.1`.
 
-**Log rotation**, so container logs cannot fill the disk. In `/etc/docker/daemon.json`:
+Log rotation, so container logs cannot fill the disk:
 
-```json
-{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }
+```sh
+echo '{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }' > /etc/docker/daemon.json
+systemctl restart docker
 ```
 
-Then `systemctl restart docker`.
-
-**OpenSearch memory maps.** OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
+Memory maps: OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
 
 ```sh
 echo 'vm.max_map_count=262144' > /etc/sysctl.d/99-opensearch.conf && sysctl --system
 ```
 
-**The rollout plugin**, which deploys `app` and `frontend` without downtime. Run as `deploy`:
+The folder Kith lives in, owned by `deploy` (step 4 fills it):
+
+```sh
+mkdir -p /opt/kith && chown deploy:deploy /opt/kith
+```
+
+**4. Keys only, no root login.** Still in the root session:
+
+```sh
+# a drop-in file read before the others in sshd_config.d (the first value set wins), so a
+# provider's own file there (e.g. 50-cloud-init.conf) cannot turn password login back on
+printf 'PasswordAuthentication no\nPermitRootLogin no\n' > /etc/ssh/sshd_config.d/00-kith.conf
+sshd -t && systemctl restart ssh
+sshd -T | grep -E '^(passwordauthentication|permitrootlogin) '   # both must say "no"
+```
+
+From now on, log in with `ssh deploy@<VPS_IP>`. If you were already logged in as `deploy`, log out and back in: the `docker` group only applies to new sessions. `docker ps` must print an empty table, not "permission denied".
+
+### Getting root back later
+
+Some later admin tasks need root (`apt`, `ufw`, SSH settings, anything you missed in step 3). Two ways in:
+
+- **The provider's panel.** Its browser terminal or its recovery mode gives you a root shell. Check now that one of them works. Some browser terminals log in over SSH, which root login being off now blocks; recovery mode works either way.
+- **Turn root SSH back on for a while, keys only.** From the panel's root shell:
+
+  ```sh
+  sed -i 's/^PermitRootLogin no$/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config.d/00-kith.conf
+  sshd -t && systemctl restart ssh
+  ```
+
+  `ssh root@<VPS_IP>` works again with your key (passwords stay off). When you are done, lock it again:
+
+  ```sh
+  sed -i 's/^PermitRootLogin prohibit-password$/PermitRootLogin no/' /etc/ssh/sshd_config.d/00-kith.conf
+  sshd -t && systemctl restart ssh
+  ```
+
+### Provider firewall
+
+In your hosting provider's control panel, add a firewall for the VPS that allows only inbound TCP 22, 80 and 443 (and UDP 443 for HTTP/3). It runs outside the server, so Docker cannot bypass it the way it bypasses `ufw` (see above): if a container ever publishes a port by mistake, this still blocks it.
+
+### Install the rollout plugin (`docker rollout`)
+
+Every deploy needs it: `deploy.sh` uses it to replace `app` and `frontend` without downtime, and fails without it. Run as `deploy`:
 
 ```sh
 mkdir -p ~/.docker/cli-plugins
-curl -fsSL https://raw.githubusercontent.com/wowu/docker-rollout/main/docker-rollout -o ~/.docker/cli-plugins/docker-rollout
+# the version CI's smoke test uses (.github/actions/smoke-test)
+curl -fsSL https://raw.githubusercontent.com/wowu/docker-rollout/v0.14/docker-rollout -o ~/.docker/cli-plugins/docker-rollout
 chmod +x ~/.docker/cli-plugins/docker-rollout
 docker rollout --help
 ```
 
-**GHCR login**, needed only if the images are private. As `deploy`, with a GitHub personal access token that has `read:packages` only:
+### GHCR login
+
+The VPS downloads the images from GHCR, and they are private: GHCR makes them private when the deploy workflow first pushes them. Keep them that way while the repo is private, since the backend image contains the Python source. So the VPS needs a GitHub token that can only download images.
+
+**Create the token** on GitHub, logged in as yourself. It must be a **classic** token, because GHCR does not accept the fine-grained kind.
+
+1. Profile picture → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** → **Generate new token (classic)**.
+2. Note: `kith-vps-ghcr-pull`.
+3. Expiration: pick a date and put a reminder in your calendar. Once it expires, deploys fail at the image pull and the old version keeps serving; make a new token and log in again (below). "No expiration" avoids that, but a leaked token then works forever.
+4. Scopes: tick **only `read:packages`**, so it can download images and nothing else.
+5. **Generate token**, and copy it now: GitHub shows it once.
+
+**Log in on the VPS**, as `deploy`:
 
 ```sh
-echo <token> | docker login ghcr.io -u <github-user> --password-stdin
+echo <token> | docker login ghcr.io -u <your-github-username> --password-stdin
 ```
+
+Docker keeps the login in `/home/deploy/.docker/config.json`, so this is done once per token. The token goes nowhere else: not in `.env`, and not in GitHub's secrets (CI pushes with its own built-in token).
 
 ## 4. Put the config on the VPS
 
-Everything lives in `/opt/kith`, owned by `deploy`:
+Everything lives in `/opt/kith`, which step 3 created and gave to `deploy`. Run this step as `deploy`.
 
-```sh
-sudo mkdir -p /opt/kith && sudo chown deploy:deploy /opt/kith
-```
+The deploy job copies `docker-compose.prod.yml`, `Caddyfile`, `pg-backup.sh` and `deploy.sh` from the repo on every deploy, so the server always matches the commit it runs. Only `.env` is yours to write.
 
-The deploy job copies `docker-compose.prod.yml`, `Caddyfile` and `pg-backup.sh` from the repo on every deploy, so the server always matches `master`. For the first run, copy them by hand (`scp infra/docker-compose.prod.yml infra/Caddyfile infra/pg-backup.sh deploy@<vps>:/opt/kith/`).
-
-The secrets go in `/opt/kith/.env`. Write it by hand, and never commit it.
+The secrets go in `/opt/kith/.env`: the database password, the S3, Resend, Sentry, OpenAI and Voyage keys, and the site's address. The containers read their settings from it, and it is the only place those secrets exist: not in git, not in GitHub, and CI never sees them. Write it by hand, keep it readable by `deploy` only (`chmod 600`), and never commit it. The deploy never overwrites it; it only updates the `IMAGE_TAG` line.
 
 ```sh
 touch /opt/kith/.env && chmod 600 /opt/kith/.env && nano /opt/kith/.env
@@ -191,8 +324,8 @@ touch /opt/kith/.env && chmod 600 /opt/kith/.env && nano /opt/kith/.env
 ```sh
 # ── site ──
 DOMAIN=app.example.com
-# tag of ghcr.io/ghislaingenay/kith-backend and kith-frontend to run
-IMAGE_TAG=<commit sha; the deploy job sets this on later deploys>
+# IMAGE_TAG (the commit SHA running) is added and kept up to date by
+# deploy.sh; leave it out.
 
 # ── postgres (password: openssl rand -hex 24) ──
 POSTGRES_USER=kith
@@ -246,22 +379,14 @@ The other settings (upload caps, retrieval sizes, `STARTING_CREDIT_GRANT`, ...) 
 
 ## 5. First start
 
-As `deploy` in `/opt/kith`. From here on `dc` means `docker compose -f docker-compose.prod.yml --env-file .env`.
+The deploy workflow pushes both images to GHCR on every merge to `master`. If the VPS was not ready when it ran, that run's deploy job failed at SSH; that is expected, and its images are in GHCR all the same.
+
+Start the stack by running the deploy workflow by hand: GitHub → Actions → **Deploy** → Run workflow, with `image_tag` = the full SHA of that `master` commit (`git rev-parse origin/master`). It is the same job every later deploy runs (step 8), and `deploy.sh` also starts a fresh server: it starts Postgres, Redis and OpenSearch and waits for them, runs the release step, then the API, frontend, worker and Caddy start.
+
+From here on `dc` means `docker compose -f docker-compose.prod.yml --env-file .env`, run as `deploy` in `/opt/kith`:
 
 ```sh
 alias dc='docker compose -f docker-compose.prod.yml --env-file .env'
-
-dc pull
-
-# 1. the data services first, and wait until they report healthy
-dc up -d postgres redis opensearch
-dc ps
-
-# 2. the release step (ADR-0018): migrations, then the search index; exits non-zero if either fails
-dc run --rm app ./release.sh
-
-# 3. everything else
-dc up -d
 dc ps
 ```
 
@@ -333,16 +458,30 @@ dc exec app python -m scripts.rebuild_index
 
 It asks you to type `yes` first (`--yes` skips that). Search comes back as each Document is re-indexed, and hybrid results once the worker has embedded it again. See `docs/search-quickstart.md` for what it does.
 
-## 8. Turn on automatic deploys
+## 8. Automatic deploys
 
-Merge anything to `master`. Once the tests pass, `.github/workflows/deploy.yml` will:
+`.github/workflows/deploy.yml` runs on every push to `master`:
 
-1. build both images, tagged with the commit SHA, and push them to GHCR;
-2. SSH in as `deploy`, copy the compose file, Caddyfile and `pg-backup.sh`, and set `IMAGE_TAG`;
-3. pull the images and run the release step. If it fails, the deploy stops and the old version keeps serving;
-4. run `docker rollout app` and `docker rollout frontend`, then restart `worker-ingest`.
+1. the backend tests and the frontend build and tests;
+2. it builds both images, tagged with the commit SHA and `latest`;
+3. it smoke-tests those images as a running stack: Caddy's routing, then a second deploy while `/health` and `/` are polled, where no request may fail;
+4. it pushes those same images to GHCR;
+5. it SSHes in as `deploy`, copies the compose file, Caddyfile, `pg-backup.sh` and `deploy.sh` into `/opt/kith`, and runs `deploy.sh <sha>`, which:
+   1. pulls the images, and starts Postgres, Redis and OpenSearch if they are not running;
+   2. runs the release step. If it fails, the deploy stops there and the old version keeps serving;
+   3. records the SHA as `IMAGE_TAG` in `.env`;
+   4. runs `docker rollout app` and `docker rollout frontend`, then restarts `worker-ingest`;
+   5. starts anything not running yet and reloads Caddy's config.
+
+A failed test or smoke check stops it before the push. Only one deploy runs at a time: a running deploy is never cancelled, and when several merges queue up behind it, only the newest one deploys.
 
 Every migration must work with the code that is still running (ADR-0018).
+
+During the swap, a request that reaches the old `app` container while it shuts down can take 1 to 3 seconds longer. None fail (the smoke test checks that).
+
+A change to a data service in `docker-compose.prod.yml` (Postgres, Redis, OpenSearch) is copied but not applied, so a deploy never restarts the database by surprise. Apply it by hand: `dc up -d <service>`.
+
+**Roll back** by running the workflow by hand (Actions → Deploy → Run workflow) with an older full commit SHA as `image_tag`. It skips testing and building, and deploys that commit's images with that commit's compose file and Caddyfile. The schema is never downgraded. A rollback waits behind a running deploy like any run, and a merge that arrives while it waits replaces it, so check it ran. After each deploy the VPS prunes images built over a week ago that no container uses; a rollback pulls an older one again from GHCR.
 
 ## Day-to-day
 
@@ -353,5 +492,6 @@ Every migration must work with the code that is still running (ADR-0018).
 | Run a script | `dc exec app python -m scripts.<name> ...` |
 | DB from your laptop | `ssh -L 5432:localhost:5432 deploy@<vps>`, then connect to `localhost:5432` |
 | OpenSearch from your laptop | `ssh -L 9200:localhost:9200 deploy@<vps>`, then `curl localhost:9200/_cat/indices` |
-| Roll back | re-run the deploy workflow with an older commit SHA (the schema is never downgraded) |
+| Roll back | Actions → Deploy → Run workflow with an older full commit SHA (step 8) |
+| Deploy by hand | `sh deploy.sh <full commit sha>` (what the workflow runs) |
 | Memory use | `docker stats --no-stream` |

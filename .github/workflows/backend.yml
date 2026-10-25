@@ -7,9 +7,13 @@ on:
   pull_request:
     paths:
       - "backend/**"
+  # deploy.yml runs these tests before building the images.
+  workflow_call:
 
+# github.workflow is the caller's name when deploy.yml calls this, so the
+# deploy's run never cancels (or is cancelled by) this workflow's own run.
 concurrency:
-  group: backend-ci-${{ github.ref }}
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

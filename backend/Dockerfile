@@ -25,4 +25,8 @@ ENV SENTRY_RELEASE=${GIT_SHA}
 # Workers and graceful timeout come from env. The graceful timeout lets
 # in-flight Ask streams finish when a deploy stops the container. `exec` so
 # gunicorn, not sh, receives the stop signal.
-CMD ["sh", "-c", "exec gunicorn -k uvicorn_worker.UvicornWorker main:app --bind 0.0.0.0:8000 --workers \"${GUNICORN_WORKERS:-2}\" --graceful-timeout \"${GUNICORN_GRACEFUL_TIMEOUT:-30}\""]
+# --preload imports the app (over 10 s) before the port opens. Docker DNS
+# lists a container as soon as it starts, so without it Caddy sends requests
+# to a new container that accepts them but cannot answer yet during a
+# rollout. Connections are opened per worker in `lifespan`, after the fork.
+CMD ["sh", "-c", "exec gunicorn -k uvicorn_worker.UvicornWorker main:app --preload --bind 0.0.0.0:8000 --workers \"${GUNICORN_WORKERS:-2}\" --graceful-timeout \"${GUNICORN_GRACEFUL_TIMEOUT:-30}\""]
