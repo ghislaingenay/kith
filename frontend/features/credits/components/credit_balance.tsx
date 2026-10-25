@@ -1,15 +1,25 @@
 "use client";
 
+import { useEffect } from "react";
+import { toast } from "sonner";
+
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { useCreditBalance } from "../api/use_credit_balance";
 import type { CreditBalance as CreditBalanceData } from "../types";
 
-/** The sidebar's "N credits left", amber when low; a skeleton while the
- * balance loads, and nothing if it can't be fetched. */
+/** The sidebar's "N credits left", in the warning colour when low; a
+ * skeleton while the balance loads, and a toast (not an empty gap) if it
+ * can't be fetched. */
 export function CreditBalance({ tenantId }: { readonly tenantId: string }) {
   const { data: balance, isPending, isError } = useCreditBalance(tenantId);
+  useEffect(() => {
+    // A fixed id makes Sonner replace rather than stack the toast, so a
+    // failing refetch never shows it twice.
+    if (isError) toast.error(LOAD_FAILED, { id: LOAD_FAILED_TOAST_ID });
+  }, [isError]);
+
   if (isPending) {
     return (
       <Skeleton role="status" aria-label="Loading credits" className="mx-2 h-4 w-24" />
@@ -49,6 +59,9 @@ function balanceLabel(balance: CreditBalanceData): string {
 
 const CREDITS_EXPLANATION =
   "Each Ask uses credits for the text the AI reads and writes, about 4 for a typical Ask. 1 credit = 1,000 tokens. Search is free.";
+
+const LOAD_FAILED = "Your credit balance couldn't load.";
+const LOAD_FAILED_TOAST_ID = "credit-balance-load-failed";
 
 const STATE_CLASSES: Record<BalanceState, string> = {
   normal: "text-sidebar-foreground/70",
