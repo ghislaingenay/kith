@@ -9,7 +9,7 @@ Everything you do by hand, in order. The steps below say how.
 1. Rent the VPS and point the domain at it (steps 1 and 2, DNS).
 2. Create the outside resources: S3 bucket and IAM users, Resend, Sentry (step 2).
 3. Make the deploy SSH key and fill in GitHub's secrets and variables (step 2, GitHub).
-4. Prepare the VPS: the `deploy` user, then everything that needs root (firewall, Docker, `/opt/kith`), then lock root out; then, as `deploy`, the rollout plugin and GHCR login (step 3).
+4. Prepare the VPS: the `deploy` user, then everything that needs root (firewall, Docker, `/opt/kith`), then lock root out; then, as `deploy`, the rollout plugin and the GHCR login with a GitHub token (step 3).
 5. Write `/opt/kith/.env` on the VPS (step 4).
 6. Run the first deploy from GitHub (step 5), then sign in (step 6).
 7. Take a backup, schedule it, and do the restore drill once (step 7).
@@ -291,11 +291,23 @@ docker rollout --help
 
 ### GHCR login
 
-Needed only if the images are private (GHCR makes them private when the deploy workflow first pushes them; you can make each package public in its settings instead). As `deploy`, with a GitHub personal access token that has `read:packages` only:
+The VPS downloads the images from GHCR, and they are private: GHCR makes them private when the deploy workflow first pushes them. Keep them that way while the repo is private, since the backend image contains the Python source. So the VPS needs a GitHub token that can only download images.
+
+**Create the token** on GitHub, logged in as yourself. It must be a **classic** token, because GHCR does not accept the fine-grained kind.
+
+1. Profile picture → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** → **Generate new token (classic)**.
+2. Note: `kith-vps-ghcr-pull`.
+3. Expiration: pick a date and put a reminder in your calendar. Once it expires, deploys fail at the image pull and the old version keeps serving; make a new token and log in again (below). "No expiration" avoids that, but a leaked token then works forever.
+4. Scopes: tick **only `read:packages`**, so it can download images and nothing else.
+5. **Generate token**, and copy it now: GitHub shows it once.
+
+**Log in on the VPS**, as `deploy`:
 
 ```sh
-echo <token> | docker login ghcr.io -u <github-user> --password-stdin
+echo <token> | docker login ghcr.io -u <your-github-username> --password-stdin
 ```
+
+Docker keeps the login in `/home/deploy/.docker/config.json`, so this is done once per token. The token goes nowhere else: not in `.env`, and not in GitHub's secrets (CI pushes with its own built-in token).
 
 ## 4. Put the config on the VPS
 
