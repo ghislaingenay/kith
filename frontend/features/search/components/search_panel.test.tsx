@@ -89,21 +89,21 @@ function mockSearch(results = [apiResult()], degraded = false) {
   return seen;
 }
 
-function mockLibrary(
-  documents: object[] = [
-    {
-      id: "d1",
-      name: "report.pdf",
-      size_bytes: 1024,
-      uploader: "alice",
-      created_at: "2024-01-01T00:00:00Z",
-      ingestion_status: "ready",
-      ingestion_stage: null,
-      pages_extracted: null,
-      page_count: 1,
-    },
-  ],
-) {
+function libraryDocument(id: string) {
+  return {
+    id,
+    name: "report.pdf",
+    size_bytes: 1024,
+    uploader: "alice",
+    created_at: "2024-01-01T00:00:00Z",
+    ingestion_status: "ready",
+    ingestion_stage: null,
+    pages_extracted: null,
+    page_count: 1,
+  };
+}
+
+function mockLibrary(documents: object[] = [libraryDocument("d1")]) {
   server.use(http.get(`${API_URL}/documents`, () => HttpResponse.json(documents)));
 }
 
@@ -239,6 +239,22 @@ describe("SearchPanel", () => {
     ]);
   });
 
+  it("shows the workspace name and how many Documents there are to search before a Query", async () => {
+    mockLibrary([libraryDocument("d1"), libraryDocument("d2"), libraryDocument("d3")]);
+    renderPanel();
+    expect(await screen.findByRole("heading", { level: 1, name: "Acme" })).toBeInTheDocument();
+    expect(screen.getByText("Search 3 documents")).toBeInTheDocument();
+  });
+
+  it("drops the Document count hint once a Query runs", async () => {
+    navigation.url = "q=cat&type=search";
+    mockSearch();
+    renderPanel();
+    await screen.findByRole("list", { name: "Search results" });
+    expect(screen.getByRole("heading", { level: 1, name: "Acme" })).toBeInTheDocument();
+    expect(screen.queryByText("Search 1 document")).not.toBeInTheDocument();
+  });
+
   it("runs the Search only when the Search button is clicked", async () => {
     renderPanel();
     await userEvent.type(await screen.findByRole("searchbox"), "cat food");
@@ -369,11 +385,13 @@ describe("SearchPanel", () => {
     expect(navigation.push).not.toHaveBeenCalled();
   });
 
-  it("shows skeleton rows while loading", async () => {
+  it("says how many Documents it is searching while loading", async () => {
     navigation.url = "q=cat&type=search";
     server.use(http.post(`${API_URL}/search`, () => new Promise(() => {})));
     renderPanel();
-    expect(await screen.findByRole("status", { name: "Searching" })).toBeInTheDocument();
+    const loading = await screen.findByRole("status");
+    expect(loading).toHaveTextContent("Searching 1 document…");
+    expect(loading).toHaveAttribute("aria-live", "polite");
   });
 
   it("says when no passage matches", async () => {
@@ -608,6 +626,18 @@ describe("SearchPanel's Ask", () => {
     await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/asking too fast/i);
+  });
+
+  it("moves to the top-bar layout while an Ask is shown", async () => {
+    mockAsk();
+    renderAskingPanel();
+    expect(await screen.findByText("Search 1 document")).toBeInTheDocument();
+    await userEvent.type(screen.getByRole("searchbox"), "terms");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await expectAnswer("Payment is due in 30 days [1].");
+    expect(screen.queryByText("Search 1 document")).not.toBeInTheDocument();
+    // The box kept the Query through the move.
+    expect(screen.getByRole("searchbox")).toHaveValue("terms");
   });
 
   it("leaves the Ask's Answer when a Search runs", async () => {

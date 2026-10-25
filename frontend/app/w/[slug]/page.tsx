@@ -12,13 +12,7 @@ export default async function WorkspacePage({
   const { tenantId, tenantName, role } = await resolveWorkspace(slug);
 
   return (
-    <div className="flex flex-1 flex-col items-center px-4 py-16">
-      <h1 className="text-xl font-semibold text-foreground">
-        Welcome to {tenantName}
-      </h1>
-      <p className="mb-8 mt-1 text-sm text-muted-foreground">
-        Search your team&apos;s documents.
-      </p>
+    <div className="flex flex-1 flex-col">
       {/* useSearchParams needs a Suspense boundary to prerender. */}
       <Suspense>
         <SearchPanel
