@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -28,6 +29,12 @@ logger = setup_logger(__name__)
 container.sentry_configured()
 
 
+def _warn_key_missing(event: str, *, detail: str) -> None:
+    """A missing key affects every User, so it reaches Sentry too."""
+    logger.warning(event, detail=detail)
+    sentry_sdk.capture_message(event, level="warning")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Order matters: logging must be configured before anything else has a
@@ -42,17 +49,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     container.job_queue()
     await require_search_index(container.search_index())
     if container.query_embedding_provider() is None:
-        logger.warning(
+        _warn_key_missing(
             "voyage_api_key_missing",
             detail="VOYAGE_API_KEY is not set; every Search runs keyword only",
         )
     if container.rerank_settings().enabled and container.reranker() is None:
-        logger.warning(
+        _warn_key_missing(
             "rerank_voyage_api_key_missing",
             detail="VOYAGE_API_KEY is not set; Ask's Retrieval is not reranked",
         )
     if container.answer_provider() is None:
-        logger.warning(
+        _warn_key_missing(
             "answer_provider_missing",
             detail="OPENAI_API_KEY is not set; every Ask answers 503",
         )

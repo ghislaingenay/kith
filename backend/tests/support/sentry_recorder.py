@@ -27,6 +27,9 @@ def record_sentry_events() -> Iterator[list[Event]]:
         events.append(scrub_event(event, hint))
         return None
 
+    # No per-request scope without integrations: drop earlier tests' tags.
+    sentry_sdk.get_isolation_scope().clear()
+    sentry_sdk.get_current_scope().clear()
     sentry_sdk.init(
         dsn=_TEST_DSN,
         before_send=keep_and_drop,
@@ -49,3 +52,8 @@ def exception_types(events: list[Event]) -> list[str]:
         for event in events
         if "exception" in event
     ]
+
+
+def warning_messages(events: list[Event]) -> list[str]:
+    """The message of each captured warning-level message event."""
+    return [event["message"] for event in events if event.get("level") == "warning"]

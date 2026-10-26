@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from functools import partial
 
 import anyio
+import sentry_sdk
 from asks.models import Ask, AskStatus
 from asks.prompt import build_answer_request
 from asks.repository import AsksRepository
@@ -131,6 +132,7 @@ class AskService:
         except AnswerError as error:
             # The stream has started, so the failure is told in `done`.
             logger.warning("answer_failed", tenant_id=str(tenant_id), error=str(error))
+            sentry_sdk.capture_message("answer_failed", level="warning")
             end = AnswerEnd(AnswerEnding.FAILED, None)
         except (asyncio.CancelledError, GeneratorExit):
             # The client left: `aclosing` stopped the model; record it anyway.

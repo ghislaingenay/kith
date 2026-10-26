@@ -18,8 +18,8 @@ async def warn_if_schema_out_of_date(engine: AsyncEngine) -> None:
     """Logs a warning when the database isn't at the migration head. Never
     raises: an out-of-date schema shouldn't stop the process, only be visible
     at startup rather than on the first query that needs the missing table.
-    A check that fails outright is also reported to Sentry, since a deploy
-    that can't even check its schema needs looking at."""
+    Both the out-of-date warning and a check that fails outright are also
+    reported to Sentry, since either means the deploy needs looking at."""
     try:
         head_revisions = set(
             ScriptDirectory.from_config(Config(str(_ALEMBIC_INI))).get_heads()
@@ -44,3 +44,4 @@ async def warn_if_schema_out_of_date(engine: AsyncEngine) -> None:
             head_revisions=sorted(head_revisions),
             fix="run `make db-migrate`",
         )
+        sentry_sdk.capture_message("db_schema_out_of_date", level="warning")
