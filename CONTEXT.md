@@ -186,3 +186,7 @@ _Avoid_: Test set, benchmark, fixtures
 **Seed Tenant**:
 A Tenant populated with realistic Documents solely to run the Golden Set against.
 _Avoid_: Test tenant, demo workspace
+
+**Load Test Tenant**:
+One of many Tenants filled with synthetic Documents, within the usual Limits, solely to put realistic traffic on Kith in a load test. Restored to the same state before every run; never mixed with real Tenants. Not a Seed Tenant: it measures speed under load, not Retrieval quality.
+_Avoid_: Test tenant, seed tenant
