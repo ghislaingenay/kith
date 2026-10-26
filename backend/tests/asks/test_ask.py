@@ -31,6 +31,7 @@ from documents.dependencies import get_db_session
 from httpx import AsyncClient, Response
 from main import app
 from redis import asyncio as redis_asyncio
+from sentry_sdk.types import Event
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tenants.permissions import Role
@@ -41,6 +42,7 @@ from tests.support.fake_answer_provider import FakeAnswerProvider
 from tests.support.fake_embedding_provider import FakeEmbeddingProvider
 from tests.support.fake_reranker import FakeReranker
 from tests.support.fake_search_index import FakeSearchIndex
+from tests.support.sentry_recorder import warning_messages
 
 ASKS_URL = "/api/v1/asks"
 QUERY = "payment terms"
@@ -154,6 +156,24 @@ async def test_a_model_that_cannot_be_reached_ends_the_stream_failed_and_charges
         0,
         200,
     )
+
+
+async def test_a_failed_answer_is_reported_to_sentry_once_as_a_warning(
+    client: AsyncClient,
+    caller: Caller,
+    db_session: AsyncSession,
+    search_index: OpenSearchIndex,
+    fake_answer_provider: FakeAnswerProvider,
+    sentry_events: list[Event],
+) -> None:
+    await _give_credits(db_session, caller.tenant_id)
+    await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
+    fake_answer_provider.error = AnswerUnavailableError("timed out")
+
+    done = _events(await _ask(client))[-1][1]
+
+    assert done["status"] == "failed"
+    assert warning_messages(sentry_events) == ["answer_failed"]
 
 
 async def _done_and_saved_ask(
@@ -528,6 +548,7 @@ async def test_with_rerank_down_the_ask_still_answers_unreranked(
     db_session: AsyncSession,
     search_index: OpenSearchIndex,
     fake_reranker: FakeReranker,
+    sentry_events: list[Event],
 ) -> None:
     await _give_credits(db_session, caller.tenant_id)
     await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
@@ -541,6 +562,8 @@ async def test_with_rerank_down_the_ask_still_answers_unreranked(
         False,
         False,
     )
+    # A single failed call is the breaker's to report, not each request.
+    assert sentry_events == []
 
 
 async def test_with_the_embedding_model_down_the_ask_still_answers_degraded(
@@ -549,6 +572,7 @@ async def test_with_the_embedding_model_down_the_ask_still_answers_degraded(
     db_session: AsyncSession,
     search_index: OpenSearchIndex,
     fake_embedding_provider: FakeEmbeddingProvider,
+    sentry_events: list[Event],
 ) -> None:
     await _give_credits(db_session, caller.tenant_id)
     await _seed_payment_chunk(db_session, search_index, caller.tenant_id)
@@ -562,6 +586,8 @@ async def test_with_the_embedding_model_down_the_ask_still_answers_degraded(
         True,
         True,
     )
+    # A single failed call is the breaker's to report, not each request.
+    assert sentry_events == []
 
 
 async def test_a_viewer_may_not_ask(

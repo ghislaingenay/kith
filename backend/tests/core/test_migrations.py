@@ -7,7 +7,7 @@ from structlog.testing import capture_logs
 from core import migrations
 from core.migrations import warn_if_schema_out_of_date
 from sentry_sdk.types import Event
-from tests.support.sentry_recorder import exception_types
+from tests.support.sentry_recorder import exception_types, warning_messages
 
 
 class _FakeConnection:
@@ -84,3 +84,19 @@ async def test_a_failing_check_is_reported_to_sentry(
     await warn_if_schema_out_of_date(_BrokenEngine())
 
     assert exception_types(sentry_events) == ["ConnectionError"]
+
+
+async def test_a_schema_behind_head_is_reported_to_sentry_as_a_warning(
+    head_revisions, sentry_events: list[Event]
+) -> None:
+    await warn_if_schema_out_of_date(_FakeEngine(["008"]))
+
+    assert warning_messages(sentry_events) == ["db_schema_out_of_date"]
+
+
+async def test_a_schema_at_head_reports_nothing(
+    head_revisions, sentry_events: list[Event]
+) -> None:
+    await warn_if_schema_out_of_date(_FakeEngine(["009"]))
+
+    assert sentry_events == []

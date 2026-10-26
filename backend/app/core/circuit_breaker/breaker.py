@@ -4,7 +4,9 @@ consecutive failures open it, and calls then fail fast without reaching the
 service. After `reset_timeout_seconds` one probe call is let through: its
 success closes the breaker, its failure reopens it for another timeout.
 
-Every state change is logged, with the breaker's `name`."""
+Every state change is logged, with the breaker's `name`. Opening from closed
+is also reported to Sentry as a warning: once per outage, not per rejected
+call or per failed probe."""
 
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -12,6 +14,7 @@ from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import NoReturn
 
+import sentry_sdk
 from core.circuit_breaker.exceptions import CircuitOpenError
 from core.logging import setup_logger
 
@@ -111,3 +114,9 @@ class CircuitBreaker:
             state=new_state,
             consecutive_failures=self._consecutive_failures,
         )
+        if previous == _State.CLOSED and new_state == _State.OPEN:
+            sentry_sdk.capture_message(
+                "circuit_breaker_state_changed",
+                level="warning",
+                tags={"breaker": self._name},
+            )

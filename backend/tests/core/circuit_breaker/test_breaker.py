@@ -7,6 +7,12 @@ import pytest
 import structlog
 from core.circuit_breaker.breaker import CircuitBreaker
 from core.circuit_breaker.exceptions import CircuitOpenError
+from sentry_sdk.types import Event
+
+from tests.support.sentry_recorder import warning_messages
+
+
+_STATE_CHANGED = "circuit_breaker_state_changed"
 
 
 class _StoreDown(Exception):
@@ -272,3 +278,51 @@ async def test_the_open_error_names_the_service_the_breaker_guards(
 
     assert raised.value.service == "test"
     assert "'test'" in str(raised.value)
+
+
+async def test_opening_is_reported_to_sentry_once_and_rejected_calls_add_nothing(
+    breaker: CircuitBreaker, store: _Store, sentry_events: list[Event]
+) -> None:
+    await _fail(breaker, store, 5)
+    for _ in range(3):
+        with pytest.raises(CircuitOpenError):
+            await breaker.call(store.call)
+
+    assert warning_messages(sentry_events) == [_STATE_CHANGED]
+    assert sentry_events[0]["tags"] == {"breaker": "test"}
+
+
+async def test_a_failed_or_abandoned_probe_reopening_it_adds_nothing(
+    breaker: CircuitBreaker, store: _Store, clock: _Clock, sentry_events: list[Event]
+) -> None:
+    await _fail(breaker, store, 5)
+    clock.now += 30
+    await _fail(breaker, store, 1)
+    clock.now += 30
+    with pytest.raises(asyncio.CancelledError):
+        async with breaker.guard():
+            raise asyncio.CancelledError
+
+    assert warning_messages(sentry_events) == [_STATE_CHANGED]
+
+
+async def test_opening_again_after_it_closed_is_reported_again(
+    breaker: CircuitBreaker, store: _Store, clock: _Clock, sentry_events: list[Event]
+) -> None:
+    await _fail(breaker, store, 5)
+    clock.now += 30
+    store.down = False
+    await breaker.call(store.call)
+    await _fail(breaker, store, 5)
+
+    assert warning_messages(sentry_events) == [_STATE_CHANGED, _STATE_CHANGED]
+
+
+async def test_failures_below_the_threshold_and_closing_report_nothing(
+    breaker: CircuitBreaker, store: _Store, sentry_events: list[Event]
+) -> None:
+    await _fail(breaker, store, 4)
+    store.down = False
+    await breaker.call(store.call)
+
+    assert sentry_events == []
