@@ -236,13 +236,7 @@ docker info --format '{{.LoggingDriver}}'   # must print "journald"
 
 `Storage=persistent` keeps the journal on disk across reboots. `dc logs` (step 5) still works with this driver.
 
-> **Moving a VPS that already runs Kith** (it had the old `json-file` setting): get a root shell ("Getting root back later" below) and run the block above. Restarting Docker stops the stack for a minute, and the containers come back with their old log driver: a container keeps the driver it was created with. Then, as `deploy`, recreate them all, data services included:
->
-> ```sh
-> docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env up -d --force-recreate
-> ```
->
-> The site is down again for a minute while they restart. The old `json-file` logs go with the old containers.
+> **A VPS that already runs Kith** with the old `json-file` setting needs its containers recreated too: see "Move a VPS from `json-file` logs to the journal" in `vps-operations.md`.
 
 Memory maps: OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
 

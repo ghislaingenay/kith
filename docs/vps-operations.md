@@ -78,3 +78,34 @@ If the `journalctl` command prints nothing, check the setup: `docker info --form
 ```sh
 journalctl -o verbose -n 1 CONTAINER_NAME="$(docker ps --format '{{.Names}}' | grep -m1 app)"
 ```
+
+### Move a VPS from `json-file` logs to the journal
+
+A VPS set up before the `journald` step keeps its logs with each container, and a deploy deletes them along with the old containers. To move it over, once:
+
+1. Get a root shell (`deploy-quickstart.md`, "Getting root back later") and run the logging block from step 3 of `deploy-quickstart.md`. Restarting Docker stops the stack for a minute.
+2. The containers come back with their old log driver: a container keeps the driver it was created with. As `deploy`, recreate them all, data services included (the site is down again for a minute):
+
+   ```sh
+   docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env up -d --force-recreate
+   ```
+
+3. Check it worked:
+
+   ```sh
+   docker info --format '{{.LoggingDriver}}'                           # must print "journald"
+   journalctl COM_DOCKER_COMPOSE_SERVICE=app -n 5 -o cat             # must print the API's last 5 log lines
+   journalctl --disk-usage                                             # must be under 1G
+   ```
+
+   If the second command prints nothing, find the real service field name with the `journalctl -o verbose` command above, and fix `COM_DOCKER_COMPOSE_SERVICE` everywhere in this guide.
+
+4. After the next deploy, check the logs from before it are still there:
+
+   ```sh
+   journalctl COM_DOCKER_COMPOSE_SERVICE=app --since "1 hour ago" -o cat
+   ```
+
+   It must show lines from before the deploy as well as after it, although `docker compose logs app` now shows only the new container's.
+
+The old `json-file` logs go with the old containers.
