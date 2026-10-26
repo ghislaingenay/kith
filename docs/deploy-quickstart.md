@@ -514,6 +514,20 @@ A change to a data service in `docker-compose.prod.yml` (Postgres, Redis, OpenSe
 
 **Roll back** by running the workflow by hand (Actions → Deploy → Run workflow) with an older full commit SHA as `image_tag`. It skips testing and building, and deploys that commit's images with that commit's compose file and Caddyfile. The schema is never downgraded. A rollback waits behind a running deploy like any run, and a merge that arrives while it waits replaces it, so check it ran. After each deploy the VPS prunes images built over a week ago that no container uses; a rollback pulls an older one again from GHCR.
 
+## Load tests (planned, not built yet)
+
+k6 load tests run against a second VPS on the same plan as prod, never against prod (ADR-0021). Pushing a `loadtest-load-<name>` tag runs a Load test at `LOADTEST_VUS` virtual users; a `loadtest-stress-<name>` tag adds users up to `LOADTEST_STRESS_MAX_VUS` and reports the breaking point. Deleting the tag cancels the run and resets the test data. Results go to S3 under `loadtest/` and by email; metrics go to Grafana Cloud (ADR-0022). The spec is #158. Each ticket below replaces its line with the real steps once it is built.
+
+What you will do by hand, in order:
+
+1. Get a Hostinger API token, buy a second KVM 2, create the private S3 bucket `kith-terraform-state` with an IAM key limited to it, and add the load-test SSH key (#159).
+2. Create the load-test OpenAI key, in its own Project with a $20/month budget, and a separate Voyage key; run the seed build once (#162).
+3. Run your own concurrency check and set the `LOADTEST_VUS` GitHub variable; push the first `loadtest-load-*` tag (#163).
+4. Add the Resend key and the recipient address as GitHub secrets (#164).
+5. Set the `LOADTEST_STRESS_MAX_VUS` GitHub variable; push the first `loadtest-stress-*` tag (#165).
+6. Create the Grafana Cloud Free stack and its tokens (#167).
+7. Add the Grafana Cloud metrics token to prod's `.env` and test the alert email (#168).
+
 ## Day-to-day
 
 Looking after the running server (checking the database, ...) is in `vps-operations.md`.
