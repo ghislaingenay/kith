@@ -27,6 +27,7 @@ from auth.dependencies import (
 from auth.schemas import AuthenticatedUser
 from auth.service import MagicLinkService, MagicLinkVerificationService
 from auth.session import SessionService
+from auth.config import MAGIC_LINK_IP_RATE_LIMIT_PER_HOUR
 from core.ratelimit.counter_limiter import CounterLimiter
 from core.ratelimit.dependencies import get_rate_limiter
 from core.ratelimit.limiter import SlidingWindowLimiter
@@ -58,7 +59,7 @@ from users.repository import ProfileRepository, UserRepository
 from users.service import ProfileService
 
 _VERIFY_URL = "http://localhost:8000/api/v1/auth/magic-link/verify"
-_MAGIC_LINKS_PER_IP_PER_HOUR = 20
+_MAGIC_LINKS_PER_IP_PER_HOUR = MAGIC_LINK_IP_RATE_LIMIT_PER_HOUR
 # Caddy's `X-Forwarded-For`: the real peer, replacing the client's (ADR-0020).
 _OFFICE_IP = "203.0.113.7"
 _OTHER_IP = "198.51.100.23"
