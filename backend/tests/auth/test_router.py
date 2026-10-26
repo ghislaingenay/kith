@@ -5,12 +5,15 @@ user repository) so behavior is exercised end to end, not mocked away."""
 
 import hashlib
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from arq.connections import RedisSettings
+from httpx import ASGITransport, AsyncClient, Response
+from redis import asyncio as redis_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +27,10 @@ from auth.dependencies import (
 from auth.schemas import AuthenticatedUser
 from auth.service import MagicLinkService, MagicLinkVerificationService
 from auth.session import SessionService
+from auth.config import MAGIC_LINK_IP_RATE_LIMIT_PER_HOUR
 from core.ratelimit.counter_limiter import CounterLimiter
+from core.ratelimit.dependencies import get_rate_limiter
+from core.ratelimit.limiter import SlidingWindowLimiter
 from core.security import dependencies as security_dependencies
 from credits.config import CreditSettings
 from credits.repository import CreditsRepository
@@ -53,12 +59,33 @@ from users.repository import ProfileRepository, UserRepository
 from users.service import ProfileService
 
 _VERIFY_URL = "http://localhost:8000/api/v1/auth/magic-link/verify"
+_MAGIC_LINKS_PER_IP_PER_HOUR = MAGIC_LINK_IP_RATE_LIMIT_PER_HOUR
+# Caddy's `X-Forwarded-For`: the real peer, replacing the client's (ADR-0020).
+_OFFICE_IP = "203.0.113.7"
+_OTHER_IP = "198.51.100.23"
 
 
 @pytest.fixture(autouse=True)
 def _clear_overrides():
     yield
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+async def _rate_limiter(_redis_settings: RedisSettings) -> AsyncIterator[None]:
+    """The real Redis sliding-window limiter, emptied per test, behind the
+    per-IP limit on Magic Link requests."""
+    redis_client = redis_asyncio.Redis(
+        host=_redis_settings.host,
+        port=_redis_settings.port,
+        decode_responses=True,
+    )
+    await redis_client.flushall()
+    app.dependency_overrides[get_rate_limiter] = lambda: SlidingWindowLimiter(
+        redis_client
+    )
+    yield
+    await redis_client.aclose()
 
 
 def _override() -> tuple[FakeCacheProvider, FakeMailer]:
@@ -185,6 +212,131 @@ class TestRequestMagicLink:
             MAGIC_LINK_RATE_LIMIT_PER_HOUR
         )
         assert "Retry-After" in response.headers
+
+
+async def _request_magic_link(
+    client: AsyncClient, email: str, ip: str, headers: dict[str, str] | None = None
+) -> Response:
+    return await client.post(
+        "/api/v1/auth/magic-link",
+        json={"email": email},
+        headers={"X-Forwarded-For": ip, **(headers or {})},
+    )
+
+
+class TestRequestMagicLinkPerIPLimit:
+    async def test_the_21st_request_from_one_ip_in_an_hour_gets_429(self) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            statuses = [
+                (
+                    await _request_magic_link(
+                        client, f"user{i}@example.com", _OFFICE_IP
+                    )
+                ).status_code
+                for i in range(_MAGIC_LINKS_PER_IP_PER_HOUR)
+            ]
+            response = await _request_magic_link(
+                client, "one-more@example.com", _OFFICE_IP
+            )
+
+        assert statuses == [200] * _MAGIC_LINKS_PER_IP_PER_HOUR
+        assert response.status_code == 429
+        assert response.headers["X-RateLimit-Limit"] == str(
+            _MAGIC_LINKS_PER_IP_PER_HOUR
+        )
+        assert response.headers["X-RateLimit-Remaining"] == "0"
+        assert int(response.headers["Retry-After"]) > 0
+
+    async def test_the_limited_ip_sends_no_more_emails(self) -> None:
+        _, mailer = _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            for i in range(_MAGIC_LINKS_PER_IP_PER_HOUR + 5):
+                await _request_magic_link(client, f"user{i}@example.com", _OFFICE_IP)
+
+        assert len(mailer.sent) == _MAGIC_LINKS_PER_IP_PER_HOUR
+
+    async def test_a_different_ip_still_succeeds_once_one_ip_is_limited(
+        self,
+    ) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            for i in range(_MAGIC_LINKS_PER_IP_PER_HOUR + 1):
+                await _request_magic_link(client, f"user{i}@example.com", _OFFICE_IP)
+            response = await _request_magic_link(
+                client, "colleague@example.com", _OTHER_IP
+            )
+
+        assert response.status_code == 200
+
+    async def test_a_client_sent_x_real_ip_cannot_dodge_the_ip_caddy_forwarded(
+        self,
+    ) -> None:
+        """Caddy passes a client's `X-Real-IP` through untouched, unlike
+        `X-Forwarded-For`, so it must never decide the IP."""
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            statuses = [
+                (
+                    await _request_magic_link(
+                        client,
+                        f"user{i}@example.com",
+                        _OFFICE_IP,
+                        headers={"X-Real-IP": f"10.0.0.{i}"},
+                    )
+                ).status_code
+                for i in range(_MAGIC_LINKS_PER_IP_PER_HOUR + 1)
+            ]
+
+        assert statuses[-1] == 429
+
+    async def test_the_per_email_limit_still_applies_across_ips(self) -> None:
+        _override()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            statuses = [
+                (
+                    await _request_magic_link(
+                        client, "jane@example.com", f"203.0.113.{i}"
+                    )
+                ).status_code
+                for i in range(MAGIC_LINK_RATE_LIMIT_PER_HOUR + 1)
+            ]
+
+        assert statuses == [200] * MAGIC_LINK_RATE_LIMIT_PER_HOUR + [429]
+
+    async def test_magic_link_verification_is_not_limited_per_ip(self) -> None:
+        _override_verify()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            statuses = {
+                (
+                    await client.get(
+                        "/api/v1/auth/magic-link/verify",
+                        params={"token": "never-issued", "email": "jane@example.com"},
+                        headers={"X-Forwarded-For": _OFFICE_IP},
+                    )
+                ).status_code
+                for _ in range(_MAGIC_LINKS_PER_IP_PER_HOUR + 1)
+            }
+
+        assert statuses == {400}
 
 
 class FakeUserRepository:

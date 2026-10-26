@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import sentry_sdk
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
@@ -16,7 +17,9 @@ _ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
 async def warn_if_schema_out_of_date(engine: AsyncEngine) -> None:
     """Logs a warning when the database isn't at the migration head. Never
     raises: an out-of-date schema shouldn't stop the process, only be visible
-    at startup rather than on the first query that needs the missing table."""
+    at startup rather than on the first query that needs the missing table.
+    A check that fails outright is also reported to Sentry, since a deploy
+    that can't even check its schema needs looking at."""
     try:
         head_revisions = set(
             ScriptDirectory.from_config(Config(str(_ALEMBIC_INI))).get_heads()
@@ -31,6 +34,7 @@ async def warn_if_schema_out_of_date(engine: AsyncEngine) -> None:
             )
     except Exception:
         logger.exception("db_schema_check_failed")
+        sentry_sdk.capture_exception()
         return
 
     if current_revisions != head_revisions:

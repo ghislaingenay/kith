@@ -1,3 +1,4 @@
+import sentry_sdk
 from core.logging import setup_logger
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -32,8 +33,9 @@ async def _handle_profile_not_found_exception_handler(
     _: Request, exc: ProfileNotFound
 ) -> JSONResponse:
     # A server-side bug or bad data; the offending user_id stays out of the
-    # response body (coding-standards §11) but goes to the logs.
+    # response body (coding-standards §11) but goes to the logs and Sentry.
     logger.error(str(exc))
+    sentry_sdk.capture_exception(exc)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={

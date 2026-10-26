@@ -6,8 +6,13 @@ owns the HTTP mapping for its own exceptions (e.g.
 `upload.exception_handlers`); this module only handles exceptions from
 shared, cross-domain infrastructure and aggregates every domain's
 registration into one call for `main.py`.
+
+The handlers below that log an error and return a 5xx also report the
+exception to Sentry, explicitly: Sentry's integrations only see exceptions
+that escape the app, and these never do.
 """
 
+import sentry_sdk
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError, TimeoutError
@@ -126,6 +131,7 @@ async def _handle_rerank_configuration_error(
     _: Request, exc: RerankConfigurationError
 ) -> JSONResponse:
     logger.error("rerank_configuration_invalid", error=str(exc))
+    sentry_sdk.capture_exception(exc)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
@@ -137,6 +143,7 @@ async def _handle_rerank_configuration_error(
 
 async def _handle_db_timeout_error(_: Request, exc: Exception) -> JSONResponse:
     logger.error(str(exc))
+    sentry_sdk.capture_exception(exc)
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={
@@ -150,6 +157,7 @@ async def _handle_db_operational_error(
     _: Request, exc: OperationalError
 ) -> JSONResponse:
     logger.error(f"Database operational issue: {exc}")
+    sentry_sdk.capture_exception(exc)
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={

@@ -71,7 +71,8 @@ class UserRepository:
             await self.session.rollback()
             user = await self.get_by_email(email)
         if not user:
-            logger.error(f"User {email} not found and could not be created.")
+            # No email: it is personal data, and no User ID exists yet.
+            logger.error("user_get_or_create_failed")
             raise UserNotFound()
         return user, is_created
 
