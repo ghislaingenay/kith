@@ -223,12 +223,26 @@ usermod -aG docker deploy
 
 > Docker bypasses `ufw` for published ports. A `ports: "5432:5432"` line would open Postgres to the internet whatever `ufw` says. That is why the prod compose file publishes only Caddy's ports, and binds Postgres and OpenSearch to `127.0.0.1`.
 
-Log rotation, so container logs cannot fill the disk:
+Container logs go to the system journal, so they outlive the containers a deploy replaces. Each entry carries its Compose service name (`journalctl COM_DOCKER_COMPOSE_SERVICE=app`, see `vps-operations.md`), and the journal is capped at 1 GB, dropping the oldest entries first, so logs cannot fill the disk:
 
 ```sh
-echo '{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }' > /etc/docker/daemon.json
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nStorage=persistent\nSystemMaxUse=1G\n' > /etc/systemd/journald.conf.d/00-kith.conf
+systemctl restart systemd-journald
+echo '{ "log-driver": "journald", "log-opts": { "labels": "com.docker.compose.service" } }' > /etc/docker/daemon.json
 systemctl restart docker
+docker info --format '{{.LoggingDriver}}'   # must print "journald"
 ```
+
+`Storage=persistent` keeps the journal on disk across reboots. `dc logs` (step 5) still works with this driver.
+
+> **Moving a VPS that already runs Kith** (it had the old `json-file` setting): get a root shell ("Getting root back later" below) and run the block above. Restarting Docker stops the stack for a minute, and the containers come back with their old log driver: a container keeps the driver it was created with. Then, as `deploy`, recreate them all, data services included:
+>
+> ```sh
+> docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env up -d --force-recreate
+> ```
+>
+> The site is down again for a minute while they restart. The old `json-file` logs go with the old containers.
 
 Memory maps: OpenSearch will not start without this (same as in `docs/search-quickstart.md`):
 
