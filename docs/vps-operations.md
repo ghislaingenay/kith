@@ -71,7 +71,7 @@ journalctl COM_DOCKER_COMPOSE_SERVICE=app --since "24 hours ago" -o cat | grep -
 
 Swap `app` for `worker-ingest`, `frontend` or `caddy`, and the grep for `grep '<request-id>'` to follow one request. `--since` also takes a date, e.g. `--since "2026-10-25 14:00"`. `-o cat` prints only the log line, the same JSON as `docker compose logs`.
 
-The journal is capped at 1 GB (`SystemMaxUse` in `/etc/systemd/journald.conf`) and drops the oldest entries first; `journalctl --disk-usage` shows how much it holds.
+The journal is capped at 1 GB (`SystemMaxUse` in `/etc/systemd/journald.conf.d/00-kith.conf`) and drops the oldest entries first; `journalctl --disk-usage` shows how much it holds.
 
 If the `journalctl` command prints nothing, check the setup: `docker info --format '{{.LoggingDriver}}'` must print `journald`. If it does, look at the fields one log entry really carries, and use the service field it shows in place of `COM_DOCKER_COMPOSE_SERVICE`:
 
