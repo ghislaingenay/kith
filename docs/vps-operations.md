@@ -53,7 +53,7 @@ The same for the worker, which processes uploaded Documents:
 docker compose -f /opt/kith/docker-compose.prod.yml --env-file /opt/kith/.env logs --no-log-prefix --since 24h worker-ingest | grep -E '"level": "(WARNING|ERROR)"'
 ```
 
-Change `24h` for another window, e.g. `30m` or `7d`. `--no-log-prefix` drops the `app-1  | ` Docker puts in front of each line, so every line is plain JSON.
+Change `24h` for another window, e.g. `30m` or `168h`. `--no-log-prefix` drops the `app-1  | ` Docker puts in front of each line, so every line is plain JSON.
 
 Everything one request logged, by its request ID (the `X-Request-ID` response header, or the `request_id` on a Sentry event):
 
