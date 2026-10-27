@@ -520,13 +520,126 @@ k6 load tests run against a second VPS on the same plan as prod, never against p
 
 What you will do by hand, in order:
 
-1. Get a Hostinger API token, buy a second KVM 2, create the private S3 bucket `kith-terraform-state` with an IAM key limited to it, and add the load-test SSH key (#159).
+1. Get a Hostinger API token, create the state bucket and its key, make the SSH keys, buy the load-test VPS with `terraform apply` and bring Kith up on it ("Load-test VPS" below, #159).
 2. Create the load-test OpenAI key, in its own Project with a $20/month budget, and a separate Voyage key; run the seed build once (#162).
 3. Run your own concurrency check and set the `LOADTEST_VUS` GitHub variable; push the first `loadtest-load-*` tag (#163).
 4. Add the Resend key and the recipient address as GitHub secrets (#164).
 5. Set the `LOADTEST_STRESS_MAX_VUS` GitHub variable; push the first `loadtest-stress-*` tag (#165).
 6. Create the Grafana Cloud Free stack and its tokens (#167).
 7. Add the Grafana Cloud metrics token to prod's `.env` and test the alert email (#168).
+
+### Load-test VPS
+
+The machine is made by Terraform (`infra/loadtest/hostinger`), which only buys it and outputs its address and SSH user. `infra/loadtest/setup.sh` then turns it into the Kith stack, with the same compose file, Caddyfile and `deploy.sh` as prod. The setup script knows nothing about Hostinger: on another provider, only the Terraform module and `recreate.sh` change. Terraform manages this VPS only, never prod or anything on AWS. You need Terraform 1.11 or later, the AWS CLI and `jq` on your laptop.
+
+**1. Hostinger API token.** hPanel → profile → **API** → new token. If the page is missing, the account can't make tokens yet; ask Hostinger support. Keep it for your laptop (`export HOSTINGER_API_TOKEN=...`) and add it as the GitHub secret `HOSTINGER_API_TOKEN`.
+
+**2. The state bucket.** Terraform keeps its state in S3, never in git, and locks it while an apply runs (S3's own lock file, so no DynamoDB table).
+
+1. Create the bucket `kith-terraform-state` in the same region as prod's, with "Block all public access" on and **versioning on** (a bad apply can then be undone from an older state).
+2. IAM user `kith-terraform`, with access keys and only this policy:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       { "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::kith-terraform-state" },
+       {
+         "Effect": "Allow",
+         "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+         "Resource": "arn:aws:s3:::kith-terraform-state/loadtest/*"
+       }
+     ]
+   }
+   ```
+
+   `DeleteObject` is for the lock file, which is removed when an apply ends.
+3. GitHub secrets `TERRAFORM_AWS_ACCESS_KEY_ID` and `TERRAFORM_AWS_SECRET_ACCESS_KEY`, and the variable `TERRAFORM_AWS_REGION`. On your laptop, the same three as `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION`.
+
+**3. SSH keys.** Two key pairs, as for prod (step 2 → SSH keys), plus the server's own **host key**. A reinstall would normally give the VPS a new host key, so CI would refuse to connect after every `recreate`. Hostinger's post-install script puts this one back each time, and the known_hosts line never changes.
+
+```sh
+ssh-keygen -t ed25519 -N '' -C kith-loadtest -f kith-loadtest           # CI's login key
+ssh-keygen -t ed25519 -N '' -C kith-loadtest-host -f kith-loadtest-host # the VPS's host key
+```
+
+- `kith-loadtest` (the whole file) → GitHub secret `LOADTEST_SSH_KEY`.
+- `kith-loadtest-host` (the whole file) → GitHub secret `LOADTEST_SSH_HOST_KEY`. CI builds its known_hosts line from it and the address.
+- Both `.pub` files and your own `~/.ssh/id_ed25519.pub` go in `terraform.tfvars` (next step). Then delete the four local files: the private halves live only in GitHub (and the host key also in the Terraform state, which is private).
+
+**4. Buy the VPS with Terraform.** Find the IDs of prod's data center and of Ubuntu 24.04, and check the plan is still listed:
+
+```sh
+call() { curl -fsS -H "Authorization: Bearer $HOSTINGER_API_TOKEN" "https://developers.hostinger.com/api/$1"; }
+call vps/v1/data-centers | jq '.[] | {id, name, city}'
+call vps/v1/templates | jq '.[] | select(.name | test("Ubuntu 24.04")) | {id, name}'
+call billing/v1/catalog | jq '.[] | select(.name | test("KVM 2")) | .prices[] | {id, period, period_unit, price}'
+```
+
+Write `infra/loadtest/hostinger/terraform.tfvars` and commit it (it holds no secret):
+
+```hcl
+data_center_id = 0 # prod's
+template_id    = 0 # Ubuntu 24.04
+# plan defaults to hostingercom-vps-kvm2-usd-1m; a 12m or 24m item is cheaper per month but paid upfront
+authorized_keys = [
+  "ssh-ed25519 AAAA... your-laptop",
+  "ssh-ed25519 AAAA... kith-loadtest",
+]
+```
+
+Then, in that folder:
+
+```sh
+export TF_VAR_ssh_host_key="$(cat kith-loadtest-host)"
+terraform init
+terraform apply      # charges the account's default payment method for the plan
+terraform apply      # again: must say "No changes"
+terraform output     # address and ssh_user
+```
+
+The first apply buys the VPS, like ordering it in hPanel. If Hostinger answers that payment is still processing, finish the order in hPanel and run `terraform apply` again. `terraform destroy` is blocked on purpose: on Hostinger it cancels the subscription. To give the machine up, remove `prevent_destroy` in `main.tf` in a reviewed change first.
+
+**5. DNS.** `A` records for `loadtest.example.com` and `www.loadtest.example.com` pointing at the `address` output. The IP stays the same across reinstalls.
+
+**6. The `.env` for this VPS.** The same keys as prod's (step 4), with the load-test values. Keep it as the GitHub secret `LOADTEST_ENV` (the whole file), and as a local file for running the setup by hand.
+
+- `DOMAIN=loadtest.example.com`, and the same domain in `APP_URL`, `CORS_ALLOWED_ORIGINS` and `MAGIC_LINK_VERIFY_URL`.
+- Its own S3 bucket and IAM keys, set up like prod's but never prod's. `BACKUP_AWS_*` can be any placeholder: no backups run here.
+- No Sentry DSNs, so load-test errors don't land in prod's projects.
+- `OPENAI_API_KEY` and `VOYAGE_API_KEY` empty for now: the load-test keys come in step 2 of the list above. Until then `worker-ingest` restarts in a loop; `/health` still answers.
+
+**7. Bring Kith up.** From the repo root, with your own key in your agent and the host key trusted:
+
+```sh
+echo "<address> $(cut -d' ' -f1,2 kith-loadtest-host.pub)" >> ~/.ssh/known_hosts
+GHCR_USER=<github user> GHCR_TOKEN=<read:packages token> \
+  sh infra/loadtest/setup.sh root@<address> <image tag> loadtest.env
+```
+
+`<image tag>` is the full SHA of a `master` commit, whose images are in GHCR.
+
+It waits for SSH, installs Docker and the firewall as in step 3, creates `deploy`, copies the infra files and `.env`, runs `deploy.sh`, and ends by fetching `https://loadtest.example.com/health`. It can be run again on the same VPS. A reinstall wipes Caddy's certificates, so each setup asks for new ones: Let's Encrypt gives the same name at most 5 a week, and Caddy then gets them from ZeroSSL instead. Unlike prod, root SSH stays on (keys only), so the script can always get back in. CI logs in to GHCR with its own job token.
+
+**Reinstall** (every file on the VPS is lost):
+
+```sh
+cd infra/loadtest/hostinger && sh recreate.sh
+```
+
+It calls Hostinger's `recreate` and waits until the VPS runs again. Then run `setup.sh` as above to bring Kith back.
+
+**GitHub secrets and variables from the terminal.** The steps above name them; the web page is repo settings → Secrets and variables → Actions. `gh` reads a file as it is, so multi-line values (keys, the `.env`) can't pick up Windows line endings from the clipboard. Run these before deleting the local files:
+
+```sh
+gh secret set HOSTINGER_API_TOKEN               # prompts for the value
+gh secret set TERRAFORM_AWS_ACCESS_KEY_ID
+gh secret set TERRAFORM_AWS_SECRET_ACCESS_KEY
+gh variable set TERRAFORM_AWS_REGION --body <bucket region>
+gh secret set LOADTEST_SSH_KEY < kith-loadtest
+gh secret set LOADTEST_SSH_HOST_KEY < kith-loadtest-host
+gh secret set LOADTEST_ENV < loadtest.env
+```
 
 ## Day-to-day
 

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Hostinger runs this as root after installing the OS (main.tf). It pins the
+# host key, so the known_hosts line survives a recreate, and lets the
+# operator's and CI's keys in as root for setup.sh. Output: /post_install.log.
+set -eu
+umask 077
+
+mkdir -p /root/.ssh
+cat > /root/.ssh/authorized_keys <<'EOF'
+${authorized_keys}
+EOF
+
+cat > /etc/ssh/ssh_host_ed25519_key <<'EOF'
+${ssh_host_key}
+EOF
+ssh-keygen -y -f /etc/ssh/ssh_host_ed25519_key > /etc/ssh/ssh_host_ed25519_key.pub
+chmod 644 /etc/ssh/ssh_host_ed25519_key.pub
+systemctl restart ssh
