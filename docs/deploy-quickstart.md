@@ -619,7 +619,14 @@ terraform apply      # again: must say "No changes"
 terraform output     # address and ssh_user
 ```
 
-The first apply buys the VPS, like ordering it in hPanel. If Hostinger answers that payment is still processing, finish the order in hPanel and run `terraform apply` again. `terraform destroy` is blocked on purpose: on Hostinger it cancels the subscription. To give the machine up, remove `prevent_destroy` in `main.tf` in a reviewed change first.
+The first apply buys the VPS, like ordering it in hPanel.
+
+**If the apply fails with `HTTP 202` / `payment_initiated`**, or you bought the VPS in hPanel, the VPS exists but Terraform's state doesn't know it. **Do not apply again: it would buy another one.** Adopt it instead:
+
+1. Wait until the order completes and the VPS is listed: `curl -fsS -H "Authorization: Bearer $HOSTINGER_API_TOKEN" https://developers.hostinger.com/api/vps/v1/virtual-machines | jq '.[] | {id, hostname, state, plan}'`. If its `state` is `initial`, set it up in hPanel with the same Ubuntu as prod (any root password).
+2. `terraform import hostinger_vps.loadtest <id>`, then `terraform plan`. It must say `0 to add` and `0 to destroy`. If it wants to replace the VPS, the term differs: set `plan` in `terraform.tfvars` to the one the import read (`terraform state show hostinger_vps.loadtest`).
+3. `terraform apply`, then `sh recreate.sh` once: the VPS was installed without the post-install script, so the reinstall puts the keys and host key on it.
+ `terraform destroy` is blocked on purpose: on Hostinger it cancels the subscription. To give the machine up, remove `prevent_destroy` in `main.tf` in a reviewed change first.
 
 Where `terraform apply` runs:
 
