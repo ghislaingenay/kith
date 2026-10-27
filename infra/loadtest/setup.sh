@@ -105,7 +105,7 @@ EOF
 printf '%s' "$GHCR_TOKEN" | as_deploy docker login ghcr.io -u "$GHCR_USER" --password-stdin > /dev/null
 
 echo "setup: copying the infra files and .env"
-echo "$env" | as_deploy 'umask 077 && cat > /opt/kith/.env'
+printf '%s\n' "$env" | as_deploy 'umask 077 && cat > /opt/kith/.env'
 # shellcheck disable=SC2086
 scp $ssh_opts -q infra/docker-compose.prod.yml infra/Caddyfile infra/pg-backup.sh infra/deploy.sh "deploy@$address:/opt/kith/"
 
