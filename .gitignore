@@ -14,3 +14,10 @@ frontend/node_modules/
 .vscode/*
 
 .env
+*.env
+
+# Terraform (infra/loadtest): state lives in S3, never in git
+**/.terraform/
+*.tfstate
+*.tfstate.*
+infra/loadtest/hostinger/terraform.tfvars

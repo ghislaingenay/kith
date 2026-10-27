@@ -67,7 +67,11 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
      {
        "Version": "2012-10-17",
        "Statement": [
-         { "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::kith-prod" },
+         {
+           "Effect": "Allow",
+           "Action": "s3:ListBucket",
+           "Resource": "arn:aws:s3:::kith-prod"
+         },
          {
            "Effect": "Allow",
            "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
@@ -88,7 +92,11 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
      {
        "Version": "2012-10-17",
        "Statement": [
-         { "Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::kith-prod/backups/*" }
+         {
+           "Effect": "Allow",
+           "Action": "s3:PutObject",
+           "Resource": "arn:aws:s3:::kith-prod/backups/*"
+         }
        ]
      }
      ```
@@ -109,10 +117,10 @@ Only Caddy publishes ports (80, 443). Postgres and OpenSearch publish to the VPS
 
 **SSH keys** (on your laptop, e.g. WSL). Two key pairs, both for logging in to the VPS's `deploy` account (step 3). Each has a private half (no extension, stays secret) and a public half (`.pub`, given to the VPS).
 
-| Key | Used by | Private half | Public half |
-|---|---|---|---|
-| yours, e.g. `~/.ssh/id_ed25519` | you, from your laptop | stays on your laptop | the provider's panel puts it on root; step 3 copies it to `deploy` |
-| `kith-deploy` | GitHub Actions | GitHub secret `VPS_SSH_KEY` | added to `deploy` in step 3 |
+| Key                             | Used by               | Private half                | Public half                                                        |
+| ------------------------------- | --------------------- | --------------------------- | ------------------------------------------------------------------ |
+| yours, e.g. `~/.ssh/id_ed25519` | you, from your laptop | stays on your laptop        | the provider's panel puts it on root; step 3 copies it to `deploy` |
+| `kith-deploy`                   | GitHub Actions        | GitHub secret `VPS_SSH_KEY` | added to `deploy` in step 3                                        |
 
 Separate keys keep them independent: if the GitHub secret ever leaks, you delete CI's line on the VPS and yours keeps working.
 
@@ -520,7 +528,7 @@ k6 load tests run against a second VPS on the same plan as prod, never against p
 
 What you will do by hand, in order:
 
-1. Get a Hostinger API token, buy a second KVM 2, create the private S3 bucket `kith-terraform-state` with an IAM key limited to it, and add the load-test SSH key (#159).
+1. Get a Hostinger API token, create the state bucket and its key, make the SSH keys, buy the load-test VPS in hPanel, let Terraform adopt it and bring Kith up on it ("Load-test VPS" below, #159).
 2. Create the load-test OpenAI key, in its own Project with a $20/month budget, and a separate Voyage key; run the seed build once (#162).
 3. Run your own concurrency check and set the `LOADTEST_VUS` GitHub variable; push the first `loadtest-load-*` tag (#163).
 4. Add the Resend key and the recipient address as GitHub secrets (#164).
@@ -528,18 +536,163 @@ What you will do by hand, in order:
 6. Create the Grafana Cloud Free stack and its tokens (#167).
 7. Add the Grafana Cloud metrics token to prod's `.env` and test the alert email (#168).
 
+### Load-test VPS
+
+You buy the machine in hPanel. Terraform (`infra/loadtest/hostinger`) adopts it, reinstalls it when its template changes, and outputs its address and SSH user. `infra/loadtest/setup.sh` then turns it into the Kith stack, with the same compose file, Caddyfile and `deploy.sh` as prod. The setup script knows nothing about Hostinger: on another provider, only the Terraform module and `recreate.sh` change. Terraform manages this VPS only, never prod or anything on AWS. You need Terraform 1.11 or later, the AWS CLI and `jq` on your laptop.
+
+**1. Hostinger API token.** hPanel → profile → **API** → new token. If the page is missing, the account can't make tokens yet; ask Hostinger support. Keep it for your laptop (`export HOSTINGER_API_TOKEN=...`) and add it as the GitHub secret `HOSTINGER_API_TOKEN`.
+
+**2. The state bucket.** Terraform keeps its state in S3, never in git, and locks it while an apply runs (S3's own lock file, so no DynamoDB table).
+
+1. Create the bucket `kith-terraform-state` in the same region as prod's, with "Block all public access" on and **versioning on** (a bad apply can then be undone from an older state).
+2. IAM user `kith-terraform`, with access keys and only this policy:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": "s3:ListBucket",
+         "Resource": "arn:aws:s3:::kith-terraform-state"
+       },
+       {
+         "Effect": "Allow",
+         "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+         "Resource": "arn:aws:s3:::kith-terraform-state/loadtest/*"
+       }
+     ]
+   }
+   ```
+
+   `DeleteObject` is for the lock file, which is removed when an apply ends.
+
+3. GitHub secrets `TERRAFORM_AWS_ACCESS_KEY_ID` and `TERRAFORM_AWS_SECRET_ACCESS_KEY`, and the variable `TERRAFORM_AWS_REGION`. On your laptop, the same three as `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION`.
+
+**3. SSH keys.** Two key pairs, as for prod (step 2 → SSH keys), plus the server's own **host key**. A reinstall would normally give the VPS a new host key, so CI would refuse to connect after every `recreate`. Hostinger's post-install script puts this one back each time, and the known_hosts line never changes.
+
+```sh
+ssh-keygen -t ed25519 -N '' -C kith-loadtest -f ~/.ssh/kith-loadtest           # CI's login key
+ssh-keygen -t ed25519 -N '' -C kith-loadtest-host -f ~/.ssh/kith-loadtest-host # the VPS's host key
+```
+
+Each command writes a private file (no extension, the secret) and a `.pub` file (public, safe to share). Where each one goes:
+
+| File | Goes to |
+|---|---|
+| `kith-loadtest` (private) | GitHub secret `LOADTEST_SSH_KEY`, then delete it from your laptop |
+| `kith-loadtest.pub` | `authorized_keys` in `terraform.tfvars`, so CI can log in |
+| `kith-loadtest-host` (private) | GitHub secret `LOADTEST_SSH_HOST_KEY`; keep it on your laptop too, since every `terraform apply` from there needs it |
+| `kith-loadtest-host.pub` | your `~/.ssh/known_hosts` (step 7); CI builds its own line from the private file |
+| your `~/.ssh/id_ed25519.pub` | `authorized_keys` in `terraform.tfvars`, so you can log in |
+
+**4. Buy the VPS, then let Terraform adopt it.** Buy a second KVM 2 in hPanel, in the same data center as prod, and set it up with the same Ubuntu as prod (any root password: the first reinstall replaces it). Terraform never buys a VPS: its `hostinger_vps` would order a new one on every apply that doesn't know the VPS, so `main.tf` adopts the one you bought by its ID instead (an `import` block).
+
+Find the IDs (`jq`: `sudo apt update && sudo apt install -y jq`):
+
+```sh
+call() { curl -fsS -H "Authorization: Bearer $HOSTINGER_API_TOKEN" "https://developers.hostinger.com/api/$1"; }
+call vps/v1/virtual-machines | jq '.[] | {id, hostname, data_center_id, template: .template.name}'
+call vps/v1/templates | jq '.[] | select(.name | test("Ubuntu")) | {id, name}'
+```
+
+Fill in `infra/loadtest/hostinger/terraform.tfvars`. It stays on your laptop (it is in `.gitignore`). CI gets the same values from the GitHub variables `TF_VAR_vps_id`, `TF_VAR_data_center_id`, `TF_VAR_template_id` and `TF_VAR_authorized_keys`; the last one is the list as written below, brackets included. Terraform reads `TF_VAR_<name>` variables by itself.
+
+```hcl
+vps_id         = "1234567" # the load-test VPS, never prod's
+data_center_id = 0         # its data center
+template_id    = 0         # plain Ubuntu, the same version as prod
+authorized_keys = [
+  "ssh-ed25519 AAAA... your-laptop",
+  "ssh-ed25519 AAAA... kith-loadtest",
+]
+```
+
+Then, in that folder:
+
+```sh
+export TF_VAR_ssh_host_key="$(cat ~/.ssh/kith-loadtest-host)"
+terraform init
+terraform plan       # must say "1 to import" and "0 to destroy"; stop if it says otherwise
+terraform apply
+terraform apply      # again: must say "No changes"
+terraform output     # address and ssh_user
+sh recreate.sh       # once: puts the keys and host key on the VPS
+```
+
+The first apply adopts the VPS and uploads the post-install script. If `template_id` differs from what the VPS runs, that apply also reinstalls it with that template. The VPS was installed without the post-install script, so `recreate.sh` reinstalls it once to get the keys and host key on it; after that, every reinstall keeps them.
+
+`terraform destroy` is blocked on purpose: on Hostinger it cancels the subscription. To give the machine up, cancel it in hPanel and remove the module's state.
+
+Where `terraform apply` runs:
+
+- **The first one, from your laptop**, so you can check its plan adopts the VPS and destroys nothing.
+- **Then from the load-test workflow, at the start of each tagged run (#163).** It normally changes nothing; it checks the VPS is there before the reinstall and setup.
+- **Never on a push to `master`.** A merge deploys prod, which Terraform doesn't manage. On pull requests and `master`, CI only runs `fmt -check` and `validate`, which never reach Hostinger.
+
+Your laptop and CI share the state safely: the lock in S3 stops two applies running at once.
+
+The outputs are not stored anywhere else, not in `.env` nor in GitHub. They are in the state, and you read them when needed: `terraform output -raw address` (for DNS and `setup.sh`) and `terraform output -raw ssh_user`. The load-test workflow reads them the same way after its apply. The IP stays the same across reinstalls.
+
+**5. DNS.** `A` records for `loadtest.example.com` and `www.loadtest.example.com` pointing at the `address` output. The IP stays the same across reinstalls.
+
+**6. The `.env` for this VPS.** The same keys as prod's (step 4), with the load-test values. Keep it as the GitHub secret `LOADTEST_ENV` (the whole file), and as a local file for running the setup by hand.
+
+- `DOMAIN=loadtest.example.com`, and the same domain in `APP_URL`, `CORS_ALLOWED_ORIGINS` and `MAGIC_LINK_VERIFY_URL`.
+- Its own S3 bucket and IAM keys, set up like prod's but never prod's. `BACKUP_AWS_*` can be any placeholder: no backups run here.
+- No Sentry DSNs, so load-test errors don't land in prod's projects.
+- `OPENAI_API_KEY` and `VOYAGE_API_KEY` empty for now: the load-test keys come in step 2 of the list above. Until then `worker-ingest` restarts in a loop; `/health` still answers.
+
+**7. Bring Kith up.** From the repo root, with your own key in your agent and the host key trusted:
+
+```sh
+echo "<address> $(cut -d' ' -f1,2 ~/.ssh/kith-loadtest-host.pub)" >> ~/.ssh/known_hosts
+GHCR_USER=<github user> GHCR_TOKEN=<read:packages token> \
+  sh infra/loadtest/setup.sh root@<address> <image tag> loadtest.env
+```
+
+`<image tag>` is the full SHA of a `master` commit, whose images are in GHCR.
+
+It waits for SSH, installs Docker and the firewall as in step 3, creates `deploy`, copies the infra files and `.env`, runs `deploy.sh`, and ends by fetching `https://loadtest.example.com/health`. It can be run again on the same VPS. A reinstall wipes Caddy's certificates, so each setup asks for new ones: Let's Encrypt gives the same name at most 5 a week, and Caddy then gets them from ZeroSSL instead. Unlike prod, root SSH stays on (keys only), so the script can always get back in. CI logs in to GHCR with its own job token.
+
+**Reinstall** (every file on the VPS is lost):
+
+```sh
+cd infra/loadtest/hostinger && sh recreate.sh
+```
+
+It calls Hostinger's `recreate` and waits until the VPS runs again. Then run `setup.sh` as above to bring Kith back.
+
+**GitHub secrets and variables from the terminal.** The steps above name them; the web page is repo settings → Secrets and variables → Actions. `gh` reads a file as it is, so multi-line values (keys, the `.env`) can't pick up Windows line endings from the clipboard. Run these before deleting the local files:
+
+```sh
+gh secret set HOSTINGER_API_TOKEN               # prompts for the value
+gh secret set TERRAFORM_AWS_ACCESS_KEY_ID
+gh secret set TERRAFORM_AWS_SECRET_ACCESS_KEY
+gh variable set TERRAFORM_AWS_REGION --body <bucket region>
+gh secret set LOADTEST_SSH_KEY < ~/.ssh/kith-loadtest
+gh secret set LOADTEST_SSH_HOST_KEY < ~/.ssh/kith-loadtest-host
+gh secret set LOADTEST_ENV < loadtest.env
+# the terraform.tfvars values, for the load-test workflow's apply
+gh variable set TF_VAR_vps_id --body <id>
+gh variable set TF_VAR_data_center_id --body <id>
+gh variable set TF_VAR_template_id --body <id>
+gh variable set TF_VAR_authorized_keys --body '["ssh-ed25519 AAAA... your-laptop", "ssh-ed25519 AAAA... kith-loadtest"]'
+rm ~/.ssh/kith-loadtest   # CI's private key now lives only in GitHub
+```
+
 ## Day-to-day
 
 Looking after the running server (checking the database, ...) is in `vps-operations.md`.
 
-| Task | Command (on the VPS, in `/opt/kith`) |
-|---|---|
-| Follow logs | `dc logs -f app` (or `worker-ingest`, `frontend`, `caddy`) |
-| Search JSON logs | `dc logs app --no-log-prefix \| jq 'select(.level=="ERROR")'` |
-| Run a script | `dc exec app python -m scripts.<name> ...` |
-| DB from your laptop | `ssh -L 5432:localhost:5432 deploy@<vps>`, then connect to `localhost:5432` |
-| OpenSearch from your laptop | `ssh -L 9200:localhost:9200 deploy@<vps>`, then `curl localhost:9200/_cat/indices` |
-| Roll back | Actions → Deploy → Run workflow with an older full commit SHA (step 8) |
-| Deploy by hand | `sh deploy.sh <full commit sha>` (what the workflow runs) |
-| Apply a `.env` change | `dc up -d --no-deps app worker-ingest frontend caddy` (step 4); `dc restart` keeps the old values |
-| Memory use | `docker stats --no-stream` |
+| Task                        | Command (on the VPS, in `/opt/kith`)                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------------------- |
+| Follow logs                 | `dc logs -f app` (or `worker-ingest`, `frontend`, `caddy`)                                        |
+| Search JSON logs            | `dc logs app --no-log-prefix \| jq 'select(.level=="ERROR")'`                                     |
+| Run a script                | `dc exec app python -m scripts.<name> ...`                                                        |
+| DB from your laptop         | `ssh -L 5432:localhost:5432 deploy@<vps>`, then connect to `localhost:5432`                       |
+| OpenSearch from your laptop | `ssh -L 9200:localhost:9200 deploy@<vps>`, then `curl localhost:9200/_cat/indices`                |
+| Roll back                   | Actions → Deploy → Run workflow with an older full commit SHA (step 8)                            |
+| Deploy by hand              | `sh deploy.sh <full commit sha>` (what the workflow runs)                                         |
+| Apply a `.env` change       | `dc up -d --no-deps app worker-ingest frontend caddy` (step 4); `dc restart` keeps the old values |
+| Memory use                  | `docker stats --no-stream`                                                                        |

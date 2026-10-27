@@ -1,0 +1,47 @@
+name: Terraform
+
+# Checks the load-test VPS module (infra/loadtest/hostinger, ADR-0021) for
+# formatting and validity. It never reaches Hostinger or the S3 state:
+# `init -backend=false` downloads the provider only.
+on:
+  push:
+    branches: [master]
+    paths:
+      - "infra/loadtest/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    paths:
+      - "infra/loadtest/**"
+      - ".github/workflows/terraform.yml"
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Terraform fmt and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: infra/loadtest/hostinger
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.7
+
+      - name: Check formatting
+        run: terraform fmt -check -diff -recursive
+
+      # -lockfile=readonly fails if .terraform.lock.hcl doesn't match the
+      # provider constraint, instead of quietly updating it.
+      - name: Validate
+        run: |
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate

@@ -15,6 +15,8 @@ Terraform is split in two so the setup is not tied to Hostinger: a provider modu
 - **A GitHub runner as the target.** Rejected: the hardware is unlike prod's.
 - **Terraform state in HCP Terraform.** Rejected: one more account and token, when an S3 bucket is already there.
 
+**Amended 2026-10-27:** the operator buys the VPS in hPanel and the module adopts it by ID (an `import` block) instead of creating it. The Hostinger provider buys a new VPS whenever its state doesn't know the machine, and a first purchase through the API stopped half-way at "payment initiated", so a purchase by Terraform risked a second subscription.
+
 ## Consequences
 
 - The VPS can later become the staging server the deploy plan expects.
