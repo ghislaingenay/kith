@@ -600,6 +600,16 @@ terraform output     # address and ssh_user
 
 The first apply buys the VPS, like ordering it in hPanel. If Hostinger answers that payment is still processing, finish the order in hPanel and run `terraform apply` again. `terraform destroy` is blocked on purpose: on Hostinger it cancels the subscription. To give the machine up, remove `prevent_destroy` in `main.tf` in a reviewed change first.
 
+Where `terraform apply` runs:
+
+- **The first one, from your laptop.** It buys the VPS and charges the card, and Hostinger may ask you to finish the order in hPanel, so watch it.
+- **Then from the load-test workflow, at the start of each tagged run (#163).** It normally changes nothing; it checks the VPS is there before the reinstall and setup.
+- **Never on a push to `master`.** A merge deploys prod, which Terraform doesn't manage. On pull requests and `master`, CI only runs `fmt -check` and `validate`, which never reach Hostinger.
+
+Your laptop and CI share the state safely: the lock in S3 stops two applies running at once.
+
+The outputs are not stored anywhere else, not in `.env` nor in GitHub. They are in the state, and you read them when needed: `terraform output -raw address` (for DNS and `setup.sh`) and `terraform output -raw ssh_user`. The load-test workflow reads them the same way after its apply. The IP stays the same across reinstalls.
+
 **5. DNS.** `A` records for `loadtest.example.com` and `www.loadtest.example.com` pointing at the `address` output. The IP stays the same across reinstalls.
 
 **6. The `.env` for this VPS.** The same keys as prod's (step 4), with the load-test values. Keep it as the GitHub secret `LOADTEST_ENV` (the whole file), and as a local file for running the setup by hand.
