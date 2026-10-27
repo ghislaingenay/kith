@@ -528,7 +528,7 @@ k6 load tests run against a second VPS on the same plan as prod, never against p
 
 What you will do by hand, in order:
 
-1. Get a Hostinger API token, create the state bucket and its key, make the SSH keys, buy the load-test VPS with `terraform apply` and bring Kith up on it ("Load-test VPS" below, #159).
+1. Get a Hostinger API token, create the state bucket and its key, make the SSH keys, buy the load-test VPS in hPanel, let Terraform adopt it and bring Kith up on it ("Load-test VPS" below, #159).
 2. Create the load-test OpenAI key, in its own Project with a $20/month budget, and a separate Voyage key; run the seed build once (#162).
 3. Run your own concurrency check and set the `LOADTEST_VUS` GitHub variable; push the first `loadtest-load-*` tag (#163).
 4. Add the Resend key and the recipient address as GitHub secrets (#164).
@@ -538,7 +538,7 @@ What you will do by hand, in order:
 
 ### Load-test VPS
 
-The machine is made by Terraform (`infra/loadtest/hostinger`), which only buys it and outputs its address and SSH user. `infra/loadtest/setup.sh` then turns it into the Kith stack, with the same compose file, Caddyfile and `deploy.sh` as prod. The setup script knows nothing about Hostinger: on another provider, only the Terraform module and `recreate.sh` change. Terraform manages this VPS only, never prod or anything on AWS. You need Terraform 1.11 or later, the AWS CLI and `jq` on your laptop.
+You buy the machine in hPanel. Terraform (`infra/loadtest/hostinger`) adopts it, reinstalls it when its template changes, and outputs its address and SSH user. `infra/loadtest/setup.sh` then turns it into the Kith stack, with the same compose file, Caddyfile and `deploy.sh` as prod. The setup script knows nothing about Hostinger: on another provider, only the Terraform module and `recreate.sh` change. Terraform manages this VPS only, never prod or anything on AWS. You need Terraform 1.11 or later, the AWS CLI and `jq` on your laptop.
 
 **1. Hostinger API token.** hPanel → profile → **API** → new token. If the page is missing, the account can't make tokens yet; ask Hostinger support. Keep it for your laptop (`export HOSTINGER_API_TOKEN=...`) and add it as the GitHub secret `HOSTINGER_API_TOKEN`.
 
@@ -586,23 +586,22 @@ Each command writes a private file (no extension, the secret) and a `.pub` file 
 | `kith-loadtest-host.pub` | your `~/.ssh/known_hosts` (step 7); CI builds its own line from the private file |
 | your `~/.ssh/id_ed25519.pub` | `authorized_keys` in `terraform.tfvars`, so you can log in |
 
-**4. Buy the VPS with Terraform.** Find the IDs of prod's data center and of Ubuntu 24.04, and check the plan is still listed:
+**4. Buy the VPS, then let Terraform adopt it.** Buy a second KVM 2 in hPanel, in the same data center as prod, and set it up with the same Ubuntu as prod (any root password: the first reinstall replaces it). Terraform never buys a VPS: its `hostinger_vps` would order a new one on every apply that doesn't know the VPS, so `main.tf` adopts the one you bought by its ID instead (an `import` block).
 
-For jq if not installed: sudo apt update && sudo apt install -y jq
+Find the IDs (`jq`: `sudo apt update && sudo apt install -y jq`):
 
 ```sh
 call() { curl -fsS -H "Authorization: Bearer $HOSTINGER_API_TOKEN" "https://developers.hostinger.com/api/$1"; }
-call vps/v1/data-centers | jq '.[] | {id, name, city}'
-call vps/v1/templates | jq '.[] | select(.name | test("Ubuntu 24.04")) | {id, name}'
-call billing/v1/catalog | jq '.[] | select(.name | test("KVM 2")) | .prices[] | {id, period, period_unit, price}'
+call vps/v1/virtual-machines | jq '.[] | {id, hostname, data_center_id, template: .template.name}'
+call vps/v1/templates | jq '.[] | select(.name | test("Ubuntu")) | {id, name}'
 ```
 
-Fill in `infra/loadtest/hostinger/terraform.tfvars`. It stays on your laptop (it is in `.gitignore`). CI gets the same values from the GitHub variables `TF_VAR_data_center_id`, `TF_VAR_template_id` and `TF_VAR_authorized_keys`; the last one is the list as written below, brackets included. Terraform reads `TF_VAR_<name>` variables by itself.
+Fill in `infra/loadtest/hostinger/terraform.tfvars`. It stays on your laptop (it is in `.gitignore`). CI gets the same values from the GitHub variables `TF_VAR_vps_id`, `TF_VAR_data_center_id`, `TF_VAR_template_id` and `TF_VAR_authorized_keys`; the last one is the list as written below, brackets included. Terraform reads `TF_VAR_<name>` variables by itself.
 
 ```hcl
-data_center_id = 0 # prod's
-template_id    = 0 # Ubuntu 24.04
-# plan defaults to hostingercom-vps-kvm2-usd-1m; a 12m or 24m item is cheaper per month but paid upfront
+vps_id         = "1234567" # the load-test VPS, never prod's
+data_center_id = 0         # its data center
+template_id    = 0         # plain Ubuntu, the same version as prod
 authorized_keys = [
   "ssh-ed25519 AAAA... your-laptop",
   "ssh-ed25519 AAAA... kith-loadtest",
@@ -614,23 +613,20 @@ Then, in that folder:
 ```sh
 export TF_VAR_ssh_host_key="$(cat ~/.ssh/kith-loadtest-host)"
 terraform init
-terraform apply      # charges the account's default payment method for the plan
+terraform plan       # must say "1 to import" and "0 to destroy"; stop if it says otherwise
+terraform apply
 terraform apply      # again: must say "No changes"
 terraform output     # address and ssh_user
+sh recreate.sh       # once: puts the keys and host key on the VPS
 ```
 
-The first apply buys the VPS, like ordering it in hPanel.
+The first apply adopts the VPS and uploads the post-install script. If `template_id` differs from what the VPS runs, that apply also reinstalls it with that template. The VPS was installed without the post-install script, so `recreate.sh` reinstalls it once to get the keys and host key on it; after that, every reinstall keeps them.
 
-**If the apply fails with `HTTP 202` / `payment_initiated`**, or you bought the VPS in hPanel, the VPS exists but Terraform's state doesn't know it. **Do not apply again: it would buy another one.** Adopt it instead:
-
-1. Wait until the order completes and the VPS is listed: `curl -fsS -H "Authorization: Bearer $HOSTINGER_API_TOKEN" https://developers.hostinger.com/api/vps/v1/virtual-machines | jq '.[] | {id, hostname, state, plan}'`. If its `state` is `initial`, set it up in hPanel with the same Ubuntu as prod (any root password).
-2. `terraform import hostinger_vps.loadtest <id>`, then `terraform plan`. It must say `0 to add` and `0 to destroy`. If it wants to replace the VPS, the term differs: set `plan` in `terraform.tfvars` to the one the import read (`terraform state show hostinger_vps.loadtest`).
-3. `terraform apply`, then `sh recreate.sh` once: the VPS was installed without the post-install script, so the reinstall puts the keys and host key on it.
- `terraform destroy` is blocked on purpose: on Hostinger it cancels the subscription. To give the machine up, remove `prevent_destroy` in `main.tf` in a reviewed change first.
+`terraform destroy` is blocked on purpose: on Hostinger it cancels the subscription. To give the machine up, cancel it in hPanel and remove the module's state.
 
 Where `terraform apply` runs:
 
-- **The first one, from your laptop.** It buys the VPS and charges the card, and Hostinger may ask you to finish the order in hPanel, so watch it.
+- **The first one, from your laptop**, so you can check its plan adopts the VPS and destroys nothing.
 - **Then from the load-test workflow, at the start of each tagged run (#163).** It normally changes nothing; it checks the VPS is there before the reinstall and setup.
 - **Never on a push to `master`.** A merge deploys prod, which Terraform doesn't manage. On pull requests and `master`, CI only runs `fmt -check` and `validate`, which never reach Hostinger.
 
@@ -678,6 +674,7 @@ gh secret set LOADTEST_SSH_KEY < ~/.ssh/kith-loadtest
 gh secret set LOADTEST_SSH_HOST_KEY < ~/.ssh/kith-loadtest-host
 gh secret set LOADTEST_ENV < loadtest.env
 # the terraform.tfvars values, for the load-test workflow's apply
+gh variable set TF_VAR_vps_id --body <id>
 gh variable set TF_VAR_data_center_id --body <id>
 gh variable set TF_VAR_template_id --body <id>
 gh variable set TF_VAR_authorized_keys --body '["ssh-ed25519 AAAA... your-laptop", "ssh-ed25519 AAAA... kith-loadtest"]'
