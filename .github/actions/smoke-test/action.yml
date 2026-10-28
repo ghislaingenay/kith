@@ -176,10 +176,13 @@ runs:
         AWS_ACCESS_KEY_ID: minioadmin
         AWS_SECRET_ACCESS_KEY: minioadmin
         AWS_DEFAULT_REGION: us-east-1
+      # Chainguard's MinIO build: MinIO's own images on quay.io and Docker
+      # Hub no longer allow anonymous pulls.
       run: |
         set -eu
         docker run -d --name kith-smoke-minio --network kith_default --network-alias minio \
-          -p 9000:9000 quay.io/minio/minio:latest server /data
+          -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+          -p 9000:9000 cgr.dev/chainguard/minio:latest server /data
         timeout 60 sh -c 'until curl -fs http://localhost:9000/minio/health/live; do sleep 1; done'
         aws --endpoint-url http://localhost:9000 s3 mb s3://kith-smoke
 
