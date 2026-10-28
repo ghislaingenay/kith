@@ -6,11 +6,18 @@ description: >
   `docker rollout` replaces the containers. It tests frontend/Dockerfile, the
   prod compose file, the Caddyfile, the release command and the deploy script.
   Used by smoke.yml on pull requests and by deploy.yml before the push.
+  With k6-smoke, it then runs the k6 load test in smoke mode.
 
 inputs:
   image-tag:
     description: Tag of the locally built ghcr.io/ghislaingenay/kith-backend and kith-frontend images
     required: true
+  k6-smoke:
+    description: >
+      "true" also runs the k6 load test in smoke mode (loadtest/, ADR-0021)
+      against the stack, with uploads going to a MinIO on the runner
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -45,6 +52,20 @@ runs:
         VOYAGE_API_KEY=
         LOG_FORMAT=json
         EOF
+        # k6's Upload sends real files: storage becomes the MinIO started
+        # before k6, which k6 reaches on the runner's port 9000.
+        if [ "$K6_SMOKE" = true ]; then
+          sed -i '/^\(STORAGE_PROVIDER\|AWS_ACCESS_KEY_ID\|AWS_SECRET_ACCESS_KEY\)=/d' .env
+          cat >> .env <<'EOF'
+        STORAGE_PROVIDER=minio
+        S3_ENDPOINT=http://minio:9000
+        S3_PUBLIC_ENDPOINT=http://localhost:9000
+        AWS_ACCESS_KEY_ID=minioadmin
+        AWS_SECRET_ACCESS_KEY=minioadmin
+        EOF
+        fi
+      env:
+        K6_SMOKE: ${{ inputs.k6-smoke }}
 
     # The same version the quickstart installs on the VPS.
     - name: Install docker rollout
@@ -133,6 +154,62 @@ runs:
         [ "$(docker compose ps -q app | wc -l)" = 1 ]
         [ "$(docker compose ps -q frontend | wc -l)" = 1 ]
 
+    # The k6 load test in smoke mode (ADR-0021): one virtual user runs every
+    # action but Ask once (no AI keys here), and any error or failed check
+    # fails the job. Search answers by keyword alone without Voyage.
+    - name: Cache the k6 binary
+      if: inputs.k6-smoke == 'true'
+      uses: actions/cache@v4
+      with:
+        path: loadtest/k6
+        key: k6-${{ runner.os }}-${{ hashFiles('loadtest/build-k6.sh') }}
+
+    - name: Build k6 with the SSE extension
+      if: inputs.k6-smoke == 'true'
+      shell: bash
+      run: '[ -x loadtest/k6 ] || sh loadtest/build-k6.sh'
+
+    - name: Start MinIO for uploads
+      if: inputs.k6-smoke == 'true'
+      shell: bash
+      env:
+        AWS_ACCESS_KEY_ID: minioadmin
+        AWS_SECRET_ACCESS_KEY: minioadmin
+        AWS_DEFAULT_REGION: us-east-1
+      # Chainguard's MinIO build: MinIO's own images on quay.io and Docker
+      # Hub no longer allow anonymous pulls.
+      run: |
+        set -eu
+        docker run -d --name kith-smoke-minio --network kith_default --network-alias minio \
+          -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+          -p 9000:9000 cgr.dev/chainguard/minio:latest server /data
+        timeout 60 sh -c 'until curl -fs http://localhost:9000/minio/health/live; do sleep 1; done'
+        aws --endpoint-url http://localhost:9000 s3 mb s3://kith-smoke
+
+    # The Session ids are a file only k6 reads, masked in case a log ever
+    # prints one.
+    - name: Create Load Test Tenants and Sessions
+      if: inputs.k6-smoke == 'true'
+      shell: bash
+      working-directory: infra
+      run: |
+        set -eu
+        out="$RUNNER_TEMP/loadtest"
+        mkdir -p "$out"
+        docker compose run --rm -e LOAD_TEST_ENABLED=true --user "$(id -u):$(id -g)" -v "$out:/out" \
+          app python -m scripts.load_test_sessions \
+          --tenants "$(jq -r .load_test_tenants ../loadtest/config.json)" --users 1 --out /out/sessions.json
+        jq -r '.[].session_id' "$out/sessions.json" | while read -r id; do echo "::add-mask::$id"; done
+
+    - name: Run k6 in smoke mode
+      if: inputs.k6-smoke == 'true'
+      shell: bash
+      env:
+        MODE: smoke
+        BASE_URL: https://localhost
+        SSL_CERT_FILE: infra/caddy-root.crt
+      run: SESSIONS_FILE="$RUNNER_TEMP/loadtest/sessions.json" loadtest/k6 run --no-usage-report loadtest/main.js
+
     - name: Show logs on failure
       if: failure()
       shell: bash
@@ -143,4 +220,6 @@ runs:
       if: always()
       shell: bash
       working-directory: infra
-      run: docker compose down -v
+      run: |
+        docker rm -f kith-smoke-minio 2>/dev/null || true
+        docker compose down -v
