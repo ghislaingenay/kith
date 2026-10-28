@@ -641,6 +641,7 @@ The outputs are not stored anywhere else, not in `.env` nor in GitHub. They are 
 - `DOMAIN=loadtest.example.com`, and the same domain in `APP_URL`, `CORS_ALLOWED_ORIGINS` and `MAGIC_LINK_VERIFY_URL`.
 - Its own S3 bucket and IAM keys, set up like prod's but never prod's. `BACKUP_AWS_*` can be any placeholder: no backups run here.
 - No Sentry DSNs, so load-test errors don't land in prod's projects.
+- `LOAD_TEST_ENABLED=true`. Only this VPS sets it: it lets `scripts.load_test_sessions` create the Load Test Tenants and sign their Users in (#160). Never set it in prod's `.env`.
 - `OPENAI_API_KEY` and `VOYAGE_API_KEY` empty for now: the load-test keys come in step 2 of the list above. Until then `worker-ingest` restarts in a loop; `/health` still answers.
 
 **7. Bring Kith up.** From the repo root, with your own key in your agent and the host key trusted:
@@ -654,6 +655,14 @@ GHCR_USER=<github user> GHCR_TOKEN=<read:packages token> \
 `<image tag>` is the full SHA of a `master` commit, whose images are in GHCR.
 
 It waits for SSH, installs Docker and the firewall as in step 3, creates `deploy`, copies the infra files and `.env`, runs `deploy.sh`, and ends by fetching `https://loadtest.example.com/health`. It can be run again on the same VPS. A reinstall wipes Caddy's certificates, so each setup asks for new ones: Let's Encrypt gives the same name at most 5 a week, and Caddy then gets them from ZeroSSL instead. Unlike prod, root SSH stays on (keys only), so the script can always get back in. CI logs in to GHCR with its own job token.
+
+**Load Test Tenants and Sessions** (#160). On the VPS, with `dc` as in step 5:
+
+```sh
+dc run --rm -v /opt/kith:/out app python -m scripts.load_test_sessions --tenants 20 --users <n> --out /out/sessions.json
+```
+
+It creates or re-uses `load-test-01`… Tenants and `load-test-user-NNNN@loadtest.example` Users, dealt evenly across them as Members. It tops each Credit Balance up to `--credits` (default 10,000) with a Credit Adjustment, and issues one fresh Session per User. The Session ids go only to `sessions.json` (mode 0600, owned by root), never to the terminal. Running it again re-uses the same Tenants and Users. It refuses to run unless `.env` has `LOAD_TEST_ENABLED=true`.
 
 **Reinstall** (every file on the VPS is lost):
 
