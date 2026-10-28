@@ -1,0 +1,31 @@
+{
+  "load_test_tenants": 20,
+  "traffic_mix": {
+    "search": 60,
+    "ask": 15,
+    "browse": 15,
+    "upload": 5,
+    "app_shell": 5
+  },
+  "think_time_seconds": {
+    "min": 3,
+    "max": 10
+  },
+  "slos": {
+    "search_p95_ms": 800,
+    "ask_first_word_p95_ms": 3000,
+    "browse_p95_ms": 500,
+    "error_rate": 0.01
+  },
+  "stress_stop": {
+    "slo_multiplier": 2,
+    "error_rate": 0.05
+  },
+  "load": {
+    "duration": "10m"
+  },
+  "stress": {
+    "steps": 5,
+    "step_duration": "2m"
+  }
+}

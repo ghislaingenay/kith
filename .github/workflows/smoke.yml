@@ -2,12 +2,14 @@ name: Production stack smoke test
 
 # Builds both images and runs the smoke test (.github/actions/smoke-test) on
 # pull requests. deploy.yml runs the same test on master before the push.
+# A pull request that changes the load test also runs k6 in smoke mode.
 on:
   pull_request:
     paths:
       - "backend/**"
       - "frontend/**"
       - "infra/**"
+      - "loadtest/**"
       - ".github/actions/smoke-test/**"
       - ".github/workflows/smoke.yml"
 
@@ -21,7 +23,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # Depth 2: the merge commit and its base, to see what the PR changed.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # The k6 smoke run only when the load test or what it drives changed.
+      # Smoke is the only mode a pull request can run.
+      - name: Check for load-test changes
+        id: loadtest
+        run: |
+          if git diff --quiet HEAD^1 HEAD -- loadtest backend/app/loadtest backend/app/scripts/load_test_sessions.py .github/actions/smoke-test .github/workflows/smoke.yml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build the backend image
         run: docker build -t ghcr.io/ghislaingenay/kith-backend:smoke --build-arg GIT_SHA=${{ github.sha }} backend
@@ -36,3 +52,4 @@ jobs:
       - uses: ./.github/actions/smoke-test
         with:
           image-tag: smoke
+          k6-smoke: ${{ steps.loadtest.outputs.changed }}
