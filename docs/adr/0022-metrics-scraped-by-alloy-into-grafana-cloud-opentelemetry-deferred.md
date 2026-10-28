@@ -1,9 +1,11 @@
 ---
-status: accepted
+status: deferred
 date: 2026-10-26
 ---
 
 # Metrics are scraped by Alloy into Grafana Cloud; the app sends none, and OpenTelemetry stays deferred
+
+Deferred 2026-10-28 with ADR-0021: nothing here was built. Prod keeps Sentry errors and traces and its journald logs. Revisit together with ADR-0021, or sooner if on-call alerts are needed.
 
 Host, container, Postgres, Redis and Caddy metrics reach Grafana Cloud Free through Grafana Alloy, which runs as one more container on each VPS and reads them from the outside. Server-side latency and errors per route come from Caddy's built-in metrics, which cover every request and need no app code. k6 sends its results to the same Grafana Cloud stack. This goes against the rule in `docs/research/observability-backend-choice.md` that the app sends all telemetry over OTLP. That rule is deferred on purpose: the deploy plan already chose Sentry for errors and traces, and the metrics a load test and on-call need are all available from outside the app. Add OpenTelemetry when Sentry traces stop being enough, or with the move to AWS.
 
