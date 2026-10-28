@@ -38,6 +38,7 @@ from documents.config import (
     RetrievalSettings,
     UploadSettings,
 )
+from loadtest.config import LoadTestSettings
 
 
 def _configure_logging_once(settings: LoggingSettings) -> bool:
@@ -205,6 +206,8 @@ class Container(containers.DeclarativeContainer):
     preview_settings = providers.Singleton(PreviewSettings)
 
     credit_settings = providers.Singleton(CreditSettings)
+
+    load_test_settings = providers.Singleton(LoadTestSettings)
 
     database_settings = providers.Singleton(DatabaseSettings)
 

@@ -5,7 +5,7 @@ COMPOSE = docker compose $(if $(wildcard .env),--env-file .env) -f infra/docker-
 # --rm to create a temporary container for running alembic commands
 ALEMBIC = $(COMPOSE) run --rm app alembic
 
-.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create refresh-index clean-documents rebuild-index search-replay embed-documents retrieve adjust-credits
+.PHONY: up down db-migrate db-rollback db-refresh db-revision db-history db-current search-index-create refresh-index clean-documents rebuild-index search-replay embed-documents retrieve adjust-credits load-test-sessions
 
 up:
 	$(COMPOSE) up -d
@@ -82,3 +82,12 @@ retrieve:
 adjust-credits:
 	@if [ -z "$(tenant_id)" ] || [ -z "$(credits)" ] || [ -z "$(note)" ]; then echo 'usage: make adjust-credits tenant_id=<uuid> credits=<n> note="<why>"'; exit 1; fi
 	$(COMPOSE) run --rm app python -m scripts.adjust_credits --tenant-id "$(tenant_id)" --credits="$(credits)" --note "$(note)"
+
+# ── load tests ──────────────────────────────────────────────────────────────
+
+# create or re-use the Load Test Tenants and their Users, top up their Credits and issue one Session per User (ADR-0021)
+# the Session ids go to `out` (owner-only), never the terminal; refused unless LOAD_TEST_ENABLED=true
+# usage: LOAD_TEST_ENABLED=true make load-test-sessions tenants=<n> users=<n> out=<file> [credits=<n>]
+load-test-sessions:
+	@if [ -z "$(tenants)" ] || [ -z "$(users)" ] || [ -z "$(out)" ]; then echo 'usage: LOAD_TEST_ENABLED=true make load-test-sessions tenants=<n> users=<n> out=<file> [credits=<n>]'; exit 1; fi
+	$(COMPOSE) run --rm -e LOAD_TEST_ENABLED --user "$$(id -u):$$(id -g)" -v "$(abspath $(dir $(out))):/out" app python -m scripts.load_test_sessions --tenants "$(tenants)" --users "$(users)" $(if $(credits),--credits "$(credits)") --out "/out/$(notdir $(out))"
