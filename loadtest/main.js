@@ -1,5 +1,5 @@
 // Kith's load test (ADR-0021). Each iteration is one user action, picked by
-// the traffic mix in config.json, then a pause to read. See README.md.
+// the traffic mix in config.json, then a pause to read.
 //
 //   MODE=smoke|load|stress BASE_URL=https://... SESSIONS_FILE=/abs/sessions.json \
 //     ./k6 run loadtest/main.js
