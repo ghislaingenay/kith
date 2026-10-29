@@ -231,7 +231,7 @@ services:
       - ../backend:/app
 
   frontend:
-    image: node:22.22
+    image: node:22.23.4
     working_dir: /app
     # `pnpm run dev -- --host ...` forwards a literal "--" into `next dev`,
     # which this Next.js version's CLI then misparses as the positional

@@ -2,7 +2,7 @@
 # user. Development does not use this file (infra/docker-compose.yml runs
 # `next dev` on a plain node image).
 
-FROM node:22.22-alpine AS deps
+FROM node:22.23.4-alpine AS deps
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@8.6.12 --activate
 COPY package.json pnpm-lock.yaml ./
@@ -33,7 +33,7 @@ RUN test -n "$NEXT_PUBLIC_API_URL" || { echo "NEXT_PUBLIC_API_URL build argument
 COPY . .
 RUN pnpm run build
 
-FROM node:22.22-alpine AS runtime
+FROM node:22.23.4-alpine AS runtime
 WORKDIR /app
 # HOSTNAME: Docker sets it to the container id, and the standalone server
 # binds to it, so it is reset to listen on every interface.
