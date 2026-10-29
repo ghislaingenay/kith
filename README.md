@@ -79,7 +79,7 @@ The backend reads its other settings (upload limits, retrieval sizes, rerank, lo
 ### Secrets
 
 - `.env` is gitignored. Never commit it, and never paste real keys into docs, issues or code.
-- The local defaults (`kithpassword`, `minioadmin`) are for your machine only. Production has no defaults: compose refuses to start until each secret is set.
+- The local defaults (`kithpassword`, `minioadmin`) are for your machine only. The dev compose file publishes every port on `127.0.0.1`, so other machines on your network cannot reach these services. Production has no defaults: compose refuses to start until each secret is set.
 - Production secrets live in `/opt/kith/.env` on the VPS. CI's deploy secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`) live in GitHub Actions secrets. See [`docs/deploy-quickstart.md`](docs/deploy-quickstart.md).
 - Variables prefixed `NEXT_PUBLIC_` are shipped to the browser. Never put a secret in one.
 
