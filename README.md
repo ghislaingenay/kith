@@ -108,7 +108,7 @@ uv sync --all-groups
 uv run pytest
 ```
 
-Frontend, from `frontend/` (Node 24):
+Frontend, from `frontend/` (Node 22):
 
 ```sh
 pnpm install
